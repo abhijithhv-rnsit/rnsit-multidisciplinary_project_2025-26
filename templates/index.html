@@ -31,7 +31,12 @@
         <div class="col-md-6 col-lg-4 mb-4 project-card">
             <div class="card shadow-sm h-100">
                 <div class="card-body">
-                    <h5 class="card-title">{{p[2]}}</h5>
+                    <h5 class="card-title">
+                      <a href="#" data-bs-toggle="modal" data-bs-target="#modal{{p[0]}}" class="text-decoration-none">
+                    {{p[2]}}
+                      </a>
+                    </h5>
+
                     <p>
                         <span class="badge bg-primary">{{p[3]}}</span>
                         {% if p[4] == 'Easy' %}
@@ -67,6 +72,40 @@
                 </div>
             </div>
         </div>
+<!-- Modal -->
+<div class="modal fade" id="modal{{p[0]}}" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title">{{p[2]}}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <h6>Problem Description</h6>
+        <p>{{p[5]}}</p>
+
+        <hr>
+
+        <h6>Problem Details</h6>
+        <p>{{p[6]}}</p>
+
+        <hr>
+
+        <h6>Expected Outcome</h6>
+        <p>{{p[7]}}</p>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
         {% endfor %}
     </div>
 </div>
