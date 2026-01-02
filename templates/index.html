@@ -32,11 +32,22 @@
             <div class="card shadow-sm h-100">
                 <div class="card-body">
                     <h5 class="card-title">{{p[2]}}</h5>
-                    <p class="card-text">
-                        <b>Year:</b> {{p[1]}} <br>
-                        <b>Type:</b> {{p[3]}} <br>
-                        <b>Difficulty:</b> {{p[4]}}
+                    <p>
+                        <span class="badge bg-primary">{{p[3]}}</span>
+                        {% if p[4] == 'Easy' %}
+                        <span class="badge bg-success">{{p[4]}}</span>
+                        {% elif p[4] == 'Moderate' %}
+                        <span class="badge bg-warning text-dark">{{p[4]}}</span>
+                        {% else %}
+                        <span class="badge bg-danger">{{p[4]}}</span>
+                        {% endif %}
+
                     </p>
+
+                    <p class="mt-2">
+                        <b>Year:</b> {{p[1]}}
+                    </p>
+
 
                     <p>
                         <span class="badge bg-secondary">
