@@ -1,0 +1,11 @@
+
+<h3>Register for RNSIT Multidisciplinary Project (2025–26)</h3>
+<h4>{{title}}</h4>
+<form method="post">
+Team Name: <input name="team" required><br><br>
+{% for i in range(1,7) %}
+Member {{i}} USN: <input name="usn{{i}}"><br>
+{% endfor %}
+<br>
+<button>Submit Registration</button>
+</form>
