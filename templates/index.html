@@ -1,7 +1,62 @@
-RNSIT Multidisciplinary Project Registration Portal (2025â€“26)
-{% for p,c in data %}
-{{p[2]}}
-Year: {{p[1]}} | {{p[3]}} | {{p[4]}}
-Teams Registered: {{c}} / {{p[5]}}
-{% if c < p[5] %} Register Team {% else %} Registration Closed {% endif %}
-{% endfor %} Admin Login
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RNSIT Multidisciplinary Project Registration</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-dark bg-primary">
+    <div class="container-fluid">
+        <span class="navbar-brand mb-0 h4">
+            RNSIT Multidisciplinary Project Registration Portal (2025-26)
+        </span>
+        <a href="/admin" class="btn btn-light btn-sm">Admin Login</a>
+    </div>
+</nav>
+
+<div class="container mt-4">
+    <div class="alert alert-info text-center">
+        <strong>Instruction:</strong> Each project allows a maximum of <b>5 teams</b>. Registration closes automatically.
+    </div>
+
+    <div class="row">
+        {% for p,c in data %}
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title">{{p[2]}}</h5>
+                    <p class="card-text">
+                        <b>Year:</b> {{p[1]}} <br>
+                        <b>Type:</b> {{p[3]}} <br>
+                        <b>Difficulty:</b> {{p[4]}}
+                    </p>
+
+                    <p>
+                        <span class="badge bg-secondary">
+                            Teams: {{c}} / {{p[5]}}
+                        </span>
+                    </p>
+
+                    {% if c < p[5] %}
+                        <a href="/register/{{p[0]}}" class="btn btn-success w-100">
+                            Register Team
+                        </a>
+                    {% else %}
+                        <button class="btn btn-danger w-100" disabled>
+                            Registration Closed
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<footer class="bg-dark text-light text-center p-3 mt-4">
+    © RNS Institute of Technology | Multidisciplinary Projects 2025-26
+</footer>
+
+</body>
+</html>
