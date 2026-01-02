@@ -23,10 +23,12 @@
     <div class="alert alert-info text-center">
         <strong>Instruction:</strong> Each project allows a maximum of <b>5 teams</b>. Registration closes automatically.
     </div>
+    <input class="form-control mb-4" id="searchBox" placeholder="Search project title, type, or difficulty...">
+
 
     <div class="row">
         {% for p,c in data %}
-        <div class="col-md-6 col-lg-4 mb-4">
+        <div class="col-md-6 col-lg-4 mb-4 project-card">
             <div class="card shadow-sm h-100">
                 <div class="card-body">
                     <h5 class="card-title">{{p[2]}}</h5>
@@ -61,6 +63,15 @@
 <footer class="bg-dark text-light text-center p-3 mt-4">
     © RNS Institute of Technology | Multidisciplinary Projects 2025-26
 </footer>
+
+    <script>
+document.getElementById("searchBox").addEventListener("keyup", function() {
+  let text = this.value.toLowerCase();
+  document.querySelectorAll(".project-card").forEach(card => {
+    card.style.display = card.innerText.toLowerCase().includes(text) ? "block" : "none";
+  });
+});
+</script>
 
 </body>
 </html>
