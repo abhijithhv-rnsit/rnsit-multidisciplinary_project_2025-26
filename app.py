@@ -159,6 +159,55 @@ def upload():
         con.commit(); con.close()
         flash("Projects imported successfully")
     return render_template("upload.html")
+@app.route("/dashboard")
+def dashboard():
+    con = db()
+    cur = con.cursor()
+
+    # Total teams
+    cur.execute("SELECT COUNT(*) FROM teams")
+    total_teams = cur.fetchone()[0]
+
+    # Total problems
+    cur.execute("SELECT COUNT(*) FROM problems")
+    total_problems = cur.fetchone()[0]
+
+    # Teams per department
+    cur.execute("""
+        SELECT department, COUNT(*) 
+        FROM teams 
+        GROUP BY department
+    """)
+    dept_data = cur.fetchall()
+
+    # Hardware vs Software
+    cur.execute("""
+        SELECT p.category, COUNT(*) 
+        FROM teams t 
+        JOIN problems p ON t.problem_id = p.id
+        GROUP BY p.category
+    """)
+    type_data = cur.fetchall()
+
+    # Difficulty distribution
+    cur.execute("""
+        SELECT p.difficulty, COUNT(*) 
+        FROM teams t 
+        JOIN problems p ON t.problem_id = p.id
+        GROUP BY p.difficulty
+    """)
+    diff_data = cur.fetchall()
+
+    con.close()
+
+    return render_template(
+        "dashboard.html",
+        total_teams=total_teams,
+        total_problems=total_problems,
+        dept_data=dept_data,
+        type_data=type_data,
+        diff_data=diff_data
+    )
 
 @app.route("/export")
 @app.route("/export")
