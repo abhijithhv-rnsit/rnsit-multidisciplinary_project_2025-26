@@ -60,6 +60,24 @@ def index():
 
 @app.route("/register/<int:pid>", methods=["GET","POST"])
 def register(pid):
+    
+    from datetime import datetime
+
+    # --- REGISTRATION DEADLINE CHECK ---
+    con = db()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT value FROM settings WHERE key='registration_deadline'"
+    )
+    row = cur.fetchone()
+    con.close()
+
+    if row:
+        deadline = datetime.fromisoformat(row[0])
+        if datetime.now() > deadline:
+            flash("Registration closed. Deadline has passed.")
+            return redirect(url_for("index"))
+    # --- END DEADLINE CHECK ---
     con=db(); cur=con.cursor()
     cur.execute("SELECT title,max_teams FROM problems WHERE id=?", (pid,))
     prob=cur.fetchone()
