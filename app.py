@@ -44,73 +44,73 @@ def register(pid):
 
     if request.method == "POST":
 
-    # Team details
-    team_name = request.form["team_name"]
-    department = request.form["department"]
-    section = request.form["section"]
+        # Team details
+        team_name = request.form["team_name"]
+        department = request.form["department"]
+        section = request.form["section"]
 
-    # Leader details
-    leader_name = request.form["leader_name"]
-    leader_usn = request.form["leader_usn"]
-    leader_email = request.form["leader_email"]
-    leader_phone = request.form["leader_phone"]
+        # Leader details
+        leader_name = request.form["leader_name"]
+        leader_usn = request.form["leader_usn"]
+        leader_email = request.form["leader_email"]
+        leader_phone = request.form["leader_phone"]
 
-    # Collect team members
-    members = []
-    for i in range(1, 6):
-        name = request.form.get(f"member{i}_name")
-        usn = request.form.get(f"member{i}_usn")
-        email = request.form.get(f"member{i}_email")
-        phone = request.form.get(f"member{i}_phone")
+        # Collect team members
+        members = []
+        for i in range(1, 6):
+            name = request.form.get(f"member{i}_name")
+            usn = request.form.get(f"member{i}_usn")
+            email = request.form.get(f"member{i}_email")
+            phone = request.form.get(f"member{i}_phone")
 
-        if usn:
-            members.append((name, usn, email, phone))
+            if usn:
+                members.append((name, usn, email, phone))
 
-    # Minimum team size check (leader + 2 members)
-    if len(members) < 2:
-        flash("Minimum 3 members required including Team Leader")
-        return redirect(request.url)
-
-    # Check USN uniqueness (leader + members)
-    cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
-    if cur.fetchone()[0] > 0:
-        flash("Team Leader USN already registered")
-        return redirect(request.url)
-
-    for _, usn, _, _ in members:
-        cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (usn,))
-        if cur.fetchone()[0] > 0:
-            flash(f"Member USN {usn} already registered")
+        # Minimum team size check (leader + 2 members)
+        if len(members) < 2:
+            flash("Minimum 3 members required including Team Leader")
             return redirect(request.url)
 
-    # Insert team
-    cur.execute("""
-        INSERT INTO teams(
+        # Check USN uniqueness (leader + members)
+        cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
+        if cur.fetchone()[0] > 0:
+            flash("Team Leader USN already registered")
+            return redirect(request.url)
+
+        for _, usn, _, _ in members:
+            cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (usn,))
+            if cur.fetchone()[0] > 0:
+                flash(f"Member USN {usn} already registered")
+                return redirect(request.url)
+
+        # Insert team
+        cur.execute("""
+            INSERT INTO teams(
+                team_name, department, section,
+                leader_name, leader_usn, leader_email, leader_phone,
+                problem_id
+            ) VALUES (?,?,?,?,?,?,?,?)
+        """, (
             team_name, department, section,
             leader_name, leader_usn, leader_email, leader_phone,
-            problem_id
-        ) VALUES (?,?,?,?,?,?,?,?)
-    """, (
-        team_name, department, section,
-        leader_name, leader_usn, leader_email, leader_phone,
-        pid
-    ))
+            pid
+        ))
 
-    team_id = cur.lastrowid
+        team_id = cur.lastrowid
 
-    # Insert team members
-    for name, usn, email, phone in members:
-        cur.execute("""
-            INSERT INTO team_members(
-                team_id, member_name, usn, email, phone
-            ) VALUES (?,?,?,?,?)
-        """, (team_id, name, usn, email, phone))
+        # Insert team members
+        for name, usn, email, phone in members:
+            cur.execute("""
+                INSERT INTO team_members(
+                    team_id, member_name, usn, email, phone
+                ) VALUES (?,?,?,?,?)
+            """, (team_id, name, usn, email, phone))
 
-    con.commit()
-    con.close()
+        con.commit()
+        con.close()
 
-    flash("Team registered successfully")
-    return redirect(url_for("index"))
+        flash("Team registered successfully")
+        return redirect(url_for("index"))
 
         tid=cur.lastrowid
 
