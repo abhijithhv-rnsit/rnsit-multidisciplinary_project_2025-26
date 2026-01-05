@@ -11,7 +11,7 @@ ADMIN_PASS = "RNSIT@2025"
 
 def db():
     return sqlite3.connect(DB)
-
+    
 @app.route("/")
 def index():
     con=db(); cur=con.cursor()
