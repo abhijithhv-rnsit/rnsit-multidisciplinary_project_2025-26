@@ -3,6 +3,17 @@ from datetime import datetime
 import sqlite3, pandas as pd, os
 
 
+
+app = Flask(__name__)
+app.secret_key = "rnsit-multidisciplinary-project-2025-26"
+
+DB = "rnsit_multidisciplinary_project_2025_26_v3.db"
+
+ADMIN_USER = "rnsit_admin"
+ADMIN_PASS = "RNSIT@2025"
+
+def db():
+    return sqlite3.connect(DB)
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
     con = db()
@@ -30,17 +41,6 @@ def admin_deadline():
         deadline=row[0] if row else ""
     )
 
-app = Flask(__name__)
-app.secret_key = "rnsit-multidisciplinary-project-2025-26"
-
-DB = "rnsit_multidisciplinary_project_2025_26_v3.db"
-
-ADMIN_USER = "rnsit_admin"
-ADMIN_PASS = "RNSIT@2025"
-
-def db():
-    return sqlite3.connect(DB)
-    
 @app.route("/")
 def index():
     con=db(); cur=con.cursor()
