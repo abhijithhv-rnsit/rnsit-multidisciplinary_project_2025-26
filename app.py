@@ -178,6 +178,29 @@ def admin_upload():
         con.commit(); con.close()
         flash("Projects imported successfully")
     return render_template("upload.html")
+@app.route("/admin/teams")
+def admin_teams():
+    con = db()
+    df = pd.read_sql("""
+        SELECT
+            t.team_name,
+            t.department,
+            t.section,
+            p.title AS problem,
+            t.leader_name,
+            t.leader_usn,
+            t.leader_phone
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        ORDER BY p.title
+    """, con)
+    con.close()
+
+    return render_template(
+        "admin_teams.html",
+        tables=df.to_dict(orient="records")
+    )
+
 @app.route("/dashboard")
 def dashboard():
     con = db()
