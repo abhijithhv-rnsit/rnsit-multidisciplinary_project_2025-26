@@ -174,7 +174,7 @@ def admin_upload():
 
         con.commit(); con.close()
         flash("Projects imported successfully")
-    return render_template("upload.html")
+    return render_template("admin_upload.html")
 @app.route("/admin/teams")
 def admin_teams():
     con = db()
