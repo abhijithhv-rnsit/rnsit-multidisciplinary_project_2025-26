@@ -5,7 +5,8 @@ import sqlite3, pandas as pd, os
 app = Flask(__name__)
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
 
-DB = "rnsit_multidisciplinary_project_2025_26.db"
+DB = "rnsit_multidisciplinary_project_2025_26_v2.db"
+
 
 ADMIN_USER = "rnsit_admin"
 ADMIN_PASS = "RNSIT@2025"
@@ -83,9 +84,21 @@ def upload():
         cur.execute("DELETE FROM problems")
         for _,r in df.iterrows():
             cur.execute(
-                "INSERT INTO problems(year,title,category,difficulty,max_teams) VALUES (?,?,?,?,5)",
-                (r["Year"], r["Problem Statement"], r["Type"], r["Difficulty"])
-            )
+    """INSERT INTO problems(
+        year, title, category, difficulty, max_teams,
+        problem_description, problem_details, expected_outcome
+    ) VALUES (?,?,?,?,5,?,?,?)""",
+    (
+        r["Year"],
+        r["Problem Statement"],
+        r["Type"],
+        r["Difficulty"],
+        r["Problem Description"],
+        r["Problem Details"],
+        r["Expected Outcome"]
+    )
+)
+
         con.commit(); con.close()
         flash("Projects imported successfully")
     return render_template("upload.html")
@@ -100,7 +113,20 @@ def export():
 
 if __name__=="__main__":
     con=db(); cur=con.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS problems(id INTEGER PRIMARY KEY,year TEXT,title TEXT,category TEXT,difficulty TEXT,max_teams INT)")
+    cur.execute("""
+CREATE TABLE IF NOT EXISTS problems(
+    id INTEGER PRIMARY KEY,
+    year TEXT,
+    title TEXT,
+    category TEXT,
+    difficulty TEXT,
+    max_teams INT,
+    problem_description TEXT,
+    problem_details TEXT,
+    expected_outcome TEXT
+)
+""")
+
     cur.execute("CREATE TABLE IF NOT EXISTS teams(id INTEGER PRIMARY KEY,team_name TEXT,problem_id INT)")
     cur.execute("CREATE TABLE IF NOT EXISTS team_members(id INTEGER PRIMARY KEY,team_id INT,usn TEXT UNIQUE)")
     con.commit(); con.close()
