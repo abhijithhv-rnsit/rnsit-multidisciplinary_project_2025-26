@@ -124,6 +124,25 @@ def register(pid):
     con.close()
     return render_template("register.html", title=prob[0])
 
+@app.route("/admin/home")
+def admin_home():
+    con = db()
+    cur = con.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM teams")
+    teams = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM problems")
+    problems = cur.fetchone()[0]
+
+    con.close()
+
+    return render_template(
+        "admin_home.html",
+        teams=teams,
+        problems=problems
+    )
+
 @app.route("/admin", methods=["GET","POST"])
 def admin():
     if request.method=="POST":
