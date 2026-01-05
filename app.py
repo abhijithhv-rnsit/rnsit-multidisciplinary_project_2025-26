@@ -152,7 +152,7 @@ def admin():
     return render_template("admin.html")
 
 @app.route("admin/upload", methods=["GET","POST"])
-def upload():
+def admin_upload():
     if request.method=="POST":
         file=request.files["file"]
         df=pd.read_excel(file)
