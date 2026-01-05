@@ -1,5 +1,34 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from datetime import datetime
 import sqlite3, pandas as pd, os
+
+
+@app.route("/admin/deadline", methods=["GET", "POST"])
+def admin_deadline():
+    con = db()
+    cur = con.cursor()
+
+    if request.method == "POST":
+        deadline = request.form["deadline"]
+        cur.execute(
+            "REPLACE INTO settings(key,value) VALUES (?,?)",
+            ("registration_deadline", deadline)
+        )
+        con.commit()
+        con.close()
+        flash("Registration deadline updated successfully")
+        return redirect(url_for("admin_deadline"))
+
+    cur.execute(
+        "SELECT value FROM settings WHERE key='registration_deadline'"
+    )
+    row = cur.fetchone()
+    con.close()
+
+    return render_template(
+        "admin_deadline.html",
+        deadline=row[0] if row else ""
+    )
 
 app = Flask(__name__)
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
@@ -326,6 +355,13 @@ CREATE TABLE IF NOT EXISTS team_members(
     phone TEXT
 )
 """)
+cur.execute("""
+CREATE TABLE IF NOT EXISTS settings(
+    key TEXT PRIMARY KEY,
+    value TEXT
+)
+""")
+
 con.commit(); con.close()
 
 port = int(os.environ.get("PORT", 5000))
