@@ -5,7 +5,8 @@ import sqlite3, pandas as pd, os
 app = Flask(__name__)
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
 
-DB = "rnsit_multidisciplinary_project_2025_26_v2.db"
+DB = "rnsit_multidisciplinary_project_2025_26_v3.db"
+
 
 
 ADMIN_USER = "rnsit_admin"
@@ -41,20 +42,76 @@ def register(pid):
         flash("Registration closed for this project")
         return redirect(url_for("index"))
 
-    if request.method=="POST":
-        members=[request.form.get(f"usn{i}") for i in range(1,7) if request.form.get(f"usn{i}")]
-        if len(members) < 3:
-            flash("Minimum 3 team members required")
+    if request.method == "POST":
+
+    # Team details
+    team_name = request.form["team_name"]
+    department = request.form["department"]
+    section = request.form["section"]
+
+    # Leader details
+    leader_name = request.form["leader_name"]
+    leader_usn = request.form["leader_usn"]
+    leader_email = request.form["leader_email"]
+    leader_phone = request.form["leader_phone"]
+
+    # Collect team members
+    members = []
+    for i in range(1, 6):
+        name = request.form.get(f"member{i}_name")
+        usn = request.form.get(f"member{i}_usn")
+        email = request.form.get(f"member{i}_email")
+        phone = request.form.get(f"member{i}_phone")
+
+        if usn:
+            members.append((name, usn, email, phone))
+
+    # Minimum team size check (leader + 2 members)
+    if len(members) < 2:
+        flash("Minimum 3 members required including Team Leader")
+        return redirect(request.url)
+
+    # Check USN uniqueness (leader + members)
+    cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
+    if cur.fetchone()[0] > 0:
+        flash("Team Leader USN already registered")
+        return redirect(request.url)
+
+    for _, usn, _, _ in members:
+        cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (usn,))
+        if cur.fetchone()[0] > 0:
+            flash(f"Member USN {usn} already registered")
             return redirect(request.url)
 
-        for u in members:
-            cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (u,))
-            if cur.fetchone()[0] > 0:
-                flash(f"USN {u} already registered in another team")
-                return redirect(request.url)
+    # Insert team
+    cur.execute("""
+        INSERT INTO teams(
+            team_name, department, section,
+            leader_name, leader_usn, leader_email, leader_phone,
+            problem_id
+        ) VALUES (?,?,?,?,?,?,?,?)
+    """, (
+        team_name, department, section,
+        leader_name, leader_usn, leader_email, leader_phone,
+        pid
+    ))
 
-        cur.execute("INSERT INTO teams(team_name,problem_id) VALUES (?,?)",
-                    (request.form["team"], pid))
+    team_id = cur.lastrowid
+
+    # Insert team members
+    for name, usn, email, phone in members:
+        cur.execute("""
+            INSERT INTO team_members(
+                team_id, member_name, usn, email, phone
+            ) VALUES (?,?,?,?,?)
+        """, (team_id, name, usn, email, phone))
+
+    con.commit()
+    con.close()
+
+    flash("Team registered successfully")
+    return redirect(url_for("index"))
+
         tid=cur.lastrowid
 
         for u in members:
@@ -127,9 +184,31 @@ CREATE TABLE IF NOT EXISTS problems(
 )
 """)
 
-    cur.execute("CREATE TABLE IF NOT EXISTS teams(id INTEGER PRIMARY KEY,team_name TEXT,problem_id INT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS team_members(id INTEGER PRIMARY KEY,team_id INT,usn TEXT UNIQUE)")
-    con.commit(); con.close()
+    cur.execute("""
+CREATE TABLE IF NOT EXISTS teams(
+    id INTEGER PRIMARY KEY,
+    team_name TEXT,
+    department TEXT,
+    section TEXT,
+    leader_name TEXT,
+    leader_usn TEXT UNIQUE,
+    leader_email TEXT,
+    leader_phone TEXT,
+    problem_id INT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS team_members(
+    id INTEGER PRIMARY KEY,
+    team_id INT,
+    member_name TEXT,
+    usn TEXT UNIQUE,
+    email TEXT,
+    phone TEXT
+)
+""")
+con.commit(); con.close()
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
