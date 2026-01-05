@@ -16,7 +16,12 @@ def db():
 @app.route("/")
 def index():
     con=db(); cur=con.cursor()
-    cur.execute("SELECT id,year,title,category,difficulty,max_teams FROM problems")
+    cur.execute("""
+    SELECT id, year, title, category, difficulty, max_teams,
+           problem_description, problem_details, expected_outcome
+    FROM problems
+""")
+
     probs=cur.fetchall()
     data=[]
     for p in probs:
