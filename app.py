@@ -144,7 +144,7 @@ def admin_home():
 def admin():
     if request.method=="POST":
         if request.form["u"]==ADMIN_USER and request.form["p"]==ADMIN_PASS:
-            return redirect(url_for("upload"))
+            return redirect(url_for("admin_home"))
         flash("Invalid admin credentials")
     return render_template("admin.html")
 
