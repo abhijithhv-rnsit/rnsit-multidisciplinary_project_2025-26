@@ -148,7 +148,7 @@ def admin():
         flash("Invalid admin credentials")
     return render_template("admin.html")
 
-@app.route("admin/upload", methods=["GET","POST"])
+@app.route("/admin/upload", methods=["GET","POST"])
 def admin_upload():
     if request.method=="POST":
         file=request.files["file"]
