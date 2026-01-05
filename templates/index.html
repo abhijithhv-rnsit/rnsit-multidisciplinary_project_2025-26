@@ -60,15 +60,22 @@
                         </span>
                     </p>
 
-                    {% if c < p[5] %}
-                        <a href="/register/{{p[0]}}" class="btn btn-success w-100">
-                            Register Team
-                        </a>
-                    {% else %}
-                        <button class="btn btn-danger w-100" disabled>
-                            Registration Closed
-                        </button>
-                    {% endif %}
+                    {% if registration_closed %}
+<button class="btn btn-secondary w-100" disabled>
+    Registration Closed (Deadline Passed)
+</button>
+
+{% elif c < p[5] %}
+<a href="/register/{{p[0]}}" class="btn btn-success w-100">
+    Register Team
+</a>
+
+{% else %}
+<button class="btn btn-danger w-100" disabled>
+    Registration Closed (Limit Reached)
+</button>
+{% endif %}
+
                 </div>
             </div>
         </div>
