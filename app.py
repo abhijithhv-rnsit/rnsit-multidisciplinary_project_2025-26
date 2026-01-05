@@ -161,12 +161,42 @@ def upload():
     return render_template("upload.html")
 
 @app.route("/export")
+@app.route("/export")
 def export():
-    con=db()
-    df=pd.read_sql("SELECT * FROM teams", con)
-    path="rnsit_project_registrations.xlsx"
-    df.to_excel(path,index=False)
-    return send_file(path, as_attachment=True)
+    con = db()
+    query = """
+    SELECT
+        t.team_name,
+        t.department,
+        t.section,
+
+        t.leader_name,
+        t.leader_usn,
+        t.leader_email,
+        t.leader_phone,
+
+        p.title AS problem_title,
+        p.year AS problem_year,
+
+        m.member_name,
+        m.usn AS member_usn,
+        m.email AS member_email,
+        m.phone AS member_phone
+
+    FROM teams t
+    JOIN problems p ON t.problem_id = p.id
+    LEFT JOIN team_members m ON t.id = m.team_id
+
+    ORDER BY p.title, t.team_name
+    """
+    df = pd.read_sql(query, con)
+    con.close()
+
+    file_name = "rnsit_multidisciplinary_project_registrations.xlsx"
+    df.to_excel(file_name, index=False)
+
+    return send_file(file_name, as_attachment=True)
+
 
 if __name__=="__main__":
     con=db(); cur=con.cursor()
