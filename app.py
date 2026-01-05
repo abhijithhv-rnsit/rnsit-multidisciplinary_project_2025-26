@@ -7,8 +7,6 @@ app.secret_key = "rnsit-multidisciplinary-project-2025-26"
 
 DB = "rnsit_multidisciplinary_project_2025_26_v3.db"
 
-
-
 ADMIN_USER = "rnsit_admin"
 ADMIN_PASS = "RNSIT@2025"
 
