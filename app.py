@@ -71,7 +71,12 @@ def index():
         if datetime.now() > deadline:
             registration_closed = True
 
-    return render_template("index.html", data=data)
+    return render_template(
+    "index.html",
+    data=data,
+    registration_closed=registration_closed
+)
+
 
 @app.route("/register/<int:pid>", methods=["GET","POST"])
 def register(pid):
