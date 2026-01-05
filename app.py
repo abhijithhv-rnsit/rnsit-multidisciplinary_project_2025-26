@@ -56,6 +56,21 @@ def index():
         cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (p[0],))
         data.append((p, cur.fetchone()[0]))
     con.close()
+    from datetime import datetime
+
+    # Check registration deadline
+    con = db()
+    cur = con.cursor()
+    cur.execute("SELECT value FROM settings WHERE key='registration_deadline'")
+    row = cur.fetchone()
+    con.close()
+
+    registration_closed = False
+    if row:
+        deadline = datetime.fromisoformat(row[0])
+        if datetime.now() > deadline:
+            registration_closed = True
+
     return render_template("index.html", data=data)
 
 @app.route("/register/<int:pid>", methods=["GET","POST"])
