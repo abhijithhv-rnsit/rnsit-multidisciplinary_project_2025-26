@@ -1,10 +1,13 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from flask import session
 
 import sqlite3, pandas as pd, os
 
 
 
 app = Flask(__name__)
+app.secret_key = "rnsit_admin_secret_2025"
+
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
 
 DB = "rnsit_multidisciplinary_project_2025_26_v3.db"
@@ -18,6 +21,8 @@ def db():
 from datetime import datetime
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
     con = db()
     cur = con.cursor()
 
@@ -192,6 +197,8 @@ def register(pid):
 
 @app.route("/admin/home")
 def admin_home():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
     con = db()
     cur = con.cursor()
 
@@ -210,15 +217,22 @@ def admin_home():
     )
 
 @app.route("/admin", methods=["GET","POST"])
+@app.route("/admin", methods=["GET", "POST"])
 def admin():
-    if request.method=="POST":
-        if request.form["u"]==ADMIN_USER and request.form["p"]==ADMIN_PASS:
+    if request.method == "POST":
+        if request.form["u"] == ADMIN_USER and request.form["p"] == ADMIN_PASS:
+            session["admin_logged_in"] = True
             return redirect(url_for("admin_home"))
-        flash("Invalid admin credentials")
+        else:
+            flash("Invalid credentials")
     return render_template("admin.html")
+
+
 
 @app.route("/admin/upload", methods=["GET","POST"])
 def admin_upload():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
     if request.method=="POST":
         file=request.files["file"]
         df=pd.read_excel(file)
@@ -246,6 +260,8 @@ def admin_upload():
     return render_template("admin_upload.html")
 @app.route("/admin/teams")
 def admin_teams():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
     con = db()
     df = pd.read_sql("""
         SELECT
@@ -269,6 +285,8 @@ def admin_teams():
 
 @app.route("/dashboard")
 def dashboard():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
     con = db()
     cur = con.cursor()
 
@@ -353,6 +371,11 @@ def export():
     df.to_excel(file_name, index=False)
 
     return send_file(file_name, as_attachment=True)
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin_logged_in", None)
+    flash("Logged out successfully")
+    return redirect(url_for("admin"))
 
 
 if __name__=="__main__":
