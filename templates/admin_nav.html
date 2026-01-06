@@ -3,19 +3,27 @@
     <span class="navbar-brand fw-bold">RNSIT Admin Panel</span>
 
     <div class="navbar-nav">
-      <a class="nav-link" href="/admin/home">Home</a>
-      <a class="nav-link" href="/admin/upload">Upload Problems</a>
-      <a class="nav-link" href="/admin/teams">View Registered Teams</a>
-      <a class="nav-link" href="/dashboard">Dashboard</a>
-      <a class="nav-link" href="/admin/deadline">Set Deadline</a>
+      <a class="nav-link {% if active_page=='home' %}active fw-bold{% endif %}"
+         href="/admin/home">Home</a>
 
+      <a class="nav-link {% if active_page=='upload' %}active fw-bold{% endif %}"
+         href="/admin/upload">Upload Problems</a>
+
+      <a class="nav-link {% if active_page=='teams' %}active fw-bold{% endif %}"
+         href="/admin/teams">View Teams</a>
+
+      <a class="nav-link {% if active_page=='dashboard' %}active fw-bold{% endif %}"
+         href="/dashboard">Dashboard</a>
+
+      <a class="nav-link {% if active_page=='deadline' %}active fw-bold{% endif %}"
+         href="/admin/deadline">Set Deadline</a>
     </div>
 
     <div class="ms-auto">
-  <a href="/admin/logout" class="btn btn-outline-light btn-sm">
-    Logout
-  </a>
-</div>
-
+      <a href="/admin/logout" class="btn btn-outline-light btn-sm">
+        Logout
+      </a>
+    </div>
   </div>
 </nav>
+
