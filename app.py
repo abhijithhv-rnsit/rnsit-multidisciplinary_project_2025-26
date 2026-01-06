@@ -117,8 +117,9 @@ def register(pid):
 
         # Team details
         team_name = request.form["team_name"]
-        department = request.form["department"]
-        section = request.form["section"]
+        leader_department = request.form["leader_department"]
+leader_section = request.form["leader_section"]
+
 
         # Leader details
         leader_name = request.form["leader_name"]
@@ -133,9 +134,11 @@ def register(pid):
             usn = request.form.get(f"member{i}_usn")
             email = request.form.get(f"member{i}_email")
             phone = request.form.get(f"member{i}_phone")
+            dept = request.form.get(f"member{i}_department")
+            sec = request.form.get(f"member{i}_section")
 
             if usn:
-                members.append((name, usn, email, phone))
+                members.append((name, usn, email, phone, dept, sec))
 
         # Minimum team size check (leader + 2 members)
         if len(members) < 2:
