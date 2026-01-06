@@ -7,7 +7,18 @@
 <body class="bg-light">
 
 {% include "admin_nav.html" %}
+    <div class="card shadow mb-3">
+        <div class="card-body">
+            <a href="/export" class="btn btn-outline-primary w-100 mb-2">
+                Export Team Registrations (Excel)
+            </a>
 
+            <!-- DASHBOARD BUTTON (THIS IS WHAT WAS MISSING) -->
+            <a href="/dashboard" class="btn btn-outline-dark w-100">
+                View Admin Dashboard
+            </a>
+        </div>
+    </div>
 <div class="container mt-4">
   <h4 class="mb-3">Registered Teams</h4>
 
