@@ -213,7 +213,7 @@ def admin_home():
     return render_template(
         "admin_home.html",
         teams=teams,
-        problems=problems
+        problems=problems,
         active_page="home"
     )
 
