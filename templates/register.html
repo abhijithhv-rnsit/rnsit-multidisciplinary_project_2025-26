@@ -28,7 +28,7 @@
                         <input class="form-control" name="team_name" required>
                     </div>
 
-                    <div class="col-md-4">
+                    <!--<div class="col-md-4">
                         <label class="form-label">Department / Branch</label>
                         <select class="form-select" name="department" required>
                             <option value="">Select</option>
@@ -46,7 +46,7 @@
                     <div class="col-md-2">
                         <label class="form-label">Section</label>
                         <input class="form-control" name="section" required>
-                    </div>
+                    </div>-->
                 </div>
 
                 <hr>
@@ -67,6 +67,25 @@
                     <div class="col-md-3">
                         <input class="form-control" name="leader_phone" placeholder="Phone" required>
                     </div>
+                    <div class="row mb-2">
+   <div class="col-md-6">
+    <select class="form-control" name="leader_department" required>
+      <option value="">Select Department</option>
+      <option>CSE</option>
+      <option>CSE-AIML</option>
+      <option>CSE-DS</option>
+      <option>CSE-CY</option>
+      <option>ECE</option>
+      <option>EEE</option>
+      <option>CV</option>
+      <option>ME</option>
+    </select>
+  </div>
+  <div class="col-md-6">
+    <input class="form-control" name="leader_section" placeholder="Section" required>
+  </div>
+</div>
+
                 </div>
 
                 <hr>
@@ -88,6 +107,24 @@
                     <div class="col-md-3">
                         <input class="form-control" name="member{{i}}_phone" placeholder="Member {{i}} Phone">
                     </div>
+                    <div class="col-md-3">
+  <select class="form-control" name="member{{i}}_department">
+    <option value="">Dept</option>
+    <option>CSE</option>
+    <option>CSE-AIML</option>
+    <option>CSE-DS</option>
+    <option>CSE-CY</option>
+    <option>ECE</option>
+    <option>EEE</option>
+    <option>CV</option>
+    <option>ME</option>
+  </select>
+</div>
+
+<div class="col-md-3">
+  <input class="form-control" name="member{{i}}_section" placeholder="Section">
+</div>
+
                 </div>
                 {% endfor %}
 
