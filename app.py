@@ -44,7 +44,7 @@ def admin_deadline():
     con.close()
 
     return render_template(
-        "admin_deadline.html",
+        "admin_deadline.html",active_page="deadline",
         deadline=row[0] if row else ""
     )
 
@@ -214,6 +214,7 @@ def admin_home():
         "admin_home.html",
         teams=teams,
         problems=problems
+        active_page="home"
     )
 
 @app.route("/admin", methods=["GET","POST"])
@@ -257,7 +258,7 @@ def admin_upload():
 
         con.commit(); con.close()
         flash("Projects imported successfully")
-    return render_template("admin_upload.html")
+    return render_template("admin_upload.html",active_page="upload")
 @app.route("/admin/teams")
 def admin_teams():
     if not session.get("admin_logged_in"):
@@ -280,7 +281,7 @@ def admin_teams():
 
     return render_template(
         "admin_teams.html",
-        tables=df.to_dict(orient="records")
+        tables=df.to_dict(orient="records"), active_page="teams"
     )
 
 @app.route("/dashboard")
@@ -332,7 +333,7 @@ def dashboard():
         total_problems=total_problems,
         dept_data=dept_data,
         type_data=type_data,
-        diff_data=diff_data
+        diff_data=diff_data, active_page="dashboard"
     )
 
 @app.route("/export")
