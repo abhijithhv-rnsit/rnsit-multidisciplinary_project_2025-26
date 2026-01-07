@@ -115,17 +115,16 @@ def register(pid):
 
     if request.method == "POST":
 
-        # Team details
+        # Team basic details
         team_name = request.form["team_name"]
-        leader_department = request.form["leader_department"]
-leader_section = request.form["leader_section"]
-
 
         # Leader details
         leader_name = request.form["leader_name"]
         leader_usn = request.form["leader_usn"]
         leader_email = request.form["leader_email"]
         leader_phone = request.form["leader_phone"]
+        leader_department = request.form["leader_department"]
+        leader_section = request.form["leader_section"]
 
         # Collect team members
         members = []
@@ -140,36 +139,42 @@ leader_section = request.form["leader_section"]
             if usn:
                 members.append((name, usn, email, phone, dept, sec))
 
-        # Minimum team size check (leader + 2 members)
+        # Minimum team size check
         if len(members) < 2:
             flash("Minimum 3 members required including Team Leader")
             return redirect(request.url)
 
-        # Check USN uniqueness (leader + members)
+        con = db()
+        cur = con.cursor()
+
+        # Check leader USN uniqueness
         cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
         if cur.fetchone()[0] > 0:
+            con.close()
             flash("Team Leader USN already registered")
             return redirect(request.url)
 
-        for _, usn, _, _ in members:
+        # Check member USN uniqueness
+        for _, usn, _, _, _, _ in members:
             cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (usn,))
             if cur.fetchone()[0] > 0:
+                con.close()
                 flash(f"Member USN {usn} already registered")
                 return redirect(request.url)
 
         # Insert team
         cur.execute("""
             INSERT INTO teams(
-            team_name,
-            leader_name,
-            leader_usn,
-            leader_email,
-            leader_phone,
-            leader_department,
-            leader_section,
-            problem_id
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (
+                team_name,
+                leader_name,
+                leader_usn,
+                leader_email,
+                leader_phone,
+                leader_department,
+                leader_section,
+                problem_id
+            ) VALUES (?,?,?,?,?,?,?,?)
+        """, (
             team_name,
             leader_name,
             leader_usn,
@@ -180,23 +185,21 @@ leader_section = request.form["leader_section"]
             pid
         ))
 
-
         team_id = cur.lastrowid
 
-        # Insert team members
+        # Insert members
         for name, usn, email, phone, dept, sec in members:
             cur.execute("""
-            INSERT INTO team_members(
-              team_id,
-              member_name,
-              usn,
-              email,
-              phone,
-              department,
-              section
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+                INSERT INTO team_members(
+                    team_id,
+                    member_name,
+                    usn,
+                    email,
+                    phone,
+                    department,
+                    section
+                ) VALUES (?,?,?,?,?,?,?)
             """, (team_id, name, usn, email, phone, dept, sec))
-
 
         con.commit()
         con.close()
@@ -204,14 +207,6 @@ leader_section = request.form["leader_section"]
         flash("Team registered successfully")
         return redirect(url_for("index"))
 
-        tid=cur.lastrowid
-
-        for u in members:
-            cur.execute("INSERT INTO team_members(team_id,usn) VALUES (?,?)",(tid,u))
-
-        con.commit(); con.close()
-        flash("Team registered successfully")
-        return redirect(url_for("index"))
 
     con.close()
     return render_template("register.html", title=prob[0])
