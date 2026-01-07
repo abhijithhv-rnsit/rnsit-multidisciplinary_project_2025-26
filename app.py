@@ -160,25 +160,43 @@ leader_section = request.form["leader_section"]
         # Insert team
         cur.execute("""
             INSERT INTO teams(
-                team_name, department, section,
-                leader_name, leader_usn, leader_email, leader_phone,
-                problem_id
-            ) VALUES (?,?,?,?,?,?,?,?)
-        """, (
-            team_name, department, section,
-            leader_name, leader_usn, leader_email, leader_phone,
+            team_name,
+            leader_name,
+            leader_usn,
+            leader_email,
+            leader_phone,
+            leader_department,
+            leader_section,
+            problem_id
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (
+            team_name,
+            leader_name,
+            leader_usn,
+            leader_email,
+            leader_phone,
+            leader_department,
+            leader_section,
             pid
         ))
+
 
         team_id = cur.lastrowid
 
         # Insert team members
-        for name, usn, email, phone in members:
+        for name, usn, email, phone, dept, sec in members:
             cur.execute("""
-                INSERT INTO team_members(
-                    team_id, member_name, usn, email, phone
-                ) VALUES (?,?,?,?,?)
-            """, (team_id, name, usn, email, phone))
+            INSERT INTO team_members(
+              team_id,
+              member_name,
+              usn,
+              email,
+              phone,
+              department,
+              section
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, (team_id, name, usn, email, phone, dept, sec))
+
 
         con.commit()
         con.close()
