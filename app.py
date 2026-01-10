@@ -1,5 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
 from flask import session
+from werkzeug.security import generate_password_hash, check_password_hash
+
 
 import sqlite3, pandas as pd, os
 
@@ -19,6 +21,66 @@ def db():
     return sqlite3.connect(DB)
 
 from datetime import datetime
+@app.route("/student/signup", methods=["GET", "POST"])
+def student_signup():
+    if request.method == "POST":
+        usn = request.form["usn"].strip().upper()
+        email = request.form["email"].strip().lower()
+        password = request.form["password"]
+
+        if not email.endswith("@rnsit.ac.in"):
+            flash("Only RNSIT email IDs are allowed")
+            return redirect(request.url)
+
+        password_hash = generate_password_hash(password)
+
+        con = db()
+        cur = con.cursor()
+
+        try:
+            cur.execute(
+                "INSERT INTO students (usn, email, password_hash) VALUES (?,?,?)",
+                (usn, email, password_hash)
+            )
+            con.commit()
+            con.close()
+            flash("Account created successfully. Please login.")
+            return redirect(url_for("student_login"))
+        except:
+            con.close()
+            flash("USN or Email already registered")
+
+    return render_template("student_signup.html")
+@app.route("/student/login", methods=["GET", "POST"])
+def student_login():
+    if request.method == "POST":
+        usn = request.form["usn"].strip().upper()
+        password = request.form["password"]
+
+        con = db()
+        cur = con.cursor()
+        cur.execute(
+            "SELECT email, password_hash FROM students WHERE usn=?",
+            (usn,)
+        )
+        row = cur.fetchone()
+        con.close()
+
+        if row and check_password_hash(row[1], password):
+            session["student_usn"] = usn
+            session["student_email"] = row[0]
+            return redirect(url_for("student_home"))
+        else:
+            flash("Invalid USN or Password")
+
+    return render_template("student_login.html")
+@app.route("/student/logout")
+def student_logout():
+    session.pop("student_usn", None)
+    session.pop("student_email", None)
+    flash("Logged out successfully")
+    return redirect(url_for("student_login"))
+
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
     if not session.get("admin_logged_in"):
