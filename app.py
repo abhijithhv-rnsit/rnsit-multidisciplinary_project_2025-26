@@ -441,6 +441,16 @@ CREATE TABLE IF NOT EXISTS settings(
     value TEXT
 )
 """)
+cur.execute("""
+CREATE TABLE IF NOT EXISTS students (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usn TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
 
 con.commit(); con.close()
 
