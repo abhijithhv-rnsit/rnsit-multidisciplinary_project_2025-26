@@ -42,6 +42,9 @@ def ensure_student_table():
 
 from datetime import datetime
 
+@app.route("/where-is-db")
+def where_is_db():
+    return f"Database file used: {DB}"
 
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
