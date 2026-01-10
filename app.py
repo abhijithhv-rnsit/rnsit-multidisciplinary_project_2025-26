@@ -25,8 +25,7 @@ def db():
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
     return con
-    
-def ensure_student_table():
+def ensure_students_table():
     con = db()
     cur = con.cursor()
     cur.execute("""
@@ -34,11 +33,13 @@ def ensure_student_table():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             usn TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     con.commit()
     con.close()
+    
 
 from datetime import datetime
 
