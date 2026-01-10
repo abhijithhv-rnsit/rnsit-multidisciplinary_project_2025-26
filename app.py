@@ -110,11 +110,33 @@ def student_logout():
     session.pop("student_email", None)
     flash("Logged out successfully")
     return redirect(url_for("student_login"))
+
 @app.route("/student/home")
 def student_home():
     if not session.get("student_usn"):
         return redirect(url_for("student_login"))
-    return "Student login successful"
+
+    con = db()
+    cur = con.cursor()
+    cur.execute("""
+        SELECT id, title, category, difficulty, max_teams
+        FROM problems
+    """)
+    problems = cur.fetchall()
+
+    data = []
+    for p in problems:
+        cur.execute(
+            "SELECT COUNT(*) FROM teams WHERE problem_id=?",
+            (p["id"],)
+        )
+        count = cur.fetchone()[0]
+        data.append((p, count))
+
+    con.close()
+
+    return render_template("student_home.html", problems=data)
+
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
