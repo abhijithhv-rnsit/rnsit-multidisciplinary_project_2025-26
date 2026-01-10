@@ -46,6 +46,18 @@ from datetime import datetime
 @app.route("/where-is-db")
 def where_is_db():
     return f"Database file used: {DB}"
+@app.route("/debug/login-check/<usn>")
+def debug_login_check(usn):
+    con = db()
+    cur = con.cursor()
+    cur.execute("SELECT usn, email FROM students")
+    rows = cur.fetchall()
+    con.close()
+
+    return f"""
+    USN YOU ENTERED: [{usn}] <br>
+    USNs IN DATABASE: {rows}
+    """
 
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
