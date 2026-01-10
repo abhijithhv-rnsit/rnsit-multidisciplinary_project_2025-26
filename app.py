@@ -77,9 +77,10 @@ def student_login():
         con = db()
         cur = con.cursor()
         cur.execute(
-            "SELECT email, password_hash FROM students WHERE UPPER(usn)=?",
+            "SELECT email, password_hash FROM students WHERE usn=?",
             (usn,)
         )
+
         row = cur.fetchone()
         con.close()
         if not row:
