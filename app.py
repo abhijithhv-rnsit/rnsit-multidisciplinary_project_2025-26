@@ -20,7 +20,7 @@ ADMIN_USER = "rnsit_admin"
 ADMIN_PASS = "RNSIT@2025"
 
 def db():
-    return sqlite3.connect(DB)
+    con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
     return con
 
@@ -76,12 +76,12 @@ def student_login():
             flash("User not found. Please sign up first.")
             return redirect(request.url)
 
-        if not check_password_hash(row[1], password):
+        if not check_password_hash(row["password_hash"], password):
             flash("Invalid password")
             return redirect(request.url)
 
         session["student_usn"] = usn
-        session["student_email"] = row[0]
+        session["student_email"] = row["email"]
         return redirect(url_for("student_home"))
 
     return render_template("student_login.html")
