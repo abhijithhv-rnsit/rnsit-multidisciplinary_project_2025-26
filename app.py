@@ -60,18 +60,22 @@ def student_login():
         con = db()
         cur = con.cursor()
         cur.execute(
-            "SELECT email, password_hash FROM students WHERE usn=?",
+            "SELECT email, password_hash FROM students WHERE UPPER(usn)=?",
             (usn,)
         )
         row = cur.fetchone()
         con.close()
+        if not row:
+            flash("User not found. Please sign up first.")
+            return redirect(request.url)
 
-        if row and check_password_hash(row[1], password):
-            session["student_usn"] = usn
-            session["student_email"] = row[0]
-            return redirect(url_for("student_home"))
-        else:
-            flash("Invalid USN or Password")
+        if not check_password_hash(row[1], password):
+            flash("Invalid password")
+            return redirect(request.url)
+
+        session["student_usn"] = usn
+        session["student_email"] = row[0]
+        return redirect(url_for("student_home"))
 
     return render_template("student_login.html")
 @app.route("/student/logout")
@@ -80,6 +84,11 @@ def student_logout():
     session.pop("student_email", None)
     flash("Logged out successfully")
     return redirect(url_for("student_login"))
+@app.route("/student/home")
+def student_home():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+    return "Student login successful"
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
