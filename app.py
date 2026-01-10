@@ -8,17 +8,21 @@ import sqlite3, pandas as pd, os
 
 
 app = Flask(__name__)
-app.secret_key = "rnsit_admin_secret_2025"
+#app.secret_key = "rnsit_admin_secret_2025"
 
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
 
-DB = "rnsit_multidisciplinary_project_2025_26_v3.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB = os.path.join(BASE_DIR, "rnsit_multidisciplinary_project_2025_26_v3.db")
+
 
 ADMIN_USER = "rnsit_admin"
 ADMIN_PASS = "RNSIT@2025"
 
 def db():
     return sqlite3.connect(DB)
+    con.row_factory = sqlite3.Row
+    return con
 
 from datetime import datetime
 @app.route("/student/signup", methods=["GET", "POST"])
