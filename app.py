@@ -8,6 +8,8 @@ import sqlite3, pandas as pd, os
 
 
 app = Flask(__name__)
+app.config["SESSION_PERMANENT"] = False
+
 #app.secret_key = "rnsit_admin_secret_2025"
 
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
@@ -23,12 +25,27 @@ def db():
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
     return con
+    
+def ensure_student_table():
+    con = db()
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usn TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL
+        )
+    """)
+    con.commit()
+    con.close()
 
 from datetime import datetime
 
 
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
+    ensure_student_table()
     if request.method == "POST":
         usn = request.form["usn"].strip().upper()
         email = request.form["email"].strip().lower()
@@ -59,6 +76,7 @@ def student_signup():
     return render_template("student_signup.html")
 @app.route("/student/login", methods=["GET", "POST"])
 def student_login():
+    ensure_student_table()
     if request.method == "POST":
         usn = request.form["usn"].strip().upper()
         password = request.form["password"]
