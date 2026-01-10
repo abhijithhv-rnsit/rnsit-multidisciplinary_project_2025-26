@@ -49,7 +49,7 @@ def where_is_db():
 
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
-    ensure_student_table()
+    ensure_students_table()
     if request.method == "POST":
         usn = request.form["usn"].strip().upper()
         email = request.form["email"].strip().lower()
@@ -80,7 +80,7 @@ def student_signup():
     return render_template("student_signup.html")
 @app.route("/student/login", methods=["GET", "POST"])
 def student_login():
-    ensure_student_table()
+    ensure_students_table()
     if request.method == "POST":
         usn = request.form["usn"].strip().upper()
         password = request.form["password"]
