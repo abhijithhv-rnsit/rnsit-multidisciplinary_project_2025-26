@@ -26,17 +26,6 @@ def db():
 
 from datetime import datetime
 
-@app.route("/debug/students")
-def debug_students():
-    try:
-        con = db()
-        cur = con.cursor()
-        cur.execute("SELECT usn, email FROM students")
-        rows = cur.fetchall()
-        con.close()
-        return str(rows)
-    except Exception as e:
-        return f"ERROR: {e}"
 
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
