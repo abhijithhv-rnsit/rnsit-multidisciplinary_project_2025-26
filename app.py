@@ -25,6 +25,21 @@ def db():
     return con
 
 from datetime import datetime
+
+@app.route("/debug/students")
+def debug_students():
+    con = db()
+    cur = con.cursor()
+    try:
+        cur.execute("SELECT usn, email FROM students")
+        rows = cur.fetchall()
+    except Exception as e:
+        return f"ERROR: {e}"
+    finally:
+        con.close()
+
+    return str([dict(r) for r in rows])
+
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
     if request.method == "POST":
