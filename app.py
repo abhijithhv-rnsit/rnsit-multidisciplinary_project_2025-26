@@ -180,6 +180,71 @@ def student_my_registration():
         registration=row
     )
 
+@app.route("/student/project-details", methods=["GET", "POST"])
+def student_project_details():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    usn = session["student_usn"]
+
+    con = db()
+    cur = con.cursor()
+
+    # Get team_id (leader or member)
+    cur.execute("""
+        SELECT id FROM teams WHERE leader_usn=?
+    """, (usn,))
+    team = cur.fetchone()
+
+    if not team:
+        cur.execute("""
+            SELECT t.id
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            WHERE m.usn=?
+        """, (usn,))
+        team = cur.fetchone()
+
+    if not team:
+        con.close()
+        flash("You are not part of any registered team.")
+        return redirect(url_for("student_home"))
+
+    team_id = team["id"]
+
+    # Fetch existing details
+    cur.execute("""
+        SELECT * FROM project_details WHERE team_id=?
+    """, (team_id,))
+    details = cur.fetchone()
+
+    if request.method == "POST":
+        abstract = request.form["abstract"]
+        objectives = request.form["objectives"]
+
+        if details:
+            cur.execute("""
+                UPDATE project_details
+                SET abstract=?, objectives=?
+                WHERE team_id=?
+            """, (abstract, objectives, team_id))
+        else:
+            cur.execute("""
+                INSERT INTO project_details(team_id, abstract, objectives)
+                VALUES (?,?,?)
+            """, (team_id, abstract, objectives))
+
+        con.commit()
+        con.close()
+        flash("Project details saved successfully")
+        return redirect(url_for("student_project_details"))
+
+    con.close()
+    return render_template(
+        "student_project_details.html",
+        details=details
+    )
+
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
@@ -619,6 +684,19 @@ if __name__ == "__main__":
         value TEXT
     )
     """)
+
+    # -------- Project Details (Abstract & Objectives) --------
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_details (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_id INTEGER UNIQUE,
+        abstract TEXT,
+        objectives TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(team_id) REFERENCES teams(id)
+    )
+    """)
+
 
     # 🔥 GUARANTEED MIGRATION (THIS IS THE FIX)
     try:
