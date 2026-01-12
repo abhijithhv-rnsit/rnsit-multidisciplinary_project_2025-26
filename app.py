@@ -579,6 +579,8 @@ CREATE TABLE IF NOT EXISTS teams(
     leader_email TEXT,
     leader_phone TEXT,
     problem_id INT
+    leader_department TEXT
+    leader_section TEXT
 )
 """)
 
