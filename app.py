@@ -345,6 +345,44 @@ def faculty_logout():
     flash("Logged out successfully")
     return redirect(url_for("faculty_login"))
 
+@app.route("/admin/assign-faculty", methods=["GET", "POST"])
+def admin_assign_faculty():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    # Fetch teams
+    cur.execute("SELECT id, team_name, leader_usn FROM teams")
+    teams = cur.fetchall()
+
+    # Fetch faculty
+    cur.execute("SELECT id, name, department FROM faculty")
+    faculty = cur.fetchall()
+
+    if request.method == "POST":
+        team_id = request.form["team_id"]
+        faculty_id = request.form["faculty_id"]
+
+        # Insert or update mapping
+        cur.execute("""
+            INSERT INTO team_faculty(team_id, faculty_id)
+            VALUES (?, ?)
+            ON CONFLICT(team_id) DO UPDATE SET faculty_id=excluded.faculty_id
+        """, (team_id, faculty_id))
+
+        con.commit()
+        flash("Faculty assigned successfully")
+
+    con.close()
+
+    return render_template(
+        "admin_assign_faculty.html",
+        teams=teams,
+        faculty=faculty
+    )
+
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
     if not session.get("admin_logged_in"):
@@ -817,6 +855,15 @@ if __name__ == "__main__":
         email TEXT UNIQUE,
         password_hash TEXT,
         department TEXT
+    )
+    """)
+    # -------- Team – Faculty Mapping --------
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS team_faculty (
+        team_id INTEGER UNIQUE,
+        faculty_id INTEGER,
+        FOREIGN KEY(team_id) REFERENCES teams(id),
+        FOREIGN KEY(faculty_id) REFERENCES faculty(id)
     )
     """)
 
