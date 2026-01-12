@@ -245,6 +245,63 @@ def student_project_details():
         details=details
     )
 
+@app.route("/student/weekly-progress", methods=["GET", "POST"])
+def student_weekly_progress():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    usn = session["student_usn"]
+
+    con = db()
+    cur = con.cursor()
+
+    # Find team_id
+    cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    team = cur.fetchone()
+
+    if not team:
+        cur.execute("""
+            SELECT t.id
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            WHERE m.usn=?
+        """, (usn,))
+        team = cur.fetchone()
+
+    if not team:
+        con.close()
+        flash("You are not part of any registered team.")
+        return redirect(url_for("student_home"))
+
+    team_id = team["id"]
+
+    if request.method == "POST":
+        week_no = request.form["week_no"]
+        progress = request.form["progress"]
+
+        cur.execute("""
+            INSERT INTO weekly_progress(team_id, week_no, progress)
+            VALUES (?,?,?)
+        """, (team_id, week_no, progress))
+
+        con.commit()
+        flash("Weekly progress submitted")
+
+    # Fetch progress list
+    cur.execute("""
+        SELECT * FROM weekly_progress
+        WHERE team_id=?
+        ORDER BY week_no DESC
+    """, (team_id,))
+    progress_list = cur.fetchall()
+
+    con.close()
+
+    return render_template(
+        "student_weekly_progress.html",
+        progress_list=progress_list
+    )
+
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
@@ -697,6 +754,19 @@ if __name__ == "__main__":
     )
     """)
 
+    # -------- Weekly Progress --------
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS weekly_progress (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_id INTEGER,
+        week_no INTEGER,
+        progress TEXT,
+        submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        faculty_remark TEXT,
+        status TEXT DEFAULT 'Pending',
+        FOREIGN KEY(team_id) REFERENCES teams(id)
+    )
+    """)
 
     # 🔥 GUARANTEED MIGRATION (THIS IS THE FIX)
     try:
