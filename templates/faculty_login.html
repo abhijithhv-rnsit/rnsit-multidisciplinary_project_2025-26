@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Faculty Login</title>
+    <link href="https://cdn.jsdelivr.net/npmbootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<div class="container mt-5" style="max-width:400px;">
+    <h4 class="mb-3 text-center">Faculty Login</h4>
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="alert alert-danger">{{ messages[0] }}</div>
+      {% endif %}
+    {% endwith %}
+
+    <form method="post">
+        <input name="email" class="form-control mb-3" placeholder="Faculty Email" required>
+        <input name="password" type="password" class="form-control mb-3" placeholder="Password" required>
+        <button class="btn btn-primary w-100">Login</button>
+    </form>
+</div>
+
+</body>
+</html>
