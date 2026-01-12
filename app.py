@@ -383,6 +383,34 @@ def admin_assign_faculty():
         faculty=faculty
     )
 
+@app.route("/admin/add-faculty", methods=["GET", "POST"])
+def admin_add_faculty():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    if request.method == "POST":
+        name = request.form["name"]
+        email = request.form["email"].strip().lower()
+        department = request.form["department"]
+        password = request.form["password"]
+
+        password_hash = generate_password_hash(password)
+
+        con = db()
+        cur = con.cursor()
+        try:
+            cur.execute("""
+                INSERT INTO faculty(name, email, password_hash, department)
+                VALUES (?,?,?,?)
+            """, (name, email, password_hash, department))
+            con.commit()
+            flash("Faculty created successfully")
+        except:
+            flash("Faculty email already exists")
+        con.close()
+
+    return render_template("admin_add_faculty.html")
+
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
     if not session.get("admin_logged_in"):
