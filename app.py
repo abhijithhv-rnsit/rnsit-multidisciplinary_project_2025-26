@@ -302,6 +302,48 @@ def student_weekly_progress():
         progress_list=progress_list
     )
 
+@app.route("/faculty/login", methods=["GET", "POST"])
+def faculty_login():
+    if request.method == "POST":
+        email = request.form["email"].strip().lower()
+        password = request.form["password"]
+
+        con = db()
+        cur = con.cursor()
+        cur.execute(
+            "SELECT * FROM faculty WHERE email=?",
+            (email,)
+        )
+        faculty = cur.fetchone()
+        con.close()
+
+        if not faculty:
+            flash("Faculty not found")
+            return redirect(request.url)
+
+        if not check_password_hash(faculty["password_hash"], password):
+            flash("Invalid password")
+            return redirect(request.url)
+
+        session["faculty_id"] = faculty["id"]
+        session["faculty_name"] = faculty["name"]
+
+        return redirect(url_for("faculty_dashboard"))
+
+    return render_template("faculty_login.html")
+
+@app.route("/faculty/dashboard")
+def faculty_dashboard():
+    if not session.get("faculty_id"):
+        return redirect(url_for("faculty_login"))
+    return render_template("faculty_dashboard.html")
+
+@app.route("/faculty/logout")
+def faculty_logout():
+    session.pop("faculty_id", None)
+    session.pop("faculty_name", None)
+    flash("Logged out successfully")
+    return redirect(url_for("faculty_login"))
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
@@ -765,6 +807,16 @@ if __name__ == "__main__":
         faculty_remark TEXT,
         status TEXT DEFAULT 'Pending',
         FOREIGN KEY(team_id) REFERENCES teams(id)
+    )
+    """)
+    # -------- Faculty Table --------
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS faculty (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        department TEXT
     )
     """)
 
