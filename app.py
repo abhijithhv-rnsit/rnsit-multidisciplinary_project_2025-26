@@ -541,9 +541,70 @@ def admin_logout():
     return redirect(url_for("admin"))
 
 
-if __name__=="__main__":
-    con=db(); cur=con.cursor()
-    # --- SAFE MIGRATION: add missing columns if not exist ---
+if __name__ == "__main__":
+    con = db()
+    cur = con.cursor()
+
+    # Ensure tables exist
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS problems(
+        id INTEGER PRIMARY KEY,
+        year TEXT,
+        title TEXT,
+        category TEXT,
+        difficulty TEXT,
+        max_teams INT,
+        problem_description TEXT,
+        problem_details TEXT,
+        expected_outcome TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS teams(
+        id INTEGER PRIMARY KEY,
+        team_name TEXT,
+        department TEXT,
+        section TEXT,
+        leader_name TEXT,
+        leader_usn TEXT UNIQUE,
+        leader_email TEXT,
+        leader_phone TEXT,
+        problem_id INT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS team_members(
+        id INTEGER PRIMARY KEY,
+        team_id INT,
+        member_name TEXT,
+        usn TEXT UNIQUE,
+        email TEXT,
+        phone TEXT,
+        department TEXT,
+        section TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usn TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS settings(
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+
+    # 🔥 GUARANTEED MIGRATION (THIS IS THE FIX)
     try:
         cur.execute("ALTER TABLE teams ADD COLUMN leader_department TEXT")
     except:
@@ -554,64 +615,9 @@ if __name__=="__main__":
     except:
         pass
 
-    cur.execute("""
-CREATE TABLE IF NOT EXISTS problems(
-    id INTEGER PRIMARY KEY,
-    year TEXT,
-    title TEXT,
-    category TEXT,
-    difficulty TEXT,
-    max_teams INT,
-    problem_description TEXT,
-    problem_details TEXT,
-    expected_outcome TEXT
-)
-""")
+    con.commit()
+    con.close()
 
-    cur.execute("""
-CREATE TABLE IF NOT EXISTS teams(
-    id INTEGER PRIMARY KEY,
-    team_name TEXT,
-    department TEXT,
-    section TEXT,
-    leader_name TEXT,
-    leader_usn TEXT UNIQUE,
-    leader_email TEXT,
-    leader_phone TEXT,
-    problem_id INT
-    leader_department TEXT
-    leader_section TEXT
-)
-""")
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS team_members(
-    id INTEGER PRIMARY KEY,
-    team_id INT,
-    member_name TEXT,
-    usn TEXT UNIQUE,
-    email TEXT,
-    phone TEXT
-)
-""")
-cur.execute("""
-CREATE TABLE IF NOT EXISTS settings(
-    key TEXT PRIMARY KEY,
-    value TEXT
-)
-""")
-cur.execute("""
-CREATE TABLE IF NOT EXISTS students (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    usn TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-""")
-
-
-con.commit(); con.close()
-
-port = int(os.environ.get("PORT", 5000))
-app.run(host="0.0.0.0", port=port)
