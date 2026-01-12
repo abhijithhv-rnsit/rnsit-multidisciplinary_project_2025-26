@@ -137,6 +137,33 @@ def student_home():
 
     return render_template("student_home.html", problems=data)
 
+@app.route("/student/my-registration")
+def student_my_registration():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    usn = session["student_usn"]
+
+    con = db()
+    cur = con.cursor()
+    cur.execute("""
+        SELECT
+            t.team_name,
+            t.leader_usn,
+            p.title AS problem_title
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        WHERE t.leader_usn = ?
+    """, (usn,))
+
+    row = cur.fetchone()
+    con.close()
+
+    return render_template(
+        "student_my_registration.html",
+        registration=row
+    )
+
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
