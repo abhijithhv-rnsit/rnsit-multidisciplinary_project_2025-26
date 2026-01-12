@@ -543,6 +543,17 @@ def admin_logout():
 
 if __name__=="__main__":
     con=db(); cur=con.cursor()
+    # --- SAFE MIGRATION: add missing columns if not exist ---
+    try:
+        cur.execute("ALTER TABLE teams ADD COLUMN leader_department TEXT")
+    except:
+        pass
+
+    try:
+        cur.execute("ALTER TABLE teams ADD COLUMN leader_section TEXT")
+    except:
+        pass
+
     cur.execute("""
 CREATE TABLE IF NOT EXISTS problems(
     id INTEGER PRIMARY KEY,
