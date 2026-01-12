@@ -146,6 +146,8 @@ def student_my_registration():
 
     con = db()
     cur = con.cursor()
+
+    # 1️⃣ Check if student is TEAM LEADER
     cur.execute("""
         SELECT
             t.team_name,
@@ -155,8 +157,22 @@ def student_my_registration():
         JOIN problems p ON t.problem_id = p.id
         WHERE t.leader_usn = ?
     """, (usn,))
-
     row = cur.fetchone()
+
+    # 2️⃣ If not leader, check TEAM MEMBERS
+    if not row:
+        cur.execute("""
+            SELECT
+                t.team_name,
+                t.leader_usn,
+                p.title AS problem_title
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            JOIN problems p ON t.problem_id = p.id
+            WHERE m.usn = ?
+        """, (usn,))
+        row = cur.fetchone()
+
     con.close()
 
     return render_template(
