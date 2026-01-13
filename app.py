@@ -526,6 +526,48 @@ def admin_deadline():
         deadline=row[0] if row else ""
     )
 
+@app.route("/faculty/review-progress/<int:progress_id>", methods=["POST"])
+def faculty_review_progress(progress_id):
+    if not session.get("faculty_id"):
+        return redirect(url_for("faculty_login"))
+
+    faculty_id = session["faculty_id"]
+
+    remark = request.form.get("faculty_remark", "").strip()
+    status = request.form.get("status", "Reviewed").strip()
+
+    con = db()
+    cur = con.cursor()
+
+    # Security check: faculty can only review progress of assigned teams
+    cur.execute("""
+        SELECT wp.team_id
+        FROM weekly_progress wp
+        JOIN team_faculty tf ON wp.team_id = tf.team_id
+        WHERE wp.id=? AND tf.faculty_id=?
+    """, (progress_id, faculty_id))
+
+    row = cur.fetchone()
+    if not row:
+        con.close()
+        flash("Access denied")
+        return redirect(url_for("faculty_dashboard"))
+
+    team_id = row["team_id"]
+
+    # Update progress review
+    cur.execute("""
+        UPDATE weekly_progress
+        SET faculty_remark=?, status=?
+        WHERE id=?
+    """, (remark, status, progress_id))
+
+    con.commit()
+    con.close()
+
+    flash("Review updated successfully")
+    return redirect(url_for("faculty_team_details", team_id=team_id))
+
 @app.route("/")
 def index():
     con=db(); cur=con.cursor()
