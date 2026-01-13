@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Team Details</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-dark bg-dark px-3">
+    <a class="navbar-brand" href="/faculty/dashboard">Faculty Dashboard</a>
+    <a href="/faculty/logout" class="btn btn-light btn-sm">Logout</a>
+</nav>
+
+<div class="container mt-4">
+    <h4 class="mb-3">Team Details</h4>
+
+    <div class="card p-3 mb-4 shadow-sm">
+        <h5 class="mb-2">{{ team.team_name }}</h5>
+        <p class="mb-1"><strong>Leader:</strong> {{ team.leader_name }} ({{ team.leader_usn }})</p>
+        <p class="mb-1"><strong>Email:</strong> {{ team.leader_email }}</p>
+        <p class="mb-1"><strong>Phone:</strong> {{ team.leader_phone }}</p>
+        <hr>
+        <p class="mb-1"><strong>Problem:</strong> {{ team.problem_title }}</p>
+        <p class="mb-1"><strong>Description:</strong> {{ team.problem_description }}</p>
+        <p class="mb-1"><strong>Details:</strong> {{ team.problem_details }}</p>
+        <p class="mb-1"><strong>Expected Outcome:</strong> {{ team.expected_outcome }}</p>
+    </div>
+
+    <h5 class="mb-3">Weekly Progress</h5>
+
+    {% if progress_list and progress_list|length > 0 %}
+        {% for p in progress_list %}
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6>Week {{ p.week_no }}</h6>
+                <p>{{ p.progress }}</p>
+                <small class="text-muted">
+                    Status: {{ p.status }} | Submitted on {{ p.submitted_at }}
+                </small>
+
+                {% if p.faculty_remark %}
+                    <div class="alert alert-info mt-2">
+                        <strong>Faculty Remark:</strong> {{ p.faculty_remark }}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="alert alert-warning">No weekly progress submitted yet.</div>
+    {% endif %}
+</div>
+
+</body>
+</html>
