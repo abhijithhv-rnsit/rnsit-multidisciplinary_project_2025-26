@@ -26,8 +26,14 @@
         <p class="mb-1"><strong>Expected Outcome:</strong> {{ team.expected_outcome }}</p>
     </div>
     <hr>
-    <p><strong>Abstract:</strong> {{ team.abstract or "Not submitted" }}</p>
-    <p><strong>Objectives:</strong> {{ team.objectives or "Not submitted" }}</p>
+    <p><strong>Abstract:</strong>
+  {{ project_details.abstract if project_details else "Not submitted" }}
+</p>
+
+<p><strong>Objectives:</strong>
+  {{ project_details.objectives if project_details else "Not submitted" }}
+</p>
+
     <hr>
     <h5 class="mb-3">Weekly Progress</h5>
 
