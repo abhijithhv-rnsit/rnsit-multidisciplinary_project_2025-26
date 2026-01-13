@@ -787,6 +787,9 @@ def index():
 def register(pid):
     
     from datetime import datetime
+    if not session.get("student_usn"):
+        flash("Please login as student to register a team.")
+        return redirect(url_for("student_login"))
 
     # --- REGISTRATION DEADLINE CHECK ---
     con = db()
