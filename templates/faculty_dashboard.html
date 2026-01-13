@@ -13,8 +13,46 @@
 
 <div class="container mt-4">
     <h4>Welcome, {{ session.faculty_name }}</h4>
-    <p class="text-muted">Assigned teams will appear here.</p>
+    <p class="text-muted">Below are your assigned teams.</p>
+
+    {% if assigned_teams and assigned_teams|length > 0 %}
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Team Name</th>
+                        <th>Leader</th>
+                        <th>USN</th>
+                        <th>Problem Statement</th>
+                        <th>Year</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in assigned_teams %}
+                    <tr>
+                        <td>{{ t.team_name }}</td>
+                        <td>{{ t.leader_name }}</td>
+                        <td>{{ t.leader_usn }}</td>
+                        <td>{{ t.problem_title }}</td>
+                        <td>{{ t.problem_year }}</td>
+                        <td>
+                            <a class="btn btn-sm btn-primary" href="/faculty/team/{{ t.team_id }}">
+                                View Details
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-warning">
+            No teams assigned yet.
+        </div>
+    {% endif %}
 </div>
+
 
 </body>
 </html>
