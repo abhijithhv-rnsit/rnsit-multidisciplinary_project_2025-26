@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>My Registered Project</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-dark bg-primary px-3">
+  <a class="navbar-brand" href="/student/home">Student Dashboard</a>
+  <a href="/student/logout" class="btn btn-light btn-sm">Logout</a>
+</nav>
+
+<div class="container mt-4">
+  <h4 class="mb-3">My Registered Project</h4>
+
+  <div class="card shadow-sm p-3">
+    <h5 class="mb-2">{{ team.team_name }}</h5>
+
+    <p class="mb-1"><strong>Problem:</strong> {{ team.problem_title }} ({{ team.problem_year }})</p>
+    <p class="mb-1"><strong>Team Leader:</strong> {{ team.leader_name }} ({{ team.leader_usn }})</p>
+    <p class="mb-1"><strong>Leader Email:</strong> {{ team.leader_email }}</p>
+    <p class="mb-1"><strong>Leader Phone:</strong> {{ team.leader_phone }}</p>
+
+    <hr>
+
+    <p><strong>Abstract:</strong> {{ team.abstract or "Not submitted yet" }}</p>
+    <p><strong>Objectives:</strong> {{ team.objectives or "Not submitted yet" }}</p>
+
+    <hr>
+
+    <p><strong>Total Weekly Progress Updates:</strong> {{ progress_count }}</p>
+
+    <hr>
+
+    <h6>Faculty Guide</h6>
+    {% if faculty %}
+      <p class="mb-1"><strong>Name:</strong> {{ faculty.name }}</p>
+      <p class="mb-1"><strong>Email:</strong> {{ faculty.email }}</p>
+      <p class="mb-1"><strong>Department:</strong> {{ faculty.department }}</p>
+    {% else %}
+      <div class="alert alert-warning">Faculty not assigned yet.</div>
+    {% endif %}
+
+    <div class="mt-3">
+      <a href="/student/weekly-progress" class="btn btn-outline-warning btn-sm">Weekly Progress</a>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
