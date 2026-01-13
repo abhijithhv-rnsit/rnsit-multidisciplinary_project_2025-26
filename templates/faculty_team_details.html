@@ -43,6 +43,26 @@
                         <strong>Faculty Remark:</strong> {{ p.faculty_remark }}
                     </div>
                 {% endif %}
+                <form method="post" action="/faculty/review-progress/{{ p.id }}" class="mt-3">
+    <div class="mb-2">
+        <label class="form-label"><strong>Faculty Remark</strong></label>
+        <textarea name="faculty_remark" class="form-control" rows="2"
+                  placeholder="Write remark here...">{{ p.faculty_remark or "" }}</textarea>
+    </div>
+
+    <div class="mb-2">
+        <label class="form-label"><strong>Status</strong></label>
+        <select name="status" class="form-select">
+            <option value="Pending" {% if p.status=="Pending" %}selected{% endif %}>Pending</option>
+            <option value="Reviewed" {% if p.status=="Reviewed" %}selected{% endif %}>Reviewed</option>
+            <option value="Approved" {% if p.status=="Approved" %}selected{% endif %}>Approved</option>
+            <option value="Needs Improvement" {% if p.status=="Needs Improvement" %}selected{% endif %}>Needs Improvement</option>
+        </select>
+    </div>
+
+    <button class="btn btn-success btn-sm">Save Review</button>
+</form>
+
             </div>
         </div>
         {% endfor %}
