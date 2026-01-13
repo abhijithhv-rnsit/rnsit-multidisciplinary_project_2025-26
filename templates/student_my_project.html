@@ -24,8 +24,9 @@
 
     <hr>
 
-    <p><strong>Abstract:</strong> {{ team.abstract or "Not submitted yet" }}</p>
-    <p><strong>Objectives:</strong> {{ team.objectives or "Not submitted yet" }}</p>
+    <p><strong>Abstract:</strong> {{ project_details.abstract if project_details else "Not submitted yet" }}</p>
+    <p><strong>Objectives:</strong> {{ project_details.objectives if project_details else "Not submitted yet" }}</p>
+
 
     <hr>
 
