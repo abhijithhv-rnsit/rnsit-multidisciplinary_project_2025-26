@@ -746,11 +746,11 @@ def faculty_review_progress(progress_id):
 """@app.route("/")
 def index():
    con=db(); cur=con.cursor()
-    cur.execute("""
-    """SELECT id, year, title, category, difficulty, max_teams,
+    cur.execute(""" """
+    SELECT id, year, title, category, difficulty, max_teams,
            problem_description, problem_details, expected_outcome
     FROM problems
-""")"""
+"""""")
 
     probs=cur.fetchall()
     data=[]
