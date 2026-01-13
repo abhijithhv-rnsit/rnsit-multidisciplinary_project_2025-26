@@ -208,6 +208,13 @@ def student_my_project():
         WHERE t.leader_usn=?
     """, (usn,))
     team = cur.fetchone()
+    # Fetch abstract/objectives from project_details table
+    cur.execute("""
+        SELECT abstract, objectives
+        FROM project_details
+        WHERE team_id=?
+    """, (team["id"],))
+    pd = cur.fetchone()
 
     # If not leader, check member
     if not team:
@@ -244,8 +251,10 @@ def student_my_project():
         "student_my_project.html",
         team=team,
         faculty=faculty_row,
-        progress_count=progress_count
+        progress_count=progress_count,
+        project_details=pd
     )
+
 
 @app.route("/student/project-details", methods=["GET", "POST"])
 def student_project_details():
