@@ -147,6 +147,32 @@ def student_home():
 
     return render_template("student_home.html", problems=data)
 
+@app.route("/student/problems")
+def student_problems():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    con = db()
+    cur = con.cursor()
+
+    cur.execute("""
+        SELECT id, year, title, category, difficulty, max_teams,
+               problem_description, problem_details, expected_outcome
+        FROM problems
+        ORDER BY year DESC
+    """)
+    probs = cur.fetchall()
+
+    data = []
+    for p in probs:
+        cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (p["id"],))
+        registered_count = cur.fetchone()[0]
+        data.append((p, registered_count))
+
+    con.close()
+
+    return render_template("student_problems.html", data=data)
+
 @app.route("/student/my-registration")
 def student_my_registration():
     if not session.get("student_usn"):
