@@ -39,7 +39,17 @@ def ensure_students_table():
     """)
     con.commit()
     con.close()
-    
+ 
+def add_column_if_not_exists(table, column, col_type):
+    con = db()
+    cur = con.cursor()
+    cur.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    if column not in cols:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        con.commit()
+    con.close()
+   
 
 from datetime import datetime
 
@@ -178,6 +188,63 @@ def student_my_registration():
     return render_template(
         "student_my_registration.html",
         registration=row
+    )
+
+@app.route("/student/my-project")
+def student_my_project():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    usn = session["student_usn"]
+
+    con = db()
+    cur = con.cursor()
+
+    # Find team where student is leader
+    cur.execute("""
+        SELECT t.*, p.title AS problem_title, p.year AS problem_year
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        WHERE t.leader_usn=?
+    """, (usn,))
+    team = cur.fetchone()
+
+    # If not leader, check member
+    if not team:
+        cur.execute("""
+            SELECT t.*, p.title AS problem_title, p.year AS problem_year
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            JOIN problems p ON t.problem_id = p.id
+            WHERE m.usn=?
+        """, (usn,))
+        team = cur.fetchone()
+
+    if not team:
+        con.close()
+        flash("You are not registered under any project yet.")
+        return redirect(url_for("student_home"))
+
+    # Get faculty assigned
+    cur.execute("""
+        SELECT f.name, f.email, f.department
+        FROM team_faculty tf
+        JOIN faculty f ON tf.faculty_id = f.id
+        WHERE tf.team_id=?
+    """, (team["id"],))
+    faculty_row = cur.fetchone()
+
+    # Weekly progress count
+    cur.execute("SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team["id"],))
+    progress_count = cur.fetchone()[0]
+
+    con.close()
+
+    return render_template(
+        "student_my_project.html",
+        team=team,
+        faculty=faculty_row,
+        progress_count=progress_count
     )
 
 @app.route("/student/project-details", methods=["GET", "POST"])
@@ -339,6 +406,9 @@ def faculty_dashboard():
 
     faculty_id = session["faculty_id"]
 
+    search = request.args.get("search", "").strip().lower()
+    status_filter = request.args.get("status", "").strip()
+
     con = db()
     cur = con.cursor()
 
@@ -348,8 +418,6 @@ def faculty_dashboard():
             t.team_name,
             t.leader_name,
             t.leader_usn,
-            t.leader_email,
-            t.leader_phone,
             p.title AS problem_title,
             p.year AS problem_year
         FROM team_faculty tf
@@ -358,14 +426,35 @@ def faculty_dashboard():
         WHERE tf.faculty_id = ?
         ORDER BY p.title
     """, (faculty_id,))
-
     assigned_teams = cur.fetchall()
+
+    # Pending review count
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM weekly_progress wp
+        JOIN team_faculty tf ON wp.team_id = tf.team_id
+        WHERE tf.faculty_id=? AND wp.status='Pending'
+    """, (faculty_id,))
+    pending_count = cur.fetchone()[0]
+
     con.close()
+
+    # Apply search/filter in python (simple)
+    filtered = []
+    for t in assigned_teams:
+        text = f"{t['team_name']} {t['leader_usn']} {t['problem_title']}".lower()
+        if search and search not in text:
+            continue
+        filtered.append(t)
 
     return render_template(
         "faculty_dashboard.html",
-        assigned_teams=assigned_teams
+        assigned_teams=filtered,
+        pending_count=pending_count,
+        search=search,
+        status_filter=status_filter
     )
+
 
 @app.route("/faculty/team/<int:team_id>")
 def faculty_team_details(team_id):
@@ -397,6 +486,8 @@ def faculty_team_details(team_id):
             t.leader_usn,
             t.leader_email,
             t.leader_phone,
+            t.abstract,
+            t.objectives,
             p.title AS problem_title,
             p.problem_description,
             p.problem_details,
@@ -405,6 +496,7 @@ def faculty_team_details(team_id):
         JOIN problems p ON t.problem_id = p.id
         WHERE t.id=?
     """, (team_id,))
+
     team = cur.fetchone()
 
     # Weekly progress
@@ -496,6 +588,38 @@ def admin_add_faculty():
         con.close()
 
     return render_template("admin_add_faculty.html")
+
+@app.route("/admin/faculty")
+def admin_faculty_list():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+    cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+    faculty = cur.fetchall()
+    con.close()
+
+    return render_template("admin_faculty_list.html", faculty=faculty)
+
+@app.route("/admin/faculty/delete/<int:fid>")
+def admin_delete_faculty(fid):
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    # Remove assignments first
+    cur.execute("DELETE FROM team_faculty WHERE faculty_id=?", (fid,))
+    # Delete faculty
+    cur.execute("DELETE FROM faculty WHERE id=?", (fid,))
+
+    con.commit()
+    con.close()
+
+    flash("Faculty deleted successfully")
+    return redirect(url_for("admin_faculty_list"))
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
@@ -1022,6 +1146,8 @@ if __name__ == "__main__":
         FOREIGN KEY(faculty_id) REFERENCES faculty(id)
     )
     """)
+    add_column_if_not_exists("teams", "abstract", "TEXT")
+    add_column_if_not_exists("teams", "objectives", "TEXT")
 
     # 🔥 GUARANTEED MIGRATION (THIS IS THE FIX)
     try:
