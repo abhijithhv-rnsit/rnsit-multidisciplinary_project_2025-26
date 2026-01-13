@@ -336,7 +336,93 @@ def faculty_login():
 def faculty_dashboard():
     if not session.get("faculty_id"):
         return redirect(url_for("faculty_login"))
-    return render_template("faculty_dashboard.html")
+
+    faculty_id = session["faculty_id"]
+
+    con = db()
+    cur = con.cursor()
+
+    cur.execute("""
+        SELECT
+            t.id AS team_id,
+            t.team_name,
+            t.leader_name,
+            t.leader_usn,
+            t.leader_email,
+            t.leader_phone,
+            p.title AS problem_title,
+            p.year AS problem_year
+        FROM team_faculty tf
+        JOIN teams t ON tf.team_id = t.id
+        JOIN problems p ON t.problem_id = p.id
+        WHERE tf.faculty_id = ?
+        ORDER BY p.title
+    """, (faculty_id,))
+
+    assigned_teams = cur.fetchall()
+    con.close()
+
+    return render_template(
+        "faculty_dashboard.html",
+        assigned_teams=assigned_teams
+    )
+
+@app.route("/faculty/team/<int:team_id>")
+def faculty_team_details(team_id):
+    if not session.get("faculty_id"):
+        return redirect(url_for("faculty_login"))
+
+    faculty_id = session["faculty_id"]
+
+    con = db()
+    cur = con.cursor()
+
+    # Security check: faculty can only access assigned team
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM team_faculty
+        WHERE team_id=? AND faculty_id=?
+    """, (team_id, faculty_id))
+
+    if cur.fetchone()[0] == 0:
+        con.close()
+        flash("Access denied")
+        return redirect(url_for("faculty_dashboard"))
+
+    # Team + Problem info
+    cur.execute("""
+        SELECT
+            t.team_name,
+            t.leader_name,
+            t.leader_usn,
+            t.leader_email,
+            t.leader_phone,
+            p.title AS problem_title,
+            p.problem_description,
+            p.problem_details,
+            p.expected_outcome
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        WHERE t.id=?
+    """, (team_id,))
+    team = cur.fetchone()
+
+    # Weekly progress
+    cur.execute("""
+        SELECT *
+        FROM weekly_progress
+        WHERE team_id=?
+        ORDER BY week_no DESC
+    """, (team_id,))
+    progress_list = cur.fetchall()
+
+    con.close()
+
+    return render_template(
+        "faculty_team_details.html",
+        team=team,
+        progress_list=progress_list
+    )
 
 @app.route("/faculty/logout")
 def faculty_logout():
