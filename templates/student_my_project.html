@@ -23,7 +23,40 @@
     <p class="mb-1"><strong>Leader Phone:</strong> {{ team.leader_phone }}</p>
 
     <hr>
+    <hr>
+<h6 class="mt-2">Team Members</h6>
 
+{% if members and members|length > 0 %}
+  <div class="table-responsive">
+    <table class="table table-bordered table-sm mt-2">
+      <thead class="table-dark">
+        <tr>
+          <th>Name</th>
+          <th>USN</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Department</th>
+          <th>Section</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td>{{ m.member_name }}</td>
+          <td>{{ m.usn }}</td>
+          <td>{{ m.email }}</td>
+          <td>{{ m.phone }}</td>
+          <td>{{ m.department }}</td>
+          <td>{{ m.section }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="alert alert-warning mt-2">No members found.</div>
+{% endif %}
+<hr>
     <p><strong>Abstract:</strong> {{ project_details.abstract if project_details else "Not submitted yet" }}</p>
     <p><strong>Objectives:</strong> {{ project_details.objectives if project_details else "Not submitted yet" }}</p>
 
