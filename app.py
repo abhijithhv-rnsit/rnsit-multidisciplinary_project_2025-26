@@ -495,8 +495,6 @@ def faculty_team_details(team_id):
             t.leader_usn,
             t.leader_email,
             t.leader_phone,
-            t.abstract,
-            t.objectives,
             p.title AS problem_title,
             p.problem_description,
             p.problem_details,
@@ -507,6 +505,13 @@ def faculty_team_details(team_id):
     """, (team_id,))
 
     team = cur.fetchone()
+    # Fetch abstract/objectives from project_details
+    cur.execute("""
+        SELECT abstract, objectives
+        FROM project_details
+        WHERE team_id=?
+    """, (team_id,))
+    project_details = cur.fetchone()
 
     # Weekly progress
     cur.execute("""
@@ -522,8 +527,10 @@ def faculty_team_details(team_id):
     return render_template(
         "faculty_team_details.html",
         team=team,
-        progress_list=progress_list
+        progress_list=progress_list,
+        project_details=project_details
     )
+
 
 @app.route("/faculty/logout")
 def faculty_logout():
