@@ -231,6 +231,14 @@ def student_my_project():
         con.close()
         flash("You are not registered under any project yet.")
         return redirect(url_for("student_home"))
+    # Fetch team members
+    cur.execute("""
+        SELECT member_name, usn, email, phone, department, section
+        FROM team_members
+        WHERE team_id=?
+        ORDER BY id
+    """, (team["id"],))
+    members = cur.fetchall()
 
     # Get faculty assigned
     cur.execute("""
@@ -252,7 +260,8 @@ def student_my_project():
         team=team,
         faculty=faculty_row,
         progress_count=progress_count,
-        project_details=pd
+        project_details=pd,
+        members=members
     )
 
 
