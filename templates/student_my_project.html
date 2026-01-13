@@ -40,17 +40,29 @@
         </tr>
       </thead>
       <tbody>
-        {% for m in members %}
-        <tr>
-          <td>{{ m.member_name }}</td>
-          <td>{{ m.usn }}</td>
-          <td>{{ m.email }}</td>
-          <td>{{ m.phone }}</td>
-          <td>{{ m.department }}</td>
-          <td>{{ m.section }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
+  <!-- Team Leader Row -->
+  <tr class="table-success">
+    <td>{{ team.leader_name }} <strong>(Leader)</strong></td>
+    <td>{{ team.leader_usn }}</td>
+    <td>{{ team.leader_email }}</td>
+    <td>{{ team.leader_phone }}</td>
+    <td>{{ team.leader_department }}</td>
+    <td>{{ team.leader_section }}</td>
+  </tr>
+
+  <!-- Team Members Rows -->
+  {% for m in members %}
+  <tr>
+    <td>{{ m.member_name }}</td>
+    <td>{{ m.usn }}</td>
+    <td>{{ m.email }}</td>
+    <td>{{ m.phone }}</td>
+    <td>{{ m.department }}</td>
+    <td>{{ m.section }}</td>
+  </tr>
+  {% endfor %}
+</tbody>
+
     </table>
   </div>
 {% else %}
