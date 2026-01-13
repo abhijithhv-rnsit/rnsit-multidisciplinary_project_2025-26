@@ -10,6 +10,19 @@
     <span class="navbar-brand">Faculty Dashboard</span>
     <a href="/faculty/logout" class="btn btn-light btn-sm">Logout</a>
 </nav>
+<div class="alert alert-warning">
+  <strong>Pending Reviews:</strong> {{ pending_count }}
+</div>
+
+<form method="get" class="row g-2 mb-3">
+  <div class="col-md-8">
+    <input type="text" name="search" value="{{ search }}" class="form-control"
+           placeholder="Search by Team / USN / Problem...">
+  </div>
+  <div class="col-md-4">
+    <button class="btn btn-primary w-100">Search</button>
+  </div>
+</form>
 
 <div class="container mt-4">
     <h4>Welcome, {{ session.faculty_name }}</h4>
