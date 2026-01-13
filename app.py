@@ -717,14 +717,14 @@ def faculty_review_progress(progress_id):
     flash("Review updated successfully")
     return redirect(url_for("faculty_team_details", team_id=team_id))
 
-@app.route("/")
+"""@app.route("/")
 def index():
-    con=db(); cur=con.cursor()
+   con=db(); cur=con.cursor()
     cur.execute("""
-    SELECT id, year, title, category, difficulty, max_teams,
+    """SELECT id, year, title, category, difficulty, max_teams,
            problem_description, problem_details, expected_outcome
     FROM problems
-""")
+""")"""
 
     probs=cur.fetchall()
     data=[]
@@ -751,7 +751,10 @@ def index():
     "index.html",
     data=data,
     registration_closed=registration_closed
-)
+)"""
+@app.route("/")
+def index():
+    return render_template("landing.html")
 
 
 @app.route("/register/<int:pid>", methods=["GET","POST"])
