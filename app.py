@@ -906,7 +906,7 @@ def register(pid):
         con.close()
 
         flash("Team registered successfully")
-        return redirect(url_for("index"))
+        return redirect(url_for("student_home.html"))
 
 
     con.close()
