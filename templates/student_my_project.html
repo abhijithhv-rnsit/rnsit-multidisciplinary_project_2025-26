@@ -1,98 +1,104 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>My Registered Project</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
+{% extends "student_base.html" %}
+{% block title %}My Registered Project{% endblock %}
 
-<nav class="navbar navbar-dark bg-primary px-3">
-  <a class="navbar-brand" href="/student/home">Student Dashboard</a>
-  <a href="/student/logout" class="btn btn-light btn-sm">Logout</a>
-</nav>
+{% block content %}
 
-<div class="container mt-4">
+<div class="container mt-2">
   <h4 class="mb-3">My Registered Project</h4>
 
-  <div class="card shadow-sm p-3">
-    <h5 class="mb-2">{{ team.team_name }}</h5>
+  <div class="card shadow-sm">
+    <div class="card-body">
 
-    <p class="mb-1"><strong>Problem:</strong> {{ team.problem_title }} ({{ team.problem_year }})</p>
-    <p class="mb-1"><strong>Team Leader:</strong> {{ team.leader_name }} ({{ team.leader_usn }})</p>
-    <p class="mb-1"><strong>Leader Email:</strong> {{ team.leader_email }}</p>
-    <p class="mb-1"><strong>Leader Phone:</strong> {{ team.leader_phone }}</p>
+      <h5 class="mb-2">{{ team.team_name }}</h5>
 
-    <hr>
-    <hr>
-<h6 class="mt-2">Team Members</h6>
+      <p class="mb-1"><strong>Problem:</strong> {{ team.problem_title }} ({{ team.problem_year }})</p>
+      <p class="mb-1"><strong>Team Leader:</strong> {{ team.leader_name }} ({{ team.leader_usn }})</p>
+      <p class="mb-1"><strong>Leader Email:</strong> {{ team.leader_email }}</p>
+      <p class="mb-1"><strong>Leader Phone:</strong> {{ team.leader_phone }}</p>
 
-{% if members and members|length > 0 %}
-  <div class="table-responsive">
-    <table class="table table-bordered table-sm mt-2">
-      <thead class="table-dark">
-        <tr>
-          <th>Name</th>
-          <th>USN</th>
-          <th>Email</th>
-          <th>Phone</th>
-          <th>Department</th>
-          <th>Section</th>
-        </tr>
-      </thead>
-      <tbody>
-  <!-- Team Leader Row -->
-  <tr class="table-success">
-    <td>{{ team.leader_name }} <strong>(Leader)</strong></td>
-    <td>{{ team.leader_usn }}</td>
-    <td>{{ team.leader_email }}</td>
-    <td>{{ team.leader_phone }}</td>
-    <td>{{ team.leader_department }}</td>
-    <td>{{ team.leader_section }}</td>
-  </tr>
+      <hr>
 
-  <!-- Team Members Rows -->
-  {% for m in members %}
-  <tr>
-    <td>{{ m.member_name }}</td>
-    <td>{{ m.usn }}</td>
-    <td>{{ m.email }}</td>
-    <td>{{ m.phone }}</td>
-    <td>{{ m.department }}</td>
-    <td>{{ m.section }}</td>
-  </tr>
-  {% endfor %}
-</tbody>
+      <h6 class="mt-2">Team Members</h6>
 
-    </table>
-  </div>
-{% else %}
-  <div class="alert alert-warning mt-2">No members found.</div>
-{% endif %}
-<hr>
-    <p><strong>Abstract:</strong> {{ project_details.abstract if project_details else "Not submitted yet" }}</p>
-    <p><strong>Objectives:</strong> {{ project_details.objectives if project_details else "Not submitted yet" }}</p>
+      {% if members and members|length > 0 %}
+        <div class="table-responsive">
+          <table class="table table-bordered table-sm mt-2 align-middle">
+            <thead class="table-dark">
+              <tr>
+                <th>Name</th>
+                <th>USN</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Department</th>
+                <th>Section</th>
+              </tr>
+            </thead>
 
+            <tbody>
+              <!-- Team Leader Row -->
+              <tr class="table-success">
+                <td>{{ team.leader_name }} <strong>(Leader)</strong></td>
+                <td>{{ team.leader_usn }}</td>
+                <td>{{ team.leader_email }}</td>
+                <td>{{ team.leader_phone }}</td>
+                <td>{{ team.leader_department }}</td>
+                <td>{{ team.leader_section }}</td>
+              </tr>
 
-    <hr>
+              <!-- Team Members Rows -->
+              {% for m in members %}
+              <tr>
+                <td>{{ m.member_name }}</td>
+                <td>{{ m.usn }}</td>
+                <td>{{ m.email }}</td>
+                <td>{{ m.phone }}</td>
+                <td>{{ m.department }}</td>
+                <td>{{ m.section }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
 
-    <p><strong>Total Weekly Progress Updates:</strong> {{ progress_count }}</p>
+          </table>
+        </div>
+      {% else %}
+        <div class="alert alert-warning mt-2">No members found.</div>
+      {% endif %}
 
-    <hr>
+      <hr>
 
-    <h6>Faculty Guide</h6>
-    {% if faculty %}
-      <p class="mb-1"><strong>Name:</strong> {{ faculty.name }}</p>
-      <p class="mb-1"><strong>Email:</strong> {{ faculty.email }}</p>
-      <p class="mb-1"><strong>Department:</strong> {{ faculty.department }}</p>
-    {% else %}
-      <div class="alert alert-warning">Faculty not assigned yet.</div>
-    {% endif %}
+      <h6>Project Abstract & Objectives</h6>
+      <p><strong>Abstract:</strong> {{ project_details.abstract if project_details else "Not submitted yet" }}</p>
+      <p><strong>Objectives:</strong> {{ project_details.objectives if project_details else "Not submitted yet" }}</p>
 
-    <div class="mt-3">
-      <a href="/student/weekly-progress" class="btn btn-outline-warning btn-sm">Weekly Progress</a>
+      <div class="mt-2">
+        <a href="/student/project-details" class="btn btn-outline-primary btn-sm">
+          Edit Abstract & Objectives
+        </a>
+      </div>
+
+      <hr>
+
+      <p><strong>Total Weekly Progress Updates:</strong> {{ progress_count }}</p>
+
+      <div class="mt-2">
+        <a href="/student/weekly-progress" class="btn btn-outline-warning btn-sm">
+          Weekly Progress
+        </a>
+      </div>
+
+      <hr>
+
+      <h6>Faculty Guide</h6>
+      {% if faculty %}
+        <p class="mb-1"><strong>Name:</strong> {{ faculty.name }}</p>
+        <p class="mb-1"><strong>Email:</strong> {{ faculty.email }}</p>
+        <p class="mb-1"><strong>Department:</strong> {{ faculty.department }}</p>
+      {% else %}
+        <div class="alert alert-warning mb-0">Faculty not assigned yet.</div>
+      {% endif %}
+
     </div>
   </div>
 </div>
 
-</body>
-</html>
+{% endblock %}
