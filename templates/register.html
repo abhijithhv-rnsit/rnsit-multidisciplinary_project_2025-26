@@ -1,164 +1,187 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Team Registration</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <title>Team Registration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    body { background:#f6f7fb; }
+    .card { border-radius: 18px; }
+    .section-title { font-weight: 700; font-size: 1.05rem; }
+    .small-note { font-size: 0.88rem; color: #6c757d; }
+  </style>
 </head>
+
 <body class="bg-light">
 
-<div class="container mt-5 mb-5">
-    <div class="card shadow-lg">
-        <div class="card-header text-white" style="background:#003366">
-            <h4 class="mb-0">
-                Team Registration – RNSIT Multidisciplinary Project (2025-26)
-            </h4>
+<nav class="navbar navbar-dark" style="background:#003366">
+  <div class="container-fluid">
+    <span class="navbar-brand fw-bold">Team Registration</span>
+    <a href="/" class="btn btn-outline-light btn-sm">← Back</a>
+  </div>
+</nav>
+
+<div class="container py-4">
+
+  <div class="mb-3">
+    <h4 class="fw-bold mb-1">{{ title }}</h4>
+    <p class="text-muted mb-0">Fill all details carefully before submitting.</p>
+  </div>
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <div class="alert alert-danger">{{ messages[0] }}</div>
+    {% endif %}
+  {% endwith %}
+
+  <form method="post">
+
+    <!-- Team Info -->
+    <div class="card shadow-sm border-0 mb-4">
+      <div class="card-body p-4">
+        <div class="section-title mb-2">📌 Team Information</div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Team Name</label>
+          <input type="text" name="team_name" class="form-control" placeholder="Enter your team name" required>
         </div>
 
-        <div class="card-body">
-            <h5 class="mb-3">{{title}}</h5>
-
-            <form method="post">
-
-                <!-- TEAM DETAILS -->
-                <h6 class="text-primary">Team Details</h6>
-
-                <div class="row mb-3">
-                    <div class="col-md-6">
-                        <label class="form-label">Team Name</label>
-                        <input class="form-control" name="team_name" required>
-                    </div>
-
-                    <!--<div class="col-md-4">
-                        <label class="form-label">Department / Branch</label>
-                        <select class="form-select" name="department" required>
-                            <option value="">Select</option>
-                            <option>CSE</option>
-                            <option>CSE-AIML</option>
-                            <option>CSE-DS</option>
-                            <option>CSE-CY</option>
-                            <option>ECE</option>
-                            <option>EEE</option>
-                            <option>CV</option>
-                            <option>ME</option>
-                        </select>
-                    </div>
-
-                    <div class="col-md-2">
-                        <label class="form-label">Section</label>
-                        <input class="form-control" name="section" required>
-                    </div>-->
-                </div>
-
-                <hr>
-
-                <!-- TEAM LEADER -->
-                <h6 class="text-primary">Team Leader Details</h6>
-
-                <div class="row mb-3">
-                    <div class="col-md-3">
-                        <input class="form-control" name="leader_name" placeholder="Name" required>
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control" name="leader_usn" placeholder="USN" required>
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control" name="leader_email" placeholder="Email" type="email" required>
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control" name="leader_phone" placeholder="Phone" required>
-                    </div>
-                    <div class="row mb-2">
-   <div class="col-md-6">
-    <select class="form-control" name="leader_department" required>
-      <option value="">Select Department</option>
-      <option>CSE</option>
-      <option>CSE-AIML</option>
-      <option>CSE-DS</option>
-      <option>CSE-CY</option>
-      <option>ECE</option>
-      <option>EEE</option>
-      <option>CV</option>
-      <option>ME</option>
-    </select>
-  </div>
-  <div class="col-md-6">
-    <input class="form-control" name="leader_section" placeholder="Section" required>
-  </div>
-</div>
-
-                </div>
-
-                <hr>
-
-                <!-- TEAM MEMBERS -->
-                <h6 class="text-primary">Team Members (Minimum 3 including leader)</h6>
-
-                {% for i in range(1,6) %}
-                <div class="row mb-2">
-                    <div class="col-md-3">
-                        <input class="form-control" name="member{{i}}_name" placeholder="Member {{i}} Name">
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control" name="member{{i}}_usn" placeholder="Member {{i}} USN">
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control" name="member{{i}}_email" placeholder="Member {{i}} Email" type="email">
-                    </div>
-                    <div class="col-md-3">
-                        <input class="form-control" name="member{{i}}_phone" placeholder="Member {{i}} Phone">
-                    </div>
-                    <div class="col-md-3">
-  <select class="form-control" name="member{{i}}_department">
-    <option value="">Dept</option>
-    <option>CSE</option>
-    <option>CSE-AIML</option>
-    <option>CSE-DS</option>
-    <option>CSE-CY</option>
-    <option>ECE</option>
-    <option>EEE</option>
-    <option>CV</option>
-    <option>ME</option>
-  </select>
-</div>
-
-<div class="col-md-3">
-  <input class="form-control" name="member{{i}}_section" placeholder="Section">
-</div>
-
-                </div>
-                {% endfor %}
-
-                <hr>
-
-                <!-- DECLARATION -->
-                <div class="form-check mb-3">
-                    <input class="form-check-input" type="checkbox" required>
-                    <label class="form-check-label">
-                        I hereby declare that the information provided is true and correct.
-                        I understand that duplicate or false entries will lead to disqualification.
-                    </label>
-                </div>
-
-                <div class="d-grid">
-                    <button class="btn btn-success btn-lg">
-                        Submit Registration
-                    </button>
-                </div>
-
-            </form>
+        <div class="alert alert-warning mb-0">
+          <b>Note:</b> Team size must be <b>Minimum 3</b> and <b>Maximum 6</b> (including Team Leader).
         </div>
+      </div>
     </div>
+
+    <!-- Team Leader -->
+    <div class="card shadow-sm border-0 mb-4">
+      <div class="card-body p-4">
+        <div class="section-title mb-2">👤 Team Leader Details</div>
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Leader Name</label>
+            <input type="text" name="leader_name" class="form-control" placeholder="Full Name" required>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Leader USN</label>
+            <input type="text" name="leader_usn" class="form-control" placeholder="Eg: 1RN21CS001" required>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Leader Email</label>
+            <input type="email" name="leader_email" class="form-control" placeholder="example@rnsit.ac.in" required>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Leader Phone</label>
+            <input type="text" name="leader_phone" class="form-control" placeholder="10-digit number" required>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Leader Department</label>
+            <select name="leader_department" class="form-select" required>
+              <option value="">Select Department</option>
+              <option>CSE</option>
+              <option>CSE-AIML</option>
+              <option>CSE-DS</option>
+              <option>CSE-CY</option>
+              <option>ECE</option>
+              <option>EEE</option>
+              <option>CV</option>
+              <option>ME</option>
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Leader Section</label>
+            <input type="text" name="leader_section" class="form-control" placeholder="Eg: A / B / C" required>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Team Members -->
+    <div class="card shadow-sm border-0 mb-4">
+      <div class="card-body p-4">
+        <div class="section-title mb-2">👥 Team Members (Add Minimum 2 Members)</div>
+        <p class="small-note mb-3">Fill at least Member 1 and Member 2. Remaining members are optional.</p>
+
+        {% for i in range(1,6) %}
+        <div class="border rounded-4 p-3 mb-3 bg-white">
+          <div class="fw-bold mb-2">Member {{ i }}</div>
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <input type="text" name="member{{i}}_name" class="form-control" placeholder="Member {{i}} Name">
+            </div>
+
+            <div class="col-md-6">
+              <input type="text" name="member{{i}}_usn" class="form-control" placeholder="Member {{i}} USN">
+            </div>
+
+            <div class="col-md-6">
+              <input type="email" name="member{{i}}_email" class="form-control" placeholder="Member {{i}} Email">
+            </div>
+
+            <div class="col-md-6">
+              <input type="text" name="member{{i}}_phone" class="form-control" placeholder="Member {{i}} Phone">
+            </div>
+
+            <div class="col-md-6">
+              <select name="member{{i}}_department" class="form-select">
+                <option value="">Member {{i}} Department</option>
+                <option>CSE</option>
+                <option>CSE-AIML</option>
+                <option>CSE-DS</option>
+                <option>CSE-CY</option>
+                <option>ECE</option>
+                <option>EEE</option>
+                <option>CV</option>
+                <option>ME</option>
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <input type="text" name="member{{i}}_section" class="form-control" placeholder="Member {{i}} Section">
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Declaration -->
+    <div class="card shadow-sm border-0 mb-4">
+      <div class="card-body p-4">
+        <div class="section-title mb-2">✅ Declaration</div>
+
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" required>
+          <label class="form-check-label">
+            I confirm that all details entered are correct and this team has not registered for another project.
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <div class="d-grid">
+      <button class="btn btn-success btn-lg fw-semibold">
+        🚀 Submit Registration
+      </button>
+    </div>
+
+  </form>
+
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-
-<script>
-{% with messages = get_flashed_messages() %}
-{% if messages %}
-alert("{{ messages[0] }}");
-{% endif %}
-{% endwith %}
-</script>
+<footer class="text-center text-muted py-3 small">
+  © RNS Institute of Technology | Multidisciplinary Projects 2025–26
+</footer>
 
 </body>
 </html>
