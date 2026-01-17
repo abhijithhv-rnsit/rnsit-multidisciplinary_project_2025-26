@@ -7,42 +7,48 @@
 <body class="bg-light">
 
 {% include "admin_nav.html" %}
-<a href="/admin/add-faculty" class="btn btn-outline-primary btn-sm">
-    Add Faculty
-</a>
-
-<a href="/admin/assign-faculty" class="btn btn-outline-secondary btn-sm ms-2">
-    Assign Faculty
-</a>
-<a href="/admin/faculty" class="btn btn-outline-info btn-sm ms-2">
-  View Faculty
-</a>
-
 
 <div class="container mt-4">
-  <div class="row text-center">
+
+  <!-- Quick Actions -->
+  <div class="d-flex flex-wrap gap-2 mb-4">
+    <a href="/admin/add-faculty" class="btn btn-outline-primary btn-sm">
+      ➕ Add Faculty
+    </a>
+
+    <a href="/admin/assign-faculty" class="btn btn-outline-secondary btn-sm">
+      🧑‍🏫 Assign Faculty
+    </a>
+
+    <a href="/admin/faculty" class="btn btn-outline-info btn-sm">
+      📋 View Faculty
+    </a>
+  </div>
+
+  <!-- Stats Cards -->
+  <div class="row g-3 text-center">
 
     <div class="col-md-6">
-      <div class="card shadow">
+      <div class="card shadow-sm border-0">
         <div class="card-body">
-          <h5>Total Problems</h5>
-          <h2>{{ problems }}</h2>
+          <h6 class="text-muted">Total Problems</h6>
+          <h2 class="fw-bold">{{ problems }}</h2>
         </div>
       </div>
     </div>
 
     <div class="col-md-6">
-      <div class="card shadow">
+      <div class="card shadow-sm border-0">
         <div class="card-body">
-          <h5>Total Registered Teams</h5>
-          <h2>{{ teams }}</h2>
+          <h6 class="text-muted">Total Registered Teams</h6>
+          <h2 class="fw-bold">{{ teams }}</h2>
         </div>
       </div>
     </div>
 
   </div>
+
 </div>
 
 </body>
 </html>
-
