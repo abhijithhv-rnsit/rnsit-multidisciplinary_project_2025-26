@@ -1,17 +1,69 @@
-{% with messages = get_flashed_messages() %}
-  {% if messages %}
-    <div class="alert alert-danger">{{ messages[0] }}</div>
-  {% endif %}
-{% endwith %}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Student Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
 
-<form method="post" action="/student/login">
-  <input class="form-control mb-3" name="usn" placeholder="USN" required>
-  <input class="form-control mb-3" name="password" type="password" placeholder="Password" required>
-  <button class="btn btn-primary w-100">Login</button>
-</form>
+<body class="bg-light">
 
-<p class="text-center mt-3">
-  New student?
-  <a href="/student/signup">Create an account</a>
-</p>
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
 
+      <div class="text-center mb-4">
+        <img src="{{ url_for('static', filename='rnsit_logo.png') }}" height="60" class="mb-2">
+        <h4 class="fw-bold mb-1">RNSIT Multidisciplinary Projects</h4>
+        <p class="text-muted mb-0">Student Login</p>
+      </div>
+
+      <div class="card shadow-sm border-0 rounded-4">
+        <div class="card-body p-4">
+
+          {% with messages = get_flashed_messages() %}
+            {% if messages %}
+              <div class="alert alert-danger">{{ messages[0] }}</div>
+            {% endif %}
+          {% endwith %}
+
+          <form method="post" action="/student/login">
+            <div class="mb-3">
+              <label class="form-label fw-semibold">USN</label>
+              <input class="form-control" name="usn" placeholder="Enter your USN" required>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Password</label>
+              <input class="form-control" name="password" type="password" placeholder="Enter password" required>
+            </div>
+
+            <button class="btn btn-primary w-100 fw-semibold">
+              Login
+            </button>
+          </form>
+
+          <div class="text-center mt-3">
+            <span class="small text-muted">New student?</span>
+            <a href="/student/signup" class="text-decoration-none small fw-semibold">
+              Create an account
+            </a>
+          </div>
+
+          <div class="text-center mt-3">
+            <a href="/" class="text-decoration-none small">← Back to Home</a>
+          </div>
+
+        </div>
+      </div>
+
+      <p class="text-center text-muted small mt-4">
+        © RNSIT Multidisciplinary Projects 2025–26
+      </p>
+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
