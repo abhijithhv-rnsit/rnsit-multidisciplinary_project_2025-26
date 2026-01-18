@@ -49,7 +49,59 @@ def add_column_if_not_exists(table, column, col_type):
         cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
         con.commit()
     con.close()
-   
+
+from datetime import datetime, timedelta
+
+def get_week_deadline(team_created_at, week_no):
+    """
+    Deadline rule:
+    Week N deadline = Saturday 11:59 PM IST of that week,
+    where Week 1 deadline is the first Saturday after team_created_at.
+    """
+    if isinstance(team_created_at, str):
+        try:
+            team_created_at = datetime.fromisoformat(team_created_at)
+        except:
+            team_created_at = datetime.strptime(team_created_at, "%Y-%m-%d %H:%M:%S")
+
+    # Find next Saturday from created_at date
+    # Python weekday: Mon=0 ... Sat=5 ... Sun=6
+    created_weekday = team_created_at.weekday()
+    days_to_saturday = (5 - created_weekday) % 7
+    if days_to_saturday == 0:
+        # If already Saturday, deadline is same day 11:59 PM
+        first_saturday = team_created_at
+    else:
+        first_saturday = team_created_at + timedelta(days=days_to_saturday)
+
+    # Set time to 23:59:00
+    first_deadline = first_saturday.replace(hour=23, minute=59, second=0, microsecond=0)
+
+    # Week 2 = +7 days, Week 3 = +14 days...
+    deadline = first_deadline + timedelta(days=(week_no - 1) * 7)
+    return deadline
+
+
+def compute_late_status(submitted_at, deadline):
+    if isinstance(submitted_at, str):
+        try:
+            submitted_at = datetime.fromisoformat(submitted_at)
+        except:
+            submitted_at = datetime.strptime(submitted_at, "%Y-%m-%d %H:%M:%S")
+
+    late_seconds = (submitted_at - deadline).total_seconds()
+    if late_seconds <= 0:
+        return ("On Time", None)
+
+    # Late duration
+    late_days = int(late_seconds // 86400)
+    late_hours = int((late_seconds % 86400) // 3600)
+
+    if late_days > 0:
+        return ("Late", f"{late_days} day(s) {late_hours} hour(s)")
+    else:
+        return ("Late", f"{late_hours} hour(s)")
+
 
 from datetime import datetime
 
@@ -356,6 +408,8 @@ def student_project_details():
         details=details
     )
 
+from datetime import datetime, timedelta, timezone
+
 @app.route("/student/weekly-progress", methods=["GET", "POST"])
 def student_weekly_progress():
     if not session.get("student_usn"):
@@ -366,7 +420,7 @@ def student_weekly_progress():
     con = db()
     cur = con.cursor()
 
-    # Find team_id
+    # ---------- Find team_id ----------
     cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
@@ -386,31 +440,123 @@ def student_weekly_progress():
 
     team_id = team["id"]
 
-    if request.method == "POST":
-        week_no = request.form["week_no"]
-        progress = request.form["progress"]
+    # ---------- IST timezone ----------
+    IST = timezone(timedelta(hours=5, minutes=30))
 
+    # ---------- Helper: Saturday 11:59 PM deadline for a week ----------
+    def get_week_deadline_ist(week_no: int):
+        """
+        Deadline rule (Option A):
+        For any week_no, deadline = Saturday 11:59 PM IST of the current week cycle.
+        We calculate based on today's date in IST.
+        """
+        now_ist = datetime.now(IST)
+
+        # Find upcoming Saturday of current week
+        # Python weekday: Mon=0 ... Sat=5 ... Sun=6
+        days_to_saturday = (5 - now_ist.weekday()) % 7
+        saturday_date = (now_ist + timedelta(days=days_to_saturday)).date()
+
+        # Saturday 11:59 PM IST
+        deadline_ist = datetime(
+            saturday_date.year, saturday_date.month, saturday_date.day,
+            23, 59, 0, tzinfo=IST
+        )
+        return deadline_ist
+
+    # ---------- POST: Insert progress ----------
+    if request.method == "POST":
+        week_no_raw = request.form.get("week_no", "").strip()
+        progress = request.form.get("progress", "").strip()
+
+        if not week_no_raw.isdigit():
+            flash("Invalid week number.")
+            con.close()
+            return redirect(request.url)
+
+        week_no = int(week_no_raw)
+
+        if week_no < 1:
+            flash("Week number must be 1 or greater.")
+            con.close()
+            return redirect(request.url)
+
+        if not progress:
+            flash("Progress description cannot be empty.")
+            con.close()
+            return redirect(request.url)
+
+        # ✅ Prevent duplicate submission for same week
+        cur.execute("""
+            SELECT COUNT(*) as cnt
+            FROM weekly_progress
+            WHERE team_id=? AND week_no=?
+        """, (team_id, week_no))
+        if cur.fetchone()["cnt"] > 0:
+            flash(f"Week {week_no} progress already submitted. Please submit next week.")
+            con.close()
+            return redirect(request.url)
+
+        # Determine late / on-time
+        submitted_at_ist = datetime.now(IST)
+        deadline_at_ist = get_week_deadline_ist(week_no)
+
+        is_late = 1 if submitted_at_ist > deadline_at_ist else 0
+
+        # Store in DB (submitted_at already auto, but we keep logic for late flag)
+        # ⚠️ We are NOT altering your DB schema, so we won’t store is_late column
+        # Instead we compute and show in UI.
         cur.execute("""
             INSERT INTO weekly_progress(team_id, week_no, progress)
             VALUES (?,?,?)
         """, (team_id, week_no, progress))
 
         con.commit()
-        flash("Weekly progress submitted")
+        flash("Weekly progress submitted successfully ✅")
 
-    # Fetch progress list
+    # ---------- Fetch progress list ----------
     cur.execute("""
-        SELECT * FROM weekly_progress
+        SELECT *
+        FROM weekly_progress
         WHERE team_id=?
         ORDER BY week_no DESC
     """, (team_id,))
     progress_list = cur.fetchall()
-
     con.close()
+
+    # ---------- Add computed fields for UI ----------
+    progress_list_enhanced = []
+    for p in progress_list:
+        # submitted_at from DB (string)
+        submitted_at_db = p["submitted_at"]
+
+        # Convert DB timestamp -> datetime (best effort)
+        submitted_at_ist = None
+        try:
+            # SQLite default timestamp format: "YYYY-MM-DD HH:MM:SS"
+            dt = datetime.strptime(submitted_at_db, "%Y-%m-%d %H:%M:%S")
+            submitted_at_ist = dt.replace(tzinfo=IST)
+        except:
+            # fallback: keep as string
+            submitted_at_ist = None
+
+        deadline_at_ist = get_week_deadline_ist(int(p["week_no"]))
+
+        # Late flag
+        late_flag = False
+        if submitted_at_ist:
+            late_flag = submitted_at_ist > deadline_at_ist
+
+        progress_list_enhanced.append({
+            **dict(p),
+            "deadline_at": deadline_at_ist.strftime("%d-%b-%Y %I:%M %p IST"),
+            "submitted_at_ist": submitted_at_ist.strftime("%d-%b-%Y %I:%M %p IST") if submitted_at_ist else submitted_at_db,
+            "is_late": late_flag
+        })
 
     return render_template(
         "student_weekly_progress.html",
-        progress_list=progress_list
+        progress_list=progress_list_enhanced
     )
 
 @app.route("/faculty/login", methods=["GET", "POST"])
@@ -984,8 +1130,9 @@ def register(pid):
                 leader_phone,
                 leader_department,
                 leader_section,
-                problem_id
-            ) VALUES (?,?,?,?,?,?,?,?)
+                problem_id,
+                created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?)
         """, (
             team_name,
             leader_name,
@@ -994,8 +1141,10 @@ def register(pid):
             leader_phone,
             leader_department,
             leader_section,
-            pid
+            pid,
+            datetime.now()
         ))
+    
 
         team_id = cur.lastrowid
 
@@ -1565,6 +1714,10 @@ if __name__ == "__main__":
 
     try:
         cur.execute("ALTER TABLE teams ADD COLUMN leader_section TEXT")
+    except:
+        pass
+    try:
+        cur.execute("ALTER TABLE teams ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
     except:
         pass
 
