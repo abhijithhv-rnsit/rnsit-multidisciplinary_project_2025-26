@@ -1,11 +1,20 @@
-{% extends "admin_base.html" %}
-{% block title %}Bulk Faculty Upload{% endblock %}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bulk Faculty Upload</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
 
-{% block content %}
+<body class="bg-light">
 
-<div class="container mt-3">
+{% include "admin_nav.html" %}
 
-  <h4 class="mb-3">Bulk Faculty Creation (Excel Upload)</h4>
+<div class="container mt-4">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Bulk Faculty Upload</h4>
+    <a href="/admin/home" class="btn btn-outline-secondary btn-sm">← Back</a>
+  </div>
 
   {% with messages = get_flashed_messages() %}
     {% if messages %}
@@ -13,29 +22,29 @@
     {% endif %}
   {% endwith %}
 
-  <div class="card shadow-sm p-3 mb-3">
-    <h6 class="mb-2">Step 1: Download Template</h6>
-    <a href="/admin/faculty/template" class="btn btn-outline-primary btn-sm">
-      ⬇️ Download Excel Template
-    </a>
-  </div>
+  <div class="card shadow-sm border-0">
+    <div class="card-body">
 
-  <div class="card shadow-sm p-3">
-    <h6 class="mb-2">Step 2: Upload Filled Excel</h6>
+      <p class="text-muted mb-2">
+        Upload an Excel file with columns:
+        <b>Name</b>, <b>Email</b>, <b>Department</b>
+      </p>
 
-    <form method="post" enctype="multipart/form-data">
-      <input type="file" name="file" class="form-control mb-3" accept=".xlsx" required>
+      <form method="post" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Upload Excel File</label>
+          <input type="file" name="file" class="form-control" accept=".xlsx" required>
+        </div>
 
-      <button class="btn btn-success">
-        🚀 Upload & Create Faculty Accounts
-      </button>
-    </form>
+        <button class="btn btn-primary">
+          Upload & Create Faculty Accounts
+        </button>
+      </form>
 
-    <div class="mt-3 text-muted small">
-      ✔ System will auto-generate passwords and give you a downloadable Excel after upload.
     </div>
   </div>
 
 </div>
 
-{% endblock %}
+</body>
+</html>
