@@ -2,6 +2,8 @@ from flask import Flask, render_template, request, redirect, url_for, flash, sen
 from flask import session
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from datetime import datetime, timedelta
+import pytz
 
 import sqlite3, pandas as pd, os
 
@@ -420,7 +422,7 @@ def student_weekly_progress():
     con = db()
     cur = con.cursor()
 
-    # ---------- Find team_id ----------
+    # Find team_id
     cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
@@ -440,124 +442,128 @@ def student_weekly_progress():
 
     team_id = team["id"]
 
-    # ---------- IST timezone ----------
-    IST = timezone(timedelta(hours=5, minutes=30))
+    # ---------------- AUTO WEEK CALCULATION ----------------
+    IST = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(IST)
 
-    # ---------- Helper: Saturday 11:59 PM deadline for a week ----------
-    def get_week_deadline_ist(week_no: int):
-        """
-        Deadline rule (Option A):
-        For any week_no, deadline = Saturday 11:59 PM IST of the current week cycle.
-        We calculate based on today's date in IST.
-        """
-        now_ist = datetime.now(IST)
+    # Change this date as per your project start date
+    PROJECT_START_DATE = IST.localize(datetime(2026, 1, 1, 0, 0, 0))
 
-        # Find upcoming Saturday of current week
-        # Python weekday: Mon=0 ... Sat=5 ... Sun=6
-        days_to_saturday = (5 - now_ist.weekday()) % 7
-        saturday_date = (now_ist + timedelta(days=days_to_saturday)).date()
+    # Week number starts from 1
+    auto_week_no = ((now_ist - PROJECT_START_DATE).days // 7) + 1
+    if auto_week_no < 1:
+        auto_week_no = 1
 
-        # Saturday 11:59 PM IST
-        deadline_ist = datetime(
-            saturday_date.year, saturday_date.month, saturday_date.day,
-            23, 59, 0, tzinfo=IST
-        )
-        return deadline_ist
+    # Deadline: Saturday 11:59 PM IST of current week
+    # weekday(): Mon=0 ... Sat=5 ... Sun=6
+    days_until_saturday = (5 - now_ist.weekday()) % 7
+    saturday = (now_ist + timedelta(days=days_until_saturday)).replace(
+        hour=23, minute=59, second=0, microsecond=0
+    )
+    deadline_dt = saturday
 
-    # ---------- POST: Insert progress ----------
+    # ---------------- FILTERS ----------------
+    show = request.args.get("show", "all")  # all / late / reviewed / pending
+
+    # ---------------- POST: SUBMIT ----------------
     if request.method == "POST":
-        week_no_raw = request.form.get("week_no", "").strip()
         progress = request.form.get("progress", "").strip()
 
-        if not week_no_raw.isdigit():
-            flash("Invalid week number.")
-            con.close()
-            return redirect(request.url)
-
-        week_no = int(week_no_raw)
-
-        if week_no < 1:
-            flash("Week number must be 1 or greater.")
-            con.close()
-            return redirect(request.url)
-
         if not progress:
-            flash("Progress description cannot be empty.")
+            flash("Progress cannot be empty.")
             con.close()
             return redirect(request.url)
 
-        # ✅ Prevent duplicate submission for same week
+        # Prevent duplicate submission for same week
         cur.execute("""
-            SELECT COUNT(*) as cnt
-            FROM weekly_progress
+            SELECT COUNT(*) FROM weekly_progress
             WHERE team_id=? AND week_no=?
-        """, (team_id, week_no))
-        if cur.fetchone()["cnt"] > 0:
-            flash(f"Week {week_no} progress already submitted. Please submit next week.")
+        """, (team_id, auto_week_no))
+        if cur.fetchone()[0] > 0:
+            flash(f"Week {auto_week_no} progress already submitted.")
             con.close()
-            return redirect(request.url)
+            return redirect(url_for("student_weekly_progress"))
 
-        # Determine late / on-time
-        submitted_at_ist = datetime.now(IST)
-        deadline_at_ist = get_week_deadline_ist(week_no)
-
-        is_late = 1 if submitted_at_ist > deadline_at_ist else 0
-
-        # Store in DB (submitted_at already auto, but we keep logic for late flag)
-        # ⚠️ We are NOT altering your DB schema, so we won’t store is_late column
-        # Instead we compute and show in UI.
         cur.execute("""
             INSERT INTO weekly_progress(team_id, week_no, progress)
             VALUES (?,?,?)
-        """, (team_id, week_no, progress))
+        """, (team_id, auto_week_no, progress))
 
         con.commit()
-        flash("Weekly progress submitted successfully ✅")
+        flash(f"Weekly progress submitted for Week {auto_week_no} ✅")
+        con.close()
+        return redirect(url_for("student_weekly_progress"))
 
-    # ---------- Fetch progress list ----------
+    # ---------------- FETCH LIST ----------------
     cur.execute("""
-        SELECT *
-        FROM weekly_progress
+        SELECT * FROM weekly_progress
         WHERE team_id=?
         ORDER BY week_no DESC
     """, (team_id,))
-    progress_list = cur.fetchall()
+    rows = cur.fetchall()
     con.close()
 
-    # ---------- Add computed fields for UI ----------
-    progress_list_enhanced = []
-    for p in progress_list:
+    progress_list = []
+    for r in rows:
         # submitted_at from DB (string)
-        submitted_at_db = p["submitted_at"]
+        submitted_raw = r["submitted_at"]
+        submitted_dt = None
 
-        # Convert DB timestamp -> datetime (best effort)
-        submitted_at_ist = None
         try:
-            # SQLite default timestamp format: "YYYY-MM-DD HH:MM:SS"
-            dt = datetime.strptime(submitted_at_db, "%Y-%m-%d %H:%M:%S")
-            submitted_at_ist = dt.replace(tzinfo=IST)
+            submitted_dt = datetime.fromisoformat(submitted_raw)
         except:
-            # fallback: keep as string
-            submitted_at_ist = None
+            try:
+                submitted_dt = datetime.strptime(submitted_raw, "%Y-%m-%d %H:%M:%S")
+            except:
+                submitted_dt = None
 
-        deadline_at_ist = get_week_deadline_ist(int(p["week_no"]))
+        if submitted_dt:
+            # assume stored as local time; convert to IST safe
+            if submitted_dt.tzinfo is None:
+                submitted_dt = IST.localize(submitted_dt)
+            submitted_at_ist = submitted_dt.strftime("%d-%m-%Y %I:%M %p (IST)")
+        else:
+            submitted_at_ist = submitted_raw
 
-        # Late flag
-        late_flag = False
-        if submitted_at_ist:
-            late_flag = submitted_at_ist > deadline_at_ist
+        # Deadline for that week number
+        week_start = PROJECT_START_DATE + timedelta(days=(r["week_no"] - 1) * 7)
+        week_deadline = (week_start + timedelta(days=5)).replace(
+            hour=23, minute=59, second=0, microsecond=0
+        )
 
-        progress_list_enhanced.append({
-            **dict(p),
-            "deadline_at": deadline_at_ist.strftime("%d-%b-%Y %I:%M %p IST"),
-            "submitted_at_ist": submitted_at_ist.strftime("%d-%b-%Y %I:%M %p IST") if submitted_at_ist else submitted_at_db,
-            "is_late": late_flag
+        is_late = False
+        if submitted_dt:
+            is_late = submitted_dt > week_deadline
+
+        deadline_at = week_deadline.strftime("%d-%m-%Y %I:%M %p (IST)")
+
+        progress_list.append({
+            "id": r["id"],
+            "week_no": r["week_no"],
+            "progress": r["progress"],
+            "submitted_at_ist": submitted_at_ist,
+            "deadline_at": deadline_at,
+            "is_late": is_late,
+            "faculty_remark": r["faculty_remark"],
+            "status": r["status"]
         })
+
+    # Apply filter
+    if show == "late":
+        progress_list = [p for p in progress_list if p["is_late"]]
+    elif show == "reviewed":
+        progress_list = [p for p in progress_list if p["status"] in ["Reviewed", "Approved"]]
+    elif show == "pending":
+        progress_list = [p for p in progress_list if p["status"] == "Pending"]
 
     return render_template(
         "student_weekly_progress.html",
-        progress_list=progress_list_enhanced
+        progress_list=progress_list,
+        auto_week_no=auto_week_no,
+        deadline_dt=deadline_dt.strftime("%d-%m-%Y %I:%M %p (IST)"),
+        show=show
     )
+
 
 @app.route("/faculty/login", methods=["GET", "POST"])
 def faculty_login():
