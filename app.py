@@ -215,9 +215,38 @@ def student_problems():
     if not session.get("student_usn"):
         return redirect(url_for("student_login"))
 
+    student_usn = session.get("student_usn")
+
     con = db()
     cur = con.cursor()
 
+    # ---------------- DEADLINE CHECK ----------------
+    registration_closed = False
+    cur.execute("SELECT value FROM settings WHERE key='registration_deadline'")
+    row = cur.fetchone()
+
+    if row and row["value"]:
+        try:
+            deadline = datetime.fromisoformat(row["value"])
+            if datetime.now() > deadline:
+                registration_closed = True
+        except:
+            registration_closed = False
+
+    # ---------------- CHECK IF STUDENT ALREADY IN ANY TEAM ----------------
+    already_in_team = False
+
+    # If student is leader in any team
+    cur.execute("SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=?", (student_usn,))
+    if cur.fetchone()["cnt"] > 0:
+        already_in_team = True
+    else:
+        # If student is member in any team
+        cur.execute("SELECT COUNT(*) AS cnt FROM team_members WHERE usn=?", (student_usn,))
+        if cur.fetchone()["cnt"] > 0:
+            already_in_team = True
+
+    # ---------------- FETCH PROBLEMS ----------------
     cur.execute("""
         SELECT id, year, title, category, difficulty, max_teams,
                problem_description, problem_details, expected_outcome
@@ -226,15 +255,22 @@ def student_problems():
     """)
     probs = cur.fetchall()
 
+    # ---------------- BUILD DATA (problem + registered_count) ----------------
     data = []
     for p in probs:
-        cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (p["id"],))
-        registered_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) AS cnt FROM teams WHERE problem_id=?", (p["id"],))
+        registered_count = cur.fetchone()["cnt"]
         data.append((p, registered_count))
 
     con.close()
 
-    return render_template("student_problems.html", data=data)
+    return render_template(
+        "student_problems.html",
+        data=data,
+        registration_closed=registration_closed,
+        already_in_team=already_in_team
+    )
+
 
 @app.route("/student/my-registration")
 def student_my_registration():
