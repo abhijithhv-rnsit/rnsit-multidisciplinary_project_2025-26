@@ -1344,6 +1344,52 @@ def admin_assignments():
         total_rows=total_rows
     )
 
+@app.route("/admin/export-assignments")
+def export_assignments():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+
+    query = """
+    SELECT
+        t.id AS team_id,
+        t.team_name,
+        t.leader_name,
+        t.leader_usn,
+        t.leader_email,
+        t.leader_phone,
+        t.leader_department,
+        t.leader_section,
+
+        p.title AS problem_title,
+        p.year AS problem_year,
+
+        f.name AS faculty_name,
+        f.email AS faculty_email,
+        f.department AS faculty_department,
+
+        CASE
+            WHEN tf.faculty_id IS NULL THEN 'Not Assigned'
+            ELSE 'Assigned'
+        END AS assignment_status
+
+    FROM teams t
+    JOIN problems p ON t.problem_id = p.id
+    LEFT JOIN team_faculty tf ON tf.team_id = t.id
+    LEFT JOIN faculty f ON f.id = tf.faculty_id
+
+    ORDER BY assignment_status DESC, faculty_name, p.title, t.team_name
+    """
+
+    df = pd.read_sql(query, con)
+    con.close()
+
+    file_name = "faculty_assignments.xlsx"
+    df.to_excel(file_name, index=False)
+
+    return send_file(file_name, as_attachment=True)
+
 
 if __name__ == "__main__":
     con = db()
