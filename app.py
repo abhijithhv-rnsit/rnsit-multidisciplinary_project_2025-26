@@ -436,7 +436,7 @@ def student_weekly_progress():
     con = db()
     cur = con.cursor()
 
-    # Find team_id
+    # ---------------- FIND TEAM ID (leader or member) ----------------
     cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
@@ -456,30 +456,50 @@ def student_weekly_progress():
 
     team_id = team["id"]
 
-    # ---------------- AUTO WEEK CALCULATION ----------------
+    # ---------------- IST TIMEZONE ----------------
     IST = pytz.timezone("Asia/Kolkata")
     now_ist = datetime.now(IST)
 
-    # Change this date as per your project start date
-    PROJECT_START_DATE = IST.localize(datetime(2026, 1, 1, 0, 0, 0))
+    # ---------------- GET PROJECT START DATE FROM DB ----------------
+    cur.execute("SELECT value FROM settings WHERE key='project_start_date'")
+    row = cur.fetchone()
 
-    # Week number starts from 1
-    auto_week_no = ((now_ist - PROJECT_START_DATE).days // 7) + 1
+    if row and row["value"]:
+        try:
+            # expected format: YYYY-MM-DD
+            start_date = datetime.strptime(row["value"], "%Y-%m-%d")
+            PROJECT_START_DATE = IST.localize(datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0))
+        except:
+            # fallback if format wrong
+            PROJECT_START_DATE = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        # fallback if admin didn't set
+        PROJECT_START_DATE = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # ---------------- AUTO WEEK CALCULATION (Week 1..16) ----------------
+    days_since_start = (now_ist.date() - PROJECT_START_DATE.date()).days
+    auto_week_no = (days_since_start // 7) + 1
+
     if auto_week_no < 1:
         auto_week_no = 1
 
-    # Deadline: Saturday 11:59 PM IST of current week
-    # weekday(): Mon=0 ... Sat=5 ... Sun=6
-    days_until_saturday = (5 - now_ist.weekday()) % 7
-    saturday = (now_ist + timedelta(days=days_until_saturday)).replace(
+    TOTAL_WEEKS = 16
+    if auto_week_no > TOTAL_WEEKS:
+        auto_week_no = TOTAL_WEEKS
+
+    # ---------------- CURRENT WEEK DEADLINE (Saturday 11:59 PM IST) ----------------
+    # Each week starts from PROJECT_START_DATE + (week_no-1)*7 days
+    current_week_start = PROJECT_START_DATE + timedelta(days=(auto_week_no - 1) * 7)
+
+    # Saturday = week_start + 5 days
+    deadline_dt = (current_week_start + timedelta(days=5)).replace(
         hour=23, minute=59, second=0, microsecond=0
     )
-    deadline_dt = saturday
 
     # ---------------- FILTERS ----------------
     show = request.args.get("show", "all")  # all / late / reviewed / pending
 
-    # ---------------- POST: SUBMIT ----------------
+    # ---------------- POST: SUBMIT WEEKLY PROGRESS ----------------
     if request.method == "POST":
         progress = request.form.get("progress", "").strip()
 
@@ -490,27 +510,29 @@ def student_weekly_progress():
 
         # Prevent duplicate submission for same week
         cur.execute("""
-            SELECT COUNT(*) FROM weekly_progress
+            SELECT COUNT(*) AS cnt
+            FROM weekly_progress
             WHERE team_id=? AND week_no=?
         """, (team_id, auto_week_no))
-        if cur.fetchone()[0] > 0:
+        if cur.fetchone()["cnt"] > 0:
             flash(f"Week {auto_week_no} progress already submitted.")
             con.close()
             return redirect(url_for("student_weekly_progress"))
 
         cur.execute("""
-            INSERT INTO weekly_progress(team_id, week_no, progress)
-            VALUES (?,?,?)
-        """, (team_id, auto_week_no, progress))
+            INSERT INTO weekly_progress(team_id, week_no, progress, submitted_at, status)
+            VALUES (?,?,?,?,?)
+        """, (team_id, auto_week_no, progress, now_ist.strftime("%Y-%m-%d %H:%M:%S"), "Pending"))
 
         con.commit()
         flash(f"Weekly progress submitted for Week {auto_week_no} ✅")
         con.close()
         return redirect(url_for("student_weekly_progress"))
 
-    # ---------------- FETCH LIST ----------------
+    # ---------------- FETCH ALL PROGRESS ----------------
     cur.execute("""
-        SELECT * FROM weekly_progress
+        SELECT *
+        FROM weekly_progress
         WHERE team_id=?
         ORDER BY week_no DESC
     """, (team_id,))
@@ -518,38 +540,32 @@ def student_weekly_progress():
     con.close()
 
     progress_list = []
+
     for r in rows:
-        # submitted_at from DB (string)
         submitted_raw = r["submitted_at"]
         submitted_dt = None
 
+        # parse datetime safely
         try:
-            submitted_dt = datetime.fromisoformat(submitted_raw)
+            submitted_dt = datetime.strptime(submitted_raw, "%Y-%m-%d %H:%M:%S")
+            submitted_dt = IST.localize(submitted_dt)
         except:
-            try:
-                submitted_dt = datetime.strptime(submitted_raw, "%Y-%m-%d %H:%M:%S")
-            except:
-                submitted_dt = None
+            submitted_dt = None
 
+        submitted_at_ist = submitted_raw
         if submitted_dt:
-            # assume stored as local time; convert to IST safe
-            if submitted_dt.tzinfo is None:
-                submitted_dt = IST.localize(submitted_dt)
             submitted_at_ist = submitted_dt.strftime("%d-%m-%Y %I:%M %p (IST)")
-        else:
-            submitted_at_ist = submitted_raw
 
-        # Deadline for that week number
+        # deadline for that specific week
         week_start = PROJECT_START_DATE + timedelta(days=(r["week_no"] - 1) * 7)
         week_deadline = (week_start + timedelta(days=5)).replace(
             hour=23, minute=59, second=0, microsecond=0
         )
+        deadline_at = week_deadline.strftime("%d-%m-%Y %I:%M %p (IST)")
 
         is_late = False
         if submitted_dt:
             is_late = submitted_dt > week_deadline
-
-        deadline_at = week_deadline.strftime("%d-%m-%Y %I:%M %p (IST)")
 
         progress_list.append({
             "id": r["id"],
@@ -562,7 +578,7 @@ def student_weekly_progress():
             "status": r["status"]
         })
 
-    # Apply filter
+    # ---------------- APPLY FILTERS ----------------
     if show == "late":
         progress_list = [p for p in progress_list if p["is_late"]]
     elif show == "reviewed":
@@ -577,6 +593,7 @@ def student_weekly_progress():
         deadline_dt=deadline_dt.strftime("%d-%m-%Y %I:%M %p (IST)"),
         show=show
     )
+
 
 @app.route("/student/weekly-progress/edit/<int:progress_id>", methods=["GET", "POST"])
 def student_edit_weekly_progress(progress_id):
@@ -1029,6 +1046,62 @@ def admin_deadline():
     return render_template(
         "admin_deadline.html",active_page="deadline",
         deadline=row[0] if row else ""
+    )
+
+@app.route("/admin/project-settings", methods=["GET", "POST"])
+def admin_project_settings():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    if request.method == "POST":
+        project_start_date = request.form.get("project_start_date", "").strip()
+        registration_deadline = request.form.get("registration_deadline", "").strip()
+        total_weeks = request.form.get("total_weeks", "16").strip()
+
+        # Save values into settings table
+        if project_start_date:
+            cur.execute("""
+                INSERT OR REPLACE INTO settings(key, value)
+                VALUES (?, ?)
+            """, ("project_start_date", project_start_date))
+
+        if registration_deadline:
+            cur.execute("""
+                INSERT OR REPLACE INTO settings(key, value)
+                VALUES (?, ?)
+            """, ("registration_deadline", registration_deadline))
+
+        if total_weeks:
+            cur.execute("""
+                INSERT OR REPLACE INTO settings(key, value)
+                VALUES (?, ?)
+            """, ("total_weeks", total_weeks))
+
+        con.commit()
+        flash("Project settings saved successfully ✅")
+        return redirect(url_for("admin_project_settings"))
+
+    # Fetch existing values
+    def get_setting(key, default=""):
+        cur.execute("SELECT value FROM settings WHERE key=?", (key,))
+        row = cur.fetchone()
+        return row["value"] if row and row["value"] else default
+
+    project_start_date = get_setting("project_start_date", "")
+    registration_deadline = get_setting("registration_deadline", "")
+    total_weeks = get_setting("total_weeks", "16")
+
+    con.close()
+
+    return render_template(
+        "admin_project_settings.html",
+        active_page="project_settings",
+        project_start_date=project_start_date,
+        registration_deadline=registration_deadline,
+        total_weeks=total_weeks
     )
 
 @app.route("/faculty/review-progress/<int:progress_id>", methods=["POST"])
