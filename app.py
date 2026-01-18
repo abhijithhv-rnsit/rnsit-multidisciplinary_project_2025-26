@@ -783,10 +783,12 @@ def index():
     return render_template("landing.html")
 
 
-@app.route("/register/<int:pid>", methods=["GET","POST"])
+@app.route("/register/<int:pid>", methods=["GET", "POST"])
 def register(pid):
-    
+
     from datetime import datetime
+
+    # ✅ Student must be logged in
     if not session.get("student_usn"):
         flash("Please login as student to register a team.")
         return redirect(url_for("student_login"))
@@ -794,76 +796,185 @@ def register(pid):
     # --- REGISTRATION DEADLINE CHECK ---
     con = db()
     cur = con.cursor()
-    cur.execute(
-        "SELECT value FROM settings WHERE key='registration_deadline'"
-    )
+    cur.execute("SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
     con.close()
 
-    if row:
-        deadline = datetime.fromisoformat(row[0])
-        if datetime.now() > deadline:
-            flash("Registration closed. Deadline has passed.")
-            return redirect(url_for("index"))
+    if row and row[0]:
+        try:
+            deadline = datetime.fromisoformat(row[0])
+            if datetime.now() > deadline:
+                flash("Registration closed. Deadline has passed.")
+                try:
+                    return redirect(url_for("student_problems"))
+                except:
+                    return redirect(url_for("index"))
+        except:
+            pass
     # --- END DEADLINE CHECK ---
-    con=db(); cur=con.cursor()
-    cur.execute("SELECT title,max_teams FROM problems WHERE id=?", (pid,))
-    prob=cur.fetchone()
-    cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (pid,))
-    if cur.fetchone()[0] >= prob[1]:
-        flash("Registration closed for this project")
+
+    con = db()
+    cur = con.cursor()
+
+    # Get problem title + max_teams
+    cur.execute("SELECT title, max_teams FROM problems WHERE id=?", (pid,))
+    prob = cur.fetchone()
+    if not prob:
+        con.close()
+        flash("Invalid problem selected.")
         return redirect(url_for("index"))
 
+    problem_title = prob[0]
+    max_teams = prob[1] if prob[1] else 5
+
+    # ✅ Check team count for this problem
+    cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (pid,))
+    already_registered = cur.fetchone()[0]
+
+    # ⚠️ If you want STRICT 1 team per problem, keep this block ON
+    # If you want max_teams teams per problem, comment this block
+    if already_registered >= 1:
+        con.close()
+        flash("Registration closed for this project (1 team already registered).")
+        try:
+            return redirect(url_for("student_problems"))
+        except:
+            return redirect(url_for("index"))
+
+    # ✅ If you want to allow multiple teams up to max_teams, use this instead:
+    # if already_registered >= max_teams:
+    #     con.close()
+    #     flash(f"Registration closed for this project (Team limit reached: {max_teams}).")
+    #     try:
+    #         return redirect(url_for("student_problems"))
+    #     except:
+    #         return redirect(url_for("index"))
+
+    # ---------------- POST: Submit Registration ----------------
     if request.method == "POST":
 
         # Team basic details
-        team_name = request.form["team_name"]
+        team_name = request.form.get("team_name", "").strip()
 
         # Leader details
-        leader_name = request.form["leader_name"]
-        leader_usn = request.form["leader_usn"]
-        leader_email = request.form["leader_email"]
-        leader_phone = request.form["leader_phone"]
-        leader_department = request.form["leader_department"]
-        leader_section = request.form["leader_section"]
+        leader_name = request.form.get("leader_name", "").strip()
+        leader_usn = request.form.get("leader_usn", "").strip().upper()
+        leader_email = request.form.get("leader_email", "").strip().lower()
+        leader_phone = request.form.get("leader_phone", "").strip()
+        leader_department = request.form.get("leader_department", "").strip().upper()
+        leader_section = request.form.get("leader_section", "").strip().upper()
 
-        # Collect team members
-        members = []
-        for i in range(1, 6):
-            name = request.form.get(f"member{i}_name")
-            usn = request.form.get(f"member{i}_usn")
-            email = request.form.get(f"member{i}_email")
-            phone = request.form.get(f"member{i}_phone")
-            dept = request.form.get(f"member{i}_department")
-            sec = request.form.get(f"member{i}_section")
-
-            if usn:
-                members.append((name, usn, email, phone, dept, sec))
-
-        # Minimum team size check
-        if len(members) < 2:
-            flash("Minimum 3 members required including Team Leader")
+        # Basic validations
+        if not team_name or not leader_name or not leader_usn or not leader_email:
+            con.close()
+            flash("Please fill all required Team Leader details.")
             return redirect(request.url)
 
-        con = db()
-        cur = con.cursor()
+        # Collect team members (max 5 members)
+        members = []
+        for i in range(1, 6):
+            name = request.form.get(f"member{i}_name", "").strip()
+            usn = request.form.get(f"member{i}_usn", "").strip().upper()
+            email = request.form.get(f"member{i}_email", "").strip().lower()
+            phone = request.form.get(f"member{i}_phone", "").strip()
+            dept = request.form.get(f"member{i}_department", "").strip().upper()
+            sec = request.form.get(f"member{i}_section", "").strip().upper()
 
-        # Check leader USN uniqueness
+            if usn:  # consider row only if USN entered
+                members.append((name, usn, email, phone, dept, sec))
+
+        # ✅ Rule-2: Team size 4–6 including leader
+        team_size = 1 + len(members)
+        if team_size < 4 or team_size > 6:
+            con.close()
+            flash("Team size must be between 4 and 6 members (including Team Leader).")
+            return redirect(request.url)
+
+        # ✅ Rule-3: At least 1 member from ECE/EEE/ME/CIVIL
+        core_branches = ["ECE", "EEE", "ME", "CV", "CIVIL"]
+        all_departments = [leader_department] + [m[4] for m in members]
+
+        if not any(d in core_branches for d in all_departments):
+            con.close()
+            flash("At least 1 member must be from ECE / EEE / ME / Civil branch.")
+            return redirect(request.url)
+
+        # ---------------- UNIQUE CHECKS ----------------
+
+        # ✅ Leader USN cannot already be a leader
         cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
         if cur.fetchone()[0] > 0:
             con.close()
-            flash("Team Leader USN already registered")
+            flash("Team Leader USN already registered in another team.")
             return redirect(request.url)
 
-        # Check member USN uniqueness
-        for _, usn, _, _, _, _ in members:
+        # ✅ Leader USN cannot already be a member
+        cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (leader_usn,))
+        if cur.fetchone()[0] > 0:
+            con.close()
+            flash("This USN is already registered as a team member in another team.")
+            return redirect(request.url)
+
+        # ✅ Leader email cannot already exist (case-insensitive)
+        cur.execute("SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(?)", (leader_email,))
+        if cur.fetchone()[0] > 0:
+            con.close()
+            flash("This email is already registered as a Team Leader in another team.")
+            return redirect(request.url)
+
+        cur.execute("SELECT COUNT(*) FROM team_members WHERE LOWER(email)=LOWER(?)", (leader_email,))
+        if cur.fetchone()[0] > 0:
+            con.close()
+            flash("This email is already registered as a Team Member in another team.")
+            return redirect(request.url)
+
+        # ✅ Check duplicates inside same form (USN/email repeated in team)
+        used_usns = set([leader_usn])
+        used_emails = set([leader_email])
+
+        for name, usn, email, phone, dept, sec in members:
+            if usn in used_usns:
+                con.close()
+                flash(f"Duplicate USN found in team: {usn}")
+                return redirect(request.url)
+            used_usns.add(usn)
+
+            if email:
+                if email in used_emails:
+                    con.close()
+                    flash(f"Duplicate Email found in team: {email}")
+                    return redirect(request.url)
+                used_emails.add(email)
+
+        # ✅ Member USN/email cannot already exist in DB anywhere
+        for name, usn, email, phone, dept, sec in members:
+
             cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (usn,))
             if cur.fetchone()[0] > 0:
                 con.close()
-                flash(f"Member USN {usn} already registered")
+                flash(f"Member USN {usn} already registered in another team.")
                 return redirect(request.url)
 
-        # Insert team
+            cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (usn,))
+            if cur.fetchone()[0] > 0:
+                con.close()
+                flash(f"Member USN {usn} is already a Team Leader in another team.")
+                return redirect(request.url)
+
+            if email:
+                cur.execute("SELECT COUNT(*) FROM team_members WHERE LOWER(email)=LOWER(?)", (email,))
+                if cur.fetchone()[0] > 0:
+                    con.close()
+                    flash(f"Member email {email} already registered in another team.")
+                    return redirect(request.url)
+
+                cur.execute("SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(?)", (email,))
+                if cur.fetchone()[0] > 0:
+                    con.close()
+                    flash(f"Member email {email} is already registered as a Team Leader in another team.")
+                    return redirect(request.url)
+
+        # ---------------- INSERT TEAM ----------------
         cur.execute("""
             INSERT INTO teams(
                 team_name,
@@ -905,12 +1016,18 @@ def register(pid):
         con.commit()
         con.close()
 
-        flash("Team registered successfully")
-        return redirect(url_for("student_home.html"))
+        flash("Team registered successfully ✅")
 
+        # ✅ Best redirect after registration
+        try:
+            return redirect(url_for("student_my_project"))
+        except:
+            return redirect(url_for("student_home"))
 
+    # ---------------- GET: Show registration form ----------------
     con.close()
-    return render_template("register.html", title=prob[0])
+    return render_template("register.html", title=problem_title)
+
 
 @app.route("/admin/home")
 def admin_home():
@@ -1119,15 +1236,16 @@ if __name__ == "__main__":
     CREATE TABLE IF NOT EXISTS teams(
         id INTEGER PRIMARY KEY,
         team_name TEXT,
-        department TEXT,
-        section TEXT,
         leader_name TEXT,
         leader_usn TEXT UNIQUE,
         leader_email TEXT,
         leader_phone TEXT,
+        leader_department TEXT,
+        leader_section TEXT,
         problem_id INT
     )
     """)
+
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS team_members(
@@ -1203,8 +1321,8 @@ if __name__ == "__main__":
         FOREIGN KEY(faculty_id) REFERENCES faculty(id)
     )
     """)
-    add_column_if_not_exists("teams", "abstract", "TEXT")
-    add_column_if_not_exists("teams", "objectives", "TEXT")
+    #add_column_if_not_exists("teams", "abstract", "TEXT")
+    #add_column_if_not_exists("teams", "objectives", "TEXT")
 
     # 🔥 GUARANTEED MIGRATION (THIS IS THE FIX)
     try:
