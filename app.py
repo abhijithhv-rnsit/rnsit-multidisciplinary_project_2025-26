@@ -1341,7 +1341,7 @@ def admin_assignments():
         page=page,
         per_page=per_page,
         total_pages=total_pages,
-        total_rows=total_rows
+        total_rows=total_rows,
         rows=rows,
         q=q,
         department=department,
