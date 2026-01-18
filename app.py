@@ -836,6 +836,97 @@ def admin_assign_faculty():
         faculty=faculty
     )
 
+@app.route("/admin/faculty/template")
+def admin_faculty_template():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    df = pd.DataFrame(columns=["Name", "Email", "Department"])
+    file_name = "faculty_bulk_upload_template.xlsx"
+    df.to_excel(file_name, index=False)
+
+    return send_file(file_name, as_attachment=True)
+
+import random
+import string
+
+def generate_random_password(length=8):
+    chars = string.ascii_letters + string.digits + "@#"
+    return "".join(random.choice(chars) for _ in range(length))
+
+
+@app.route("/admin/faculty/bulk-upload", methods=["GET", "POST"])
+def admin_faculty_bulk_upload():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    if request.method == "POST":
+        file = request.files.get("file")
+        if not file:
+            flash("Please upload an Excel file.")
+            return redirect(request.url)
+
+        try:
+            df = pd.read_excel(file)
+        except:
+            flash("Invalid file. Please upload a valid Excel file.")
+            return redirect(request.url)
+
+        required_cols = ["Name", "Email", "Department"]
+        for col in required_cols:
+            if col not in df.columns:
+                flash(f"Missing column: {col}")
+                return redirect(request.url)
+
+        con = db()
+        cur = con.cursor()
+
+        created = []
+        skipped = []
+
+        for _, r in df.iterrows():
+            name = str(r["Name"]).strip()
+            email = str(r["Email"]).strip().lower()
+            dept = str(r["Department"]).strip()
+
+            if not name or not email or not dept:
+                skipped.append((name, email, dept, "Missing data"))
+                continue
+
+            # check duplicate
+            cur.execute("SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
+            if cur.fetchone()[0] > 0:
+                skipped.append((name, email, dept, "Already exists"))
+                continue
+
+            # generate password
+            raw_password = generate_random_password(10)
+            password_hash = generate_password_hash(raw_password)
+
+            cur.execute("""
+                INSERT INTO faculty(name, email, password_hash, department)
+                VALUES (?,?,?,?)
+            """, (name, email, password_hash, dept))
+
+            created.append((name, email, dept, raw_password))
+
+        con.commit()
+        con.close()
+
+        # Save generated passwords to Excel for admin download
+        if created:
+            out_df = pd.DataFrame(created, columns=["Name", "Email", "Department", "Generated Password"])
+            out_file = "faculty_generated_passwords.xlsx"
+            out_df.to_excel(out_file, index=False)
+
+            flash(f"Bulk upload completed ✅ Created: {len(created)}, Skipped: {len(skipped)}")
+            return send_file(out_file, as_attachment=True)
+
+        flash("No new faculty created. All were skipped.")
+        return redirect(request.url)
+
+    return render_template("admin_faculty_bulk_upload.html", active_page="faculty")
+
 @app.route("/admin/add-faculty", methods=["GET", "POST"])
 def admin_add_faculty():
     if not session.get("admin_logged_in"):
