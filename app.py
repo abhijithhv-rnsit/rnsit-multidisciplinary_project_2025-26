@@ -107,6 +107,15 @@ def compute_late_status(submitted_at, deadline):
 
 from datetime import datetime
 
+@app.route("/debug/team-faculty")
+def debug_team_faculty():
+    con = db()
+    cur = con.cursor()
+    cur.execute("SELECT * FROM team_faculty")
+    rows = cur.fetchall()
+    con.close()
+    return str([dict(r) for r in rows])
+
 
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
