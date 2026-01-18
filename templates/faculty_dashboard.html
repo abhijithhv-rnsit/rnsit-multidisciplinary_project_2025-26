@@ -13,7 +13,7 @@
           <th>Team Name</th>
           <th>Problem</th>
           <th>Leader</th>
-          <th>Action</th>
+          <th style="width:220px;">Action</th>
         </tr>
       </thead>
       <tbody>
@@ -25,6 +25,10 @@
           <td>
             <a href="/faculty/team/{{ t.id }}" class="btn btn-sm btn-primary">
               View Team
+            </a>
+
+            <a href="/faculty/chat/{{ t.id }}" class="btn btn-sm btn-outline-success ms-2">
+              💬 Chat
             </a>
           </td>
         </tr>
