@@ -289,7 +289,7 @@ def student_my_project():
     con = db()
     cur = con.cursor()
 
-    # Find team where student is leader
+    # 1) First check if student is a leader
     cur.execute("""
         SELECT t.*, p.title AS problem_title, p.year AS problem_year
         FROM teams t
@@ -297,15 +297,8 @@ def student_my_project():
         WHERE t.leader_usn=?
     """, (usn,))
     team = cur.fetchone()
-    # Fetch abstract/objectives from project_details table
-    cur.execute("""
-        SELECT abstract, objectives
-        FROM project_details
-        WHERE team_id=?
-    """, (team["id"],))
-    pd = cur.fetchone()
 
-    # If not leader, check member
+    # 2) If not leader, check if student is a member
     if not team:
         cur.execute("""
             SELECT t.*, p.title AS problem_title, p.year AS problem_year
@@ -316,30 +309,42 @@ def student_my_project():
         """, (usn,))
         team = cur.fetchone()
 
+    # 3) If still no team found
     if not team:
         con.close()
         flash("You are not registered under any project yet.")
         return redirect(url_for("student_home"))
-    # Fetch team members
+
+    team_id = team["id"]
+
+    # 4) Fetch abstract/objectives from project_details table
+    cur.execute("""
+        SELECT abstract, objectives
+        FROM project_details
+        WHERE team_id=?
+    """, (team_id,))
+    pd = cur.fetchone()
+
+    # 5) Fetch team members
     cur.execute("""
         SELECT member_name, usn, email, phone, department, section
         FROM team_members
         WHERE team_id=?
         ORDER BY id
-    """, (team["id"],))
+    """, (team_id,))
     members = cur.fetchall()
 
-    # Get faculty assigned
+    # 6) Get faculty assigned
     cur.execute("""
         SELECT f.name, f.email, f.department
         FROM team_faculty tf
         JOIN faculty f ON tf.faculty_id = f.id
         WHERE tf.team_id=?
-    """, (team["id"],))
+    """, (team_id,))
     faculty_row = cur.fetchone()
 
-    # Weekly progress count
-    cur.execute("SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team["id"],))
+    # 7) Weekly progress count
+    cur.execute("SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team_id,))
     progress_count = cur.fetchone()[0]
 
     con.close()
