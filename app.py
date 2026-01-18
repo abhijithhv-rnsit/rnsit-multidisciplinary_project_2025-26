@@ -1564,14 +1564,14 @@ def admin_assignments():
 
     # Pagination
     page = int(request.args.get("page", 1))
-    per_page = 25  # you can change to 50 if needed
+    per_page = 25
     offset = (page - 1) * per_page
 
     # ---------------- FACULTY LIST ----------------
     cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
     faculty_list = cur.fetchall()
 
-    # ---------------- PROBLEM LIST (for dropdown filter) ----------------
+    # ---------------- PROBLEM LIST ----------------
     cur.execute("SELECT DISTINCT title FROM problems ORDER BY title")
     problems_list = [r["title"] for r in cur.fetchall()]
 
@@ -1587,7 +1587,6 @@ def admin_assignments():
         params.append(dept_filter)
 
     if faculty_filter:
-        # Special filter for not assigned
         if faculty_filter == "NOT_ASSIGNED":
             where.append("tf.faculty_id IS NULL")
         else:
@@ -1650,21 +1649,16 @@ def admin_assignments():
         problems_list=problems_list,
         departments_list=departments_list,
         active_page="assignments",
-        # filters for keeping values in UI
+        # keep filters in UI
         search=search,
         dept_filter=dept_filter,
         faculty_filter=faculty_filter,
         problem_filter=problem_filter,
-        # pagination info
+        # pagination
         page=page,
         per_page=per_page,
         total_pages=total_pages,
-        total_rows=total_rows,
-        rows=rows,
-        q=q,
-        department=department,
-        faculty_id=faculty_id,
-        problem_id=problem_id,
+        total_rows=total_rows
     )
 
 @app.route("/admin/export-assignments")
