@@ -1,122 +1,191 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Admin Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body class="bg-light">
-{% include "admin_nav.html" %}
+  <title>Admin Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<!--<nav class="navbar navbar-dark" style="background:#003366">
-    <div class="container-fluid">
-        <span class="navbar-brand fw-bold">RNSIT Project Admin Dashboard</span>
-        <a href="/admin" class="btn btn-outline-light btn-sm">Back to Admin</a>
-    </div>
-</nav>-->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body { background:#f6f7fb; }
+    .card { border-radius: 16px; }
+    .stat-card h6 { font-size: 0.95rem; color:#6c757d; margin-bottom:6px; }
+    .stat-card h2 { font-weight: 800; margin: 0; }
+    .chart-card { min-height: 380px; }
+    .chart-box { height: 280px; }
+  </style>
+</head>
+
+<body class="bg-light">
+
+{% include "admin_nav.html" %}
 
 <div class="container mt-4">
 
-    <!-- SUMMARY CARDS -->
-    <div class="row text-center mb-4">
-        <div class="col-md-4">
-            <div class="card shadow">
-                <div class="card-body">
-                    <h6>Total Teams</h6>
-                    <h2>{{ total_teams }}</h2>
-                </div>
-            </div>
+  <!-- PAGE TITLE -->
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h4 class="fw-bold mb-0">Admin Dashboard</h4>
+      <div class="text-muted small">Quick summary and analytics</div>
+    </div>
+  </div>
+
+  <!-- SUMMARY CARDS -->
+  <div class="row g-3 mb-4 text-center">
+    <div class="col-md-4">
+      <div class="card shadow-sm border-0 stat-card">
+        <div class="card-body py-4">
+          <h6>Total Teams</h6>
+          <h2>{{ total_teams }}</h2>
         </div>
-        <div class="col-md-4">
-            <div class="card shadow">
-                <div class="card-body">
-                    <h6>Total Problems</h6>
-                    <h2>{{ total_problems }}</h2>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card shadow">
-                <div class="card-body">
-                    <h6>Departments</h6>
-                    <h2>{{ dept_data|length }}</h2>
-                </div>
-            </div>
-        </div>
+      </div>
     </div>
 
-    <!-- CHARTS -->
-    <div class="row">
-        <div class="col-md-6 mb-4">
-            <div class="card shadow">
-                <div class="card-header">Teams per Department</div>
-                <div class="card-body">
-                    <canvas id="deptChart"></canvas>
-                </div>
-            </div>
+    <div class="col-md-4">
+      <div class="card shadow-sm border-0 stat-card">
+        <div class="card-body py-4">
+          <h6>Total Problems</h6>
+          <h2>{{ total_problems }}</h2>
         </div>
-
-        <div class="col-md-6 mb-4">
-            <div class="card shadow">
-                <div class="card-header">Hardware vs Software</div>
-                <div class="card-body">
-                    <canvas id="typeChart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-6 mb-4">
-            <div class="card shadow">
-                <div class="card-header">Difficulty Distribution</div>
-                <div class="card-body">
-                    <canvas id="diffChart"></canvas>
-                </div>
-            </div>
-        </div>
+      </div>
     </div>
+
+    <div class="col-md-4">
+      <div class="card shadow-sm border-0 stat-card">
+        <div class="card-body py-4">
+          <h6>Departments Participated</h6>
+          <h2>{{ dept_data|length }}</h2>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHARTS -->
+  <div class="row g-3">
+
+    <!-- Teams per Department -->
+    <div class="col-lg-6">
+      <div class="card shadow-sm border-0 chart-card">
+        <div class="card-header fw-bold bg-white border-0 pt-3">
+          Teams per Department
+        </div>
+        <div class="card-body">
+          <div class="chart-box">
+            <canvas id="deptChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Teams by Category -->
+    <div class="col-lg-6">
+      <div class="card shadow-sm border-0 chart-card">
+        <div class="card-header fw-bold bg-white border-0 pt-3">
+          Teams by Category
+        </div>
+        <div class="card-body">
+          <div class="chart-box">
+            <canvas id="typeChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Difficulty Distribution -->
+    <div class="col-lg-6">
+      <div class="card shadow-sm border-0 chart-card">
+        <div class="card-header fw-bold bg-white border-0 pt-3">
+          Difficulty Distribution
+        </div>
+        <div class="card-body">
+          <div class="chart-box">
+            <canvas id="diffChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Optional Extra Info -->
+    <div class="col-lg-6">
+      <div class="card shadow-sm border-0 chart-card">
+        <div class="card-header fw-bold bg-white border-0 pt-3">
+          Quick Notes
+        </div>
+        <div class="card-body">
+          <div class="alert alert-info mb-0">
+            ✅ Dashboard updates automatically based on team registrations and problem uploads.<br>
+            📌 Faculty assignments and weekly progress analytics can be added next.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
 
 </div>
 
 <script>
-const deptLabels = {{ dept_data | map(attribute=0) | list | tojson }};
-const deptValues = {{ dept_data | map(attribute=1) | list | tojson }};
+  // ------------------ DATA FROM BACKEND ------------------
+  const deptLabels = {{ dept_data | map(attribute=0) | list | tojson }};
+  const deptValues = {{ dept_data | map(attribute=1) | list | tojson }};
 
-new Chart(document.getElementById("deptChart"), {
+  const typeLabels = {{ type_data | map(attribute=0) | list | tojson }};
+  const typeValues = {{ type_data | map(attribute=1) | list | tojson }};
+
+  const diffLabels = {{ diff_data | map(attribute=0) | list | tojson }};
+  const diffValues = {{ diff_data | map(attribute=1) | list | tojson }};
+
+  // ------------------ CHART SETTINGS ------------------
+  const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'bottom' }
+    }
+  };
+
+  // Teams per Department (Bar)
+  new Chart(document.getElementById("deptChart"), {
     type: 'bar',
     data: {
-        labels: deptLabels,
-        datasets: [{
-            label: 'Teams',
-            data: deptValues
-        }]
+      labels: deptLabels,
+      datasets: [{
+        label: 'Teams',
+        data: deptValues
+      }]
+    },
+    options: {
+      ...commonOptions,
+      scales: {
+        y: { beginAtZero: true }
+      }
     }
-});
+  });
 
-const typeLabels = {{ type_data | map(attribute=0) | list | tojson }};
-const typeValues = {{ type_data | map(attribute=1) | list | tojson }};
-
-new Chart(document.getElementById("typeChart"), {
+  // Teams by Category (Pie)
+  new Chart(document.getElementById("typeChart"), {
     type: 'pie',
     data: {
-        labels: typeLabels,
-        datasets: [{
-            data: typeValues
-        }]
-    }
-});
+      labels: typeLabels,
+      datasets: [{
+        data: typeValues
+      }]
+    },
+    options: commonOptions
+  });
 
-const diffLabels = {{ diff_data | map(attribute=0) | list | tojson }};
-const diffValues = {{ diff_data | map(attribute=1) | list | tojson }};
-
-new Chart(document.getElementById("diffChart"), {
-    type: 'pie',
+  // Difficulty Distribution (Doughnut)
+  new Chart(document.getElementById("diffChart"), {
+    type: 'doughnut',
     data: {
-        labels: diffLabels,
-        datasets: [{
-            data: diffValues
-        }]
-    }
-});
+      labels: diffLabels,
+      datasets: [{
+        data: diffValues
+      }]
+    },
+    options: commonOptions
+  });
 </script>
 
 </body>
