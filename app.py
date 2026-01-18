@@ -7,6 +7,13 @@ import pytz
 
 import sqlite3, pandas as pd, os
 
+import os
+import pandas as pd
+import random, string
+from flask import send_file
+from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash
+
 
 
 app = Flask(__name__)
@@ -918,9 +925,124 @@ def admin_faculty_template():
 import random
 import string
 
+
+
 def generate_random_password(length=8):
     chars = string.ascii_letters + string.digits + "@#"
     return "".join(random.choice(chars) for _ in range(length))
+
+
+@app.route("/admin/faculty-management", methods=["GET", "POST"])
+def admin_faculty_management():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    # ---------------- DOWNLOAD TEMPLATE ----------------
+    if request.args.get("download") == "template":
+        template_df = pd.DataFrame(columns=["Name", "Email", "Department"])
+        file_path = "faculty_upload_template.xlsx"
+        template_df.to_excel(file_path, index=False)
+        return send_file(file_path, as_attachment=True)
+
+    # ---------------- BULK UPLOAD ----------------
+    if request.method == "POST" and request.form.get("action") == "bulk_upload":
+        file = request.files.get("file")
+        if not file:
+            flash("Please upload an Excel file.")
+            return redirect(request.url)
+
+        try:
+            df = pd.read_excel(file)
+        except:
+            flash("Invalid file. Please upload a valid Excel file.")
+            return redirect(request.url)
+
+        required_cols = ["Name", "Email", "Department"]
+        for col in required_cols:
+            if col not in df.columns:
+                flash(f"Missing column: {col}")
+                return redirect(request.url)
+
+        created = []
+        skipped = []
+
+        for _, r in df.iterrows():
+            name = str(r["Name"]).strip()
+            email = str(r["Email"]).strip().lower()
+            dept = str(r["Department"]).strip()
+
+            if not name or not email or not dept:
+                skipped.append((name, email, dept, "Missing data"))
+                continue
+
+            cur.execute("SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
+            if cur.fetchone()[0] > 0:
+                skipped.append((name, email, dept, "Already exists"))
+                continue
+
+            raw_password = generate_random_password(10)
+            password_hash = generate_password_hash(raw_password)
+
+            cur.execute("""
+                INSERT INTO faculty(name, email, password_hash, department)
+                VALUES (?,?,?,?)
+            """, (name, email, password_hash, dept))
+
+            created.append((name, email, dept, raw_password))
+
+        con.commit()
+
+        # Generate excel for admin download
+        if created:
+            out_df = pd.DataFrame(created, columns=["Name", "Email", "Department", "Generated Password"])
+            out_file = "faculty_generated_passwords.xlsx"
+            out_df.to_excel(out_file, index=False)
+
+            flash(f"Bulk upload completed ✅ Created: {len(created)}, Skipped: {len(skipped)}")
+            con.close()
+            return send_file(out_file, as_attachment=True)
+
+        flash("No new faculty created. All were skipped.")
+        con.close()
+        return redirect(request.url)
+
+    # ---------------- MANUAL ADD FACULTY ----------------
+    if request.method == "POST" and request.form.get("action") == "manual_add":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        department = request.form.get("department", "").strip()
+        password = request.form.get("password", "").strip()
+
+        if not name or not email or not department:
+            flash("Please fill Name, Email and Department.")
+            con.close()
+            return redirect(request.url)
+
+        # If password not given → auto generate
+        if not password:
+            password = generate_random_password(10)
+
+        password_hash = generate_password_hash(password)
+
+        try:
+            cur.execute("""
+                INSERT INTO faculty(name, email, password_hash, department)
+                VALUES (?,?,?,?)
+            """, (name, email, password_hash, department))
+            con.commit()
+            flash(f"Faculty created successfully ✅ Password: {password}")
+        except:
+            flash("Faculty email already exists ❌")
+
+    # ---------------- FACULTY LIST ----------------
+    cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+    faculty = cur.fetchall()
+    con.close()
+
+    return render_template("admin_faculty_management.html", faculty=faculty, active_page="faculty")
 
 
 @app.route("/admin/faculty/bulk-upload", methods=["GET", "POST"])
