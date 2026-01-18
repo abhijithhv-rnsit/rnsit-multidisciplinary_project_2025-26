@@ -33,7 +33,8 @@
 
   <!-- SUMMARY CARDS -->
   <div class="row g-3 mb-4 text-center">
-    <div class="col-md-4">
+
+    <div class="col-md-3">
       <div class="card shadow-sm border-0 stat-card">
         <div class="card-body py-4">
           <h6>Total Teams</h6>
@@ -42,7 +43,7 @@
       </div>
     </div>
 
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="card shadow-sm border-0 stat-card">
         <div class="card-body py-4">
           <h6>Total Problems</h6>
@@ -51,14 +52,24 @@
       </div>
     </div>
 
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="card shadow-sm border-0 stat-card">
         <div class="card-body py-4">
-          <h6>Departments Participated</h6>
-          <h2>{{ dept_data|length }}</h2>
+          <h6>Not Assigned Teams</h6>
+          <h2 class="text-danger">{{ not_assigned_count }}</h2>
         </div>
       </div>
     </div>
+
+    <div class="col-md-3">
+      <div class="card shadow-sm border-0 stat-card">
+        <div class="card-body py-4">
+          <h6>Pending Progress</h6>
+          <h2 class="text-warning">{{ pending_progress_count }}</h2>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- CHARTS -->
@@ -106,16 +117,15 @@
       </div>
     </div>
 
-    <!-- Optional Extra Info -->
+    <!-- Faculty-wise Assignment Chart -->
     <div class="col-lg-6">
       <div class="card shadow-sm border-0 chart-card">
         <div class="card-header fw-bold bg-white border-0 pt-3">
-          Quick Notes
+          Faculty-wise Team Assignments
         </div>
         <div class="card-body">
-          <div class="alert alert-info mb-0">
-            ✅ Dashboard updates automatically based on team registrations and problem uploads.<br>
-            📌 Faculty assignments and weekly progress analytics can be added next.
+          <div class="chart-box">
+            <canvas id="facultyChart"></canvas>
           </div>
         </div>
       </div>
@@ -127,6 +137,7 @@
 
 <script>
   // ------------------ DATA FROM BACKEND ------------------
+
   const deptLabels = {{ dept_data | map(attribute=0) | list | tojson }};
   const deptValues = {{ dept_data | map(attribute=1) | list | tojson }};
 
@@ -136,7 +147,10 @@
   const diffLabels = {{ diff_data | map(attribute=0) | list | tojson }};
   const diffValues = {{ diff_data | map(attribute=1) | list | tojson }};
 
-  // ------------------ CHART SETTINGS ------------------
+  const facultyLabels = {{ faculty_data | map(attribute=0) | list | tojson }};
+  const facultyValues = {{ faculty_data | map(attribute=1) | list | tojson }};
+
+  // ------------------ COMMON OPTIONS ------------------
   const commonOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -157,9 +171,7 @@
     },
     options: {
       ...commonOptions,
-      scales: {
-        y: { beginAtZero: true }
-      }
+      scales: { y: { beginAtZero: true } }
     }
   });
 
@@ -185,6 +197,22 @@
       }]
     },
     options: commonOptions
+  });
+
+  // Faculty-wise Teams (Bar)
+  new Chart(document.getElementById("facultyChart"), {
+    type: 'bar',
+    data: {
+      labels: facultyLabels,
+      datasets: [{
+        label: 'Assigned Teams',
+        data: facultyValues
+      }]
+    },
+    options: {
+      ...commonOptions,
+      scales: { y: { beginAtZero: true } }
+    }
   });
 </script>
 
