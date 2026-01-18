@@ -1865,34 +1865,59 @@ def dashboard():
     cur.execute("SELECT COUNT(*) FROM problems")
     total_problems = cur.fetchone()[0]
 
-    # Teams per department (FIXED)
+    # Teams per department (FIXED: leader_department instead of department)
     cur.execute("""
-        SELECT COALESCE(leader_department, 'Unknown') AS department, COUNT(*) 
-        FROM teams 
-        GROUP BY COALESCE(leader_department, 'Unknown')
+        SELECT leader_department, COUNT(*)
+        FROM teams
+        GROUP BY leader_department
         ORDER BY COUNT(*) DESC
     """)
     dept_data = cur.fetchall()
 
-    # Hardware vs Software / Category distribution
+    # Hardware vs Software (Category)
     cur.execute("""
-        SELECT COALESCE(p.category, 'Unknown') AS category, COUNT(*) 
-        FROM teams t 
+        SELECT p.category, COUNT(*)
+        FROM teams t
         JOIN problems p ON t.problem_id = p.id
-        GROUP BY COALESCE(p.category, 'Unknown')
-        ORDER BY COUNT(*) DESC
+        GROUP BY p.category
     """)
     type_data = cur.fetchall()
 
     # Difficulty distribution
     cur.execute("""
-        SELECT COALESCE(p.difficulty, 'Unknown') AS difficulty, COUNT(*) 
-        FROM teams t 
+        SELECT p.difficulty, COUNT(*)
+        FROM teams t
         JOIN problems p ON t.problem_id = p.id
-        GROUP BY COALESCE(p.difficulty, 'Unknown')
-        ORDER BY COUNT(*) DESC
+        GROUP BY p.difficulty
     """)
     diff_data = cur.fetchall()
+
+    # ✅ Not assigned teams count
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM teams t
+        LEFT JOIN team_faculty tf ON t.id = tf.team_id
+        WHERE tf.faculty_id IS NULL
+    """)
+    not_assigned_count = cur.fetchone()[0]
+
+    # ✅ Pending weekly progress count
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM weekly_progress
+        WHERE status='Pending'
+    """)
+    pending_progress_count = cur.fetchone()[0]
+
+    # ✅ Faculty wise team assignments
+    cur.execute("""
+        SELECT f.name, COUNT(tf.team_id)
+        FROM faculty f
+        LEFT JOIN team_faculty tf ON f.id = tf.faculty_id
+        GROUP BY f.id
+        ORDER BY COUNT(tf.team_id) DESC
+    """)
+    faculty_data = cur.fetchall()
 
     con.close()
 
@@ -1903,8 +1928,12 @@ def dashboard():
         dept_data=dept_data,
         type_data=type_data,
         diff_data=diff_data,
+        not_assigned_count=not_assigned_count,
+        pending_progress_count=pending_progress_count,
+        faculty_data=faculty_data,
         active_page="dashboard"
     )
+
 
 @app.route("/export")
 @app.route("/export")
