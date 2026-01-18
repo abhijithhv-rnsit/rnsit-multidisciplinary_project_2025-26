@@ -21,11 +21,24 @@
     </div>
   </div>
 
-  <div class="d-flex gap-2">
+  <!--<div class="d-flex gap-2">
     <a href="/admin/export-assignments" class="btn btn-success btn-sm">
       ⬇ Export Assignments (Excel)
     </a>
+  </div>-->
+  <div><a class="btn btn-success btn-sm"
+   href="/admin/export-assignments?q={{ q }}&department={{ department }}&faculty_id={{ faculty_id }}&problem_id={{ problem_id }}">
+  ⬇ Export Filtered (Excel)
+</a>
   </div>
+  <div>
+  <a class="btn btn-outline-danger btn-sm"
+   href="/admin/export-assignments?only_unassigned=1&q={{ q }}&department={{ department }}&faculty_id={{ faculty_id }}&problem_id={{ problem_id }}">
+  ⬇ Export Not Assigned (Excel)
+</a>
+  </div>
+
+
 </div>
 
 
