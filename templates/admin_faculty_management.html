@@ -9,6 +9,7 @@
   <style>
     body { background:#f6f7fb; }
     .card { border-radius: 16px; }
+    .table td, .table th { vertical-align: middle; }
   </style>
 </head>
 
@@ -21,12 +22,22 @@
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <div>
       <h4 class="fw-bold mb-1">Faculty Management</h4>
-      <div class="text-muted small">Bulk upload + Manual add + Faculty list</div>
+      <div class="text-muted small">
+        Total Faculty: <b>{{ total_rows }}</b> |
+        Page: <b>{{ page }}</b> / <b>{{ total_pages }}</b>
+      </div>
     </div>
 
-    <a href="/admin/faculty-management?download=template" class="btn btn-success btn-sm">
-      ⬇ Download Excel Template
-    </a>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="/admin/faculty-management?download=template" class="btn btn-success btn-sm">
+        ⬇ Download Template
+      </a>
+
+      <a href="/admin/faculty-management?export=excel&search={{ search }}&dept={{ dept_filter }}"
+         class="btn btn-outline-primary btn-sm">
+        ⬇ Export Excel
+      </a>
+    </div>
   </div>
 
   {% with messages = get_flashed_messages() %}
@@ -86,14 +97,9 @@
             <label class="form-label fw-semibold">Department</label>
             <select name="department" class="form-select" required>
               <option value="">Select</option>
-              <option>CSE</option>
-              <option>CSE-AIML</option>
-              <option>CSE-DS</option>
-              <option>CSE-CY</option>
-              <option>ECE</option>
-              <option>EEE</option>
-              <option>CV</option>
-              <option>ME</option>
+              {% for d in departments_list %}
+                <option value="{{ d }}">{{ d }}</option>
+              {% endfor %}
             </select>
           </div>
 
@@ -112,43 +118,127 @@
     </div>
   </div>
 
+  <!-- FILTER BAR -->
+  <form method="get" action="/admin/faculty-management" class="card shadow-sm p-3 mb-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Search</label>
+        <input class="form-control" name="search" value="{{ search }}"
+               placeholder="Name / Email / Department">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Department</label>
+        <select class="form-select" name="dept">
+          <option value="">All</option>
+          {% for d in departments_list %}
+            <option value="{{ d }}" {% if dept_filter==d %}selected{% endif %}>{{ d }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3 d-flex gap-2">
+        <button class="btn btn-primary w-100">Apply</button>
+        <a href="/admin/faculty-management" class="btn btn-outline-secondary w-100">Reset</a>
+      </div>
+    </div>
+  </form>
+
   <!-- FACULTY LIST -->
   <div class="card shadow-sm border-0">
     <div class="card-body p-4">
       <h5 class="fw-bold mb-3">📋 Faculty List</h5>
 
       {% if faculty %}
-      <div class="table-responsive">
-        <table class="table table-bordered table-hover align-middle bg-white">
-          <thead class="table-dark">
-            <tr>
-              <th>#</th>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Department</th>
-              <th style="width:120px;">Action</th>
-            </tr>
-          </thead>
+      <form method="post">
+        <input type="hidden" name="action" value="bulk_reset_password">
 
-          <tbody>
-            {% for f in faculty %}
-            <tr>
-              <td>{{ loop.index }}</td>
-              <td class="fw-semibold">{{ f.name }}</td>
-              <td>{{ f.email }}</td>
-              <td>{{ f.department }}</td>
-              <td>
-                <a href="/admin/faculty/delete/{{ f.id }}"
-                   class="btn btn-sm btn-danger"
-                   onclick="return confirm('Are you sure you want to delete this faculty?');">
-                  Delete
-                </a>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <button class="btn btn-warning btn-sm">
+            🔁 Reset Password (Selected)
+          </button>
+
+          <button type="button" class="btn btn-outline-dark btn-sm" onclick="selectAllVisible()">
+            Select All Visible
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover align-middle bg-white">
+            <thead class="table-dark">
+              <tr>
+                <th style="width:60px;" class="text-center">
+                  <input type="checkbox" id="selectAllMaster" onclick="toggleSelectAllMaster()">
+                </th>
+                <th>#</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Department</th>
+                <th style="width:260px;">Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {% for f in faculty %}
+              <tr>
+                <td class="text-center">
+                  <input type="checkbox" class="rowCheck" name="faculty_id" value="{{ f.id }}">
+                </td>
+                <td>{{ loop.index }}</td>
+                <td class="fw-semibold">{{ f.name }}</td>
+                <td>{{ f.email }}</td>
+                <td>{{ f.department }}</td>
+                <td>
+                  <!-- Reset password -->
+                  <form method="post" style="display:inline;">
+                    <input type="hidden" name="action" value="reset_password">
+                    <input type="hidden" name="fid" value="{{ f.id }}">
+                    <button class="btn btn-sm btn-outline-warning">
+                      Reset Password
+                    </button>
+                  </form>
+
+                  <!-- Delete (modal trigger) -->
+                  <button type="button"
+                          class="btn btn-sm btn-danger ms-2"
+                          data-bs-toggle="modal"
+                          data-bs-target="#deleteModal"
+                          data-id="{{ f.id }}"
+                          data-name="{{ f.name }}">
+                    Delete
+                  </button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      </form>
+
+      <!-- Pagination -->
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <div class="small text-muted">
+          Showing page {{ page }} of {{ total_pages }}
+        </div>
+
+        <div class="d-flex gap-2">
+          {% if page > 1 %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="/admin/faculty-management?page={{ page-1 }}&search={{ search }}&dept={{ dept_filter }}">
+              ← Prev
+            </a>
+          {% endif %}
+
+          {% if page < total_pages %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="/admin/faculty-management?page={{ page+1 }}&search={{ search }}&dept={{ dept_filter }}">
+              Next →
+            </a>
+          {% endif %}
+        </div>
       </div>
+
       {% else %}
         <div class="alert alert-warning">No faculty found.</div>
       {% endif %}
@@ -157,7 +247,56 @@
 
 </div>
 
+<!-- DELETE CONFIRM MODAL -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title">Confirm Delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        Are you sure you want to delete <b id="facultyName"></b> ?
+        <div class="text-danger small mt-2">
+          This will also remove all team assignments of this faculty.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <a id="deleteBtn" class="btn btn-danger">Delete</a>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+  function toggleSelectAllMaster() {
+    const master = document.getElementById("selectAllMaster");
+    document.querySelectorAll(".rowCheck").forEach(cb => cb.checked = master.checked);
+  }
+
+  function selectAllVisible() {
+    document.querySelectorAll(".rowCheck").forEach(cb => cb.checked = true);
+    document.getElementById("selectAllMaster").checked = true;
+  }
+
+  // Delete modal dynamic values
+  const deleteModal = document.getElementById('deleteModal');
+  deleteModal.addEventListener('show.bs.modal', function (event) {
+    const button = event.relatedTarget;
+    const fid = button.getAttribute('data-id');
+    const name = button.getAttribute('data-name');
+
+    document.getElementById("facultyName").innerText = name;
+    document.getElementById("deleteBtn").href = "/admin/faculty/delete/" + fid;
+  });
+</script>
 
 </body>
 </html>
