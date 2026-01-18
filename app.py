@@ -1342,6 +1342,11 @@ def admin_assignments():
         per_page=per_page,
         total_pages=total_pages,
         total_rows=total_rows
+        rows=rows,
+        q=q,
+        department=department,
+        faculty_id=faculty_id,
+        problem_id=problem_id,
     )
 
 @app.route("/admin/export-assignments")
@@ -1349,9 +1354,17 @@ def export_assignments():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
-    con = db()
+    # Read filters from query params (same as assignment page)
+    q = request.args.get("q", "").strip()
+    department = request.args.get("department", "").strip()
+    faculty_id = request.args.get("faculty_id", "").strip()
+    problem_id = request.args.get("problem_id", "").strip()
+    only_unassigned = request.args.get("only_unassigned", "").strip()  # "1" means only unassigned
 
-    query = """
+    con = db()
+    cur = con.cursor()
+
+    base_query = """
     SELECT
         t.id AS team_id,
         t.team_name,
@@ -1378,17 +1391,59 @@ def export_assignments():
     JOIN problems p ON t.problem_id = p.id
     LEFT JOIN team_faculty tf ON tf.team_id = t.id
     LEFT JOIN faculty f ON f.id = tf.faculty_id
+    WHERE 1=1
+    """
 
+    params = []
+
+    # Search filter
+    if q:
+        base_query += """
+        AND (
+            LOWER(t.team_name) LIKE ?
+            OR LOWER(t.leader_name) LIKE ?
+            OR LOWER(t.leader_usn) LIKE ?
+            OR LOWER(p.title) LIKE ?
+        )
+        """
+        like_q = f"%{q.lower()}%"
+        params.extend([like_q, like_q, like_q, like_q])
+
+    # Department filter (leader department)
+    if department:
+        base_query += " AND t.leader_department = ? "
+        params.append(department)
+
+    # Faculty filter
+    if faculty_id:
+        base_query += " AND tf.faculty_id = ? "
+        params.append(faculty_id)
+
+    # Problem filter
+    if problem_id:
+        base_query += " AND t.problem_id = ? "
+        params.append(problem_id)
+
+    # Only unassigned filter
+    if only_unassigned == "1":
+        base_query += " AND tf.faculty_id IS NULL "
+
+    base_query += """
     ORDER BY assignment_status DESC, faculty_name, p.title, t.team_name
     """
 
-    df = pd.read_sql(query, con)
+    df = pd.read_sql(base_query, con, params=params)
     con.close()
 
-    file_name = "faculty_assignments.xlsx"
-    df.to_excel(file_name, index=False)
+    # File name based on export type
+    if only_unassigned == "1":
+        file_name = "faculty_assignments_not_assigned.xlsx"
+    else:
+        file_name = "faculty_assignments_filtered.xlsx"
 
+    df.to_excel(file_name, index=False)
     return send_file(file_name, as_attachment=True)
+
 
 
 if __name__ == "__main__":
