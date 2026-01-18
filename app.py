@@ -1762,6 +1762,128 @@ def export_assignments():
     df.to_excel(file_name, index=False)
     return send_file(file_name, as_attachment=True)
 
+@app.route("/student/chat", methods=["GET", "POST"])
+def student_chat():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    usn = session["student_usn"]
+
+    con = db()
+    cur = con.cursor()
+
+    # Find team_id (leader or member)
+    cur.execute("SELECT id, team_name, leader_name FROM teams WHERE leader_usn=?", (usn,))
+    team = cur.fetchone()
+
+    if not team:
+        cur.execute("""
+            SELECT t.id, t.team_name, t.leader_name
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            WHERE m.usn=?
+        """, (usn,))
+        team = cur.fetchone()
+
+    if not team:
+        con.close()
+        flash("You are not part of any registered team.")
+        return redirect(url_for("student_home"))
+
+    team_id = team["id"]
+
+    # Check faculty assigned
+    cur.execute("""
+        SELECT f.name, f.email, f.department
+        FROM team_faculty tf
+        JOIN faculty f ON tf.faculty_id = f.id
+        WHERE tf.team_id=?
+    """, (team_id,))
+    faculty = cur.fetchone()
+
+    if not faculty:
+        con.close()
+        flash("Faculty guide not assigned yet. Chat will be available after assignment.")
+        return redirect(url_for("student_my_project"))
+
+    # Send message
+    if request.method == "POST":
+        msg = request.form.get("message", "").strip()
+        if msg:
+            cur.execute("""
+                INSERT INTO chat_messages(team_id, sender_role, sender_name, message)
+                VALUES (?,?,?,?)
+            """, (team_id, "student", usn, msg))
+            con.commit()
+        return redirect(url_for("student_chat"))
+
+    # Fetch chat history
+    cur.execute("""
+        SELECT * FROM chat_messages
+        WHERE team_id=?
+        ORDER BY sent_at ASC
+    """, (team_id,))
+    messages = cur.fetchall()
+
+    con.close()
+
+    return render_template(
+        "student_chat.html",
+        team=team,
+        faculty=faculty,
+        messages=messages
+    )
+@app.route("/faculty/chat/<int:team_id>", methods=["GET", "POST"])
+def faculty_chat(team_id):
+    if not session.get("faculty_id"):
+        return redirect(url_for("faculty_login"))
+
+    faculty_id = session["faculty_id"]
+
+    con = db()
+    cur = con.cursor()
+
+    # Ensure this team belongs to this faculty
+    cur.execute("""
+        SELECT t.id, t.team_name, t.leader_name, t.leader_usn
+        FROM team_faculty tf
+        JOIN teams t ON tf.team_id = t.id
+        WHERE tf.faculty_id=? AND tf.team_id=?
+    """, (faculty_id, team_id))
+    team = cur.fetchone()
+
+    if not team:
+        con.close()
+        flash("Unauthorized access.")
+        return redirect(url_for("faculty_dashboard"))
+
+    # Send message
+    if request.method == "POST":
+        msg = request.form.get("message", "").strip()
+        if msg:
+            cur.execute("""
+                INSERT INTO chat_messages(team_id, sender_role, sender_name, message)
+                VALUES (?,?,?,?)
+            """, (team_id, "faculty", session.get("faculty_name", "Faculty"), msg))
+            con.commit()
+        return redirect(url_for("faculty_chat", team_id=team_id))
+
+    # Fetch chat history
+    cur.execute("""
+        SELECT * FROM chat_messages
+        WHERE team_id=?
+        ORDER BY sent_at ASC
+    """, (team_id,))
+    messages = cur.fetchall()
+
+    con.close()
+
+    return render_template(
+        "faculty_chat.html",
+        team=team,
+        messages=messages
+    )
+
 
 
 if __name__ == "__main__":
@@ -1874,6 +1996,17 @@ if __name__ == "__main__":
     """)
     #add_column_if_not_exists("teams", "abstract", "TEXT")
     #add_column_if_not_exists("teams", "objectives", "TEXT")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_id INTEGER NOT NULL,
+        sender_role TEXT NOT NULL,   -- 'student' or 'faculty'
+        sender_name TEXT,
+        message TEXT NOT NULL,
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(team_id) REFERENCES teams(id)
+    )
+    """)
 
     # 🔥 GUARANTEED MIGRATION (THIS IS THE FIX)
     try:
