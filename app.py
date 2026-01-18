@@ -1419,8 +1419,8 @@ def admin_teams():
     df = pd.read_sql("""
         SELECT
             t.team_name,
-            t.department,
-            t.section,
+            t.leader_department AS department,
+            t.leader_section AS section,
             p.title AS problem,
             t.leader_name,
             t.leader_usn,
