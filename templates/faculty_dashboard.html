@@ -1,4 +1,37 @@
-{% extends "faculty_base.html" %}
+{% if assigned_teams %}
+  <div class="table-responsive">
+    <table class="table table-bordered table-striped align-middle">
+      <thead class="table-dark">
+        <tr>
+          <th>Team Name</th>
+          <th>Problem</th>
+          <th>Leader</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in assigned_teams %}
+        <tr>
+          <td>{{ t.team_name }}</td>
+          <td>{{ t.problem_title }}</td>
+          <td>{{ t.leader_name }} ({{ t.leader_usn }})</td>
+          <td>
+            <a href="/faculty/team/{{ t.team_id }}" class="btn btn-sm btn-primary">
+              View Team
+            </a>
+            <a href="/faculty/chat/{{ t.id }}" class="btn btn-sm btn-outline-success ms-2">
+              💬 Chat
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="alert alert-warning">No teams assigned yet.</div>
+{% endif %}
+<!--{% extends "faculty_base.html" %}
 {% block title %}Faculty Dashboard{% endblock %}
 
 {% block content %}
@@ -40,4 +73,4 @@
   <div class="alert alert-warning">No teams assigned yet.</div>
 {% endif %}
 
-{% endblock %}
+{% endblock %}-->
