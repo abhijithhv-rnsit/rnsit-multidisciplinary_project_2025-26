@@ -174,7 +174,7 @@
                 <th>Name</th>
                 <th>Email</th>
                 <th>Department</th>
-                <th style="width:260px;">Actions</th>
+                <th style="width:320px;">Actions</th>
               </tr>
             </thead>
 
@@ -188,12 +188,25 @@
                 <td class="fw-semibold">{{ f.name }}</td>
                 <td>{{ f.email }}</td>
                 <td>{{ f.department }}</td>
+
                 <td>
+                  <!-- EDIT (modal trigger) -->
+                  <button type="button"
+                          class="btn btn-sm btn-outline-primary"
+                          data-bs-toggle="modal"
+                          data-bs-target="#editModal"
+                          data-id="{{ f.id }}"
+                          data-name="{{ f.name }}"
+                          data-email="{{ f.email }}"
+                          data-department="{{ f.department }}">
+                    ✏️ Edit
+                  </button>
+
                   <!-- Reset password -->
                   <form method="post" style="display:inline;">
                     <input type="hidden" name="action" value="reset_password">
                     <input type="hidden" name="fid" value="{{ f.id }}">
-                    <button class="btn btn-sm btn-outline-warning">
+                    <button class="btn btn-sm btn-outline-warning ms-2">
                       Reset Password
                     </button>
                   </form>
@@ -247,6 +260,58 @@
 
 </div>
 
+<!-- EDIT FACULTY MODAL -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+
+      <form method="post">
+        <input type="hidden" name="action" value="update_faculty">
+        <input type="hidden" name="fid" id="edit_fid">
+
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Faculty</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Name</label>
+            <input type="text" class="form-control" name="name" id="edit_name" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Email</label>
+            <input type="email" class="form-control" name="email" id="edit_email" required>
+            <div class="text-muted small mt-1">
+              Note: Email must be unique.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Department</label>
+            <select class="form-select" name="department" id="edit_department" required>
+              <option value="">Select</option>
+              {% for d in departments_list %}
+                <option value="{{ d }}">{{ d }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">Cancel</button>
+          <button class="btn btn-primary">💾 Save Changes</button>
+        </div>
+
+      </form>
+
+    </div>
+  </div>
+</div>
+
 <!-- DELETE CONFIRM MODAL -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
   <div class="modal-dialog">
@@ -295,6 +360,22 @@
 
     document.getElementById("facultyName").innerText = name;
     document.getElementById("deleteBtn").href = "/admin/faculty/delete/" + fid;
+  });
+
+  // Edit modal dynamic values
+  const editModal = document.getElementById('editModal');
+  editModal.addEventListener('show.bs.modal', function (event) {
+    const button = event.relatedTarget;
+
+    const fid = button.getAttribute('data-id');
+    const name = button.getAttribute('data-name');
+    const email = button.getAttribute('data-email');
+    const dept = button.getAttribute('data-department');
+
+    document.getElementById("edit_fid").value = fid;
+    document.getElementById("edit_name").value = name;
+    document.getElementById("edit_email").value = email;
+    document.getElementById("edit_department").value = dept;
   });
 </script>
 
