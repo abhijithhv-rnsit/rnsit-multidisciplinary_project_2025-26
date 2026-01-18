@@ -7,10 +7,10 @@
 
   <div class="alert alert-warning text-center">
     <strong>📌 Important Instructions:</strong><br>
-    • Team size: <b>Minimum 3, Maximum 6</b><br>
-    • Each problem allows <b>maximum 5 teams</b><br>
+    • Team size: <b>4 to 6 members</b> (including Team Leader)<br>
+    • Each problem allows <b>only 1 team</b><br>
     • Registration closes automatically after the deadline<br>
-    • Locked problems will not accept new registrations
+    • Locked/Closed problems will not accept new registrations
   </div>
 
   <input class="form-control mb-4" id="searchBox"
@@ -47,7 +47,7 @@
 
           <p>
             <span class="badge bg-secondary">
-              Teams: {{c}} / {{p['max_teams']}}
+              Teams Registered: {{c}} / 1
             </span>
           </p>
 
@@ -56,15 +56,15 @@
               🔒 Registration Closed (Deadline Passed)
             </button>
 
-          {% elif c < p['max_teams'] %}
+          {% elif c >= 1 %}
+            <button class="btn btn-danger w-100" disabled>
+              🚫 Registration Closed (1 Team Already Registered)
+            </button>
+
+          {% else %}
             <a href="/register/{{p['id']}}" class="btn btn-success w-100">
               Register Team
             </a>
-
-          {% else %}
-            <button class="btn btn-danger w-100" disabled>
-              🚫 Team Limit Reached (5 Teams)
-            </button>
           {% endif %}
 
         </div>
