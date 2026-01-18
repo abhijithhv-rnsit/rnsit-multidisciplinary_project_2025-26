@@ -1206,11 +1206,143 @@ def export():
     df.to_excel(file_name, index=False)
 
     return send_file(file_name, as_attachment=True)
+
 @app.route("/admin/logout")
 def admin_logout():
     session.pop("admin_logged_in", None)
     flash("Logged out successfully")
     return redirect(url_for("admin"))
+
+@app.route("/admin/assignments", methods=["GET", "POST"])
+def admin_assignments():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    # ---------------- SAVE MULTIPLE ASSIGNMENTS ----------------
+    if request.method == "POST":
+        team_ids = request.form.getlist("team_id")  # selected rows
+        updated = 0
+
+        for team_id in team_ids:
+            faculty_id = request.form.get(f"faculty_{team_id}")
+            if faculty_id and faculty_id.strip() != "":
+                cur.execute("""
+                    INSERT OR REPLACE INTO team_faculty(team_id, faculty_id)
+                    VALUES (?, ?)
+                """, (team_id, faculty_id))
+                updated += 1
+
+        con.commit()
+        flash(f"{updated} assignment(s) saved successfully ✅")
+
+    # ---------------- FILTERS (GET) ----------------
+    search = request.args.get("search", "").strip().lower()
+    dept_filter = request.args.get("dept", "").strip()
+    faculty_filter = request.args.get("faculty", "").strip()
+    problem_filter = request.args.get("problem", "").strip()
+
+    # Pagination
+    page = int(request.args.get("page", 1))
+    per_page = 25  # you can change to 50 if needed
+    offset = (page - 1) * per_page
+
+    # ---------------- FACULTY LIST ----------------
+    cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+    faculty_list = cur.fetchall()
+
+    # ---------------- PROBLEM LIST (for dropdown filter) ----------------
+    cur.execute("SELECT DISTINCT title FROM problems ORDER BY title")
+    problems_list = [r["title"] for r in cur.fetchall()]
+
+    # ---------------- DEPARTMENT LIST ----------------
+    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
+
+    # ---------------- BUILD WHERE CLAUSE ----------------
+    where = []
+    params = []
+
+    if dept_filter:
+        where.append("t.leader_department = ?")
+        params.append(dept_filter)
+
+    if faculty_filter:
+        # Special filter for not assigned
+        if faculty_filter == "NOT_ASSIGNED":
+            where.append("tf.faculty_id IS NULL")
+        else:
+            where.append("tf.faculty_id = ?")
+            params.append(faculty_filter)
+
+    if problem_filter:
+        where.append("p.title = ?")
+        params.append(problem_filter)
+
+    if search:
+        where.append("""
+            (
+              LOWER(t.team_name) LIKE ?
+              OR LOWER(t.leader_usn) LIKE ?
+              OR LOWER(p.title) LIKE ?
+            )
+        """)
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    # ---------------- TOTAL COUNT (for pagination) ----------------
+    cur.execute(f"""
+        SELECT COUNT(*)
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        LEFT JOIN team_faculty tf ON t.id = tf.team_id
+        {where_sql}
+    """, params)
+    total_rows = cur.fetchone()[0]
+    total_pages = max(1, (total_rows + per_page - 1) // per_page)
+
+    # ---------------- GET PAGINATED DATA ----------------
+    cur.execute(f"""
+        SELECT
+            t.id AS team_id,
+            t.team_name,
+            t.leader_usn,
+            t.leader_name,
+            t.leader_department,
+            p.title AS problem_title,
+            p.year AS problem_year,
+            tf.faculty_id AS assigned_faculty_id
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        LEFT JOIN team_faculty tf ON t.id = tf.team_id
+        {where_sql}
+        ORDER BY p.title, t.team_name
+        LIMIT ? OFFSET ?
+    """, params + [per_page, offset])
+
+    teams = cur.fetchall()
+    con.close()
+
+    return render_template(
+        "admin_assignments.html",
+        teams=teams,
+        faculty_list=faculty_list,
+        problems_list=problems_list,
+        departments_list=departments_list,
+        active_page="assignments",
+        # filters for keeping values in UI
+        search=search,
+        dept_filter=dept_filter,
+        faculty_filter=faculty_filter,
+        problem_filter=problem_filter,
+        # pagination info
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+        total_rows=total_rows
+    )
 
 
 if __name__ == "__main__":
