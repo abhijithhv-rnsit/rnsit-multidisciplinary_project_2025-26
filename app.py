@@ -671,7 +671,7 @@ def faculty_login():
 
         session["faculty_id"] = faculty["id"]
         session["faculty_name"] = faculty["name"]
-        session["faculty_email"] = row["email"]
+        
 
         return redirect(url_for("faculty_dashboard"))
 
