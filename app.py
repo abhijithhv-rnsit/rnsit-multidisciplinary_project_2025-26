@@ -1853,6 +1853,7 @@ def admin_teams():
 def dashboard():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
+
     con = db()
     cur = con.cursor()
 
@@ -1864,29 +1865,32 @@ def dashboard():
     cur.execute("SELECT COUNT(*) FROM problems")
     total_problems = cur.fetchone()[0]
 
-    # Teams per department
+    # Teams per department (FIXED)
     cur.execute("""
-        SELECT department, COUNT(*) 
+        SELECT COALESCE(leader_department, 'Unknown') AS department, COUNT(*) 
         FROM teams 
-        GROUP BY department
+        GROUP BY COALESCE(leader_department, 'Unknown')
+        ORDER BY COUNT(*) DESC
     """)
     dept_data = cur.fetchall()
 
-    # Hardware vs Software
+    # Hardware vs Software / Category distribution
     cur.execute("""
-        SELECT p.category, COUNT(*) 
+        SELECT COALESCE(p.category, 'Unknown') AS category, COUNT(*) 
         FROM teams t 
         JOIN problems p ON t.problem_id = p.id
-        GROUP BY p.category
+        GROUP BY COALESCE(p.category, 'Unknown')
+        ORDER BY COUNT(*) DESC
     """)
     type_data = cur.fetchall()
 
     # Difficulty distribution
     cur.execute("""
-        SELECT p.difficulty, COUNT(*) 
+        SELECT COALESCE(p.difficulty, 'Unknown') AS difficulty, COUNT(*) 
         FROM teams t 
         JOIN problems p ON t.problem_id = p.id
-        GROUP BY p.difficulty
+        GROUP BY COALESCE(p.difficulty, 'Unknown')
+        ORDER BY COUNT(*) DESC
     """)
     diff_data = cur.fetchall()
 
@@ -1898,7 +1902,8 @@ def dashboard():
         total_problems=total_problems,
         dept_data=dept_data,
         type_data=type_data,
-        diff_data=diff_data, active_page="dashboard"
+        diff_data=diff_data,
+        active_page="dashboard"
     )
 
 @app.route("/export")
