@@ -1103,6 +1103,37 @@ def admin_faculty_management():
             flash(f"Password reset successful ✅ New Password: {raw_password}")
             con.close()
             return redirect(url_for("admin_faculty_management"))
+        
+        # ---------- EDIT FACULTY ----------
+        if action == "edit_faculty":
+            fid = request.form.get("fid", "").strip()
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip().lower()
+            department = request.form.get("department", "").strip()
+
+            if not fid or not name or not email or not department:
+                flash("All fields are required to update faculty.")
+                con.close()
+                return redirect(url_for("admin_faculty_management"))
+
+            # check duplicate email (but allow same faculty's email)
+            cur.execute("SELECT id FROM faculty WHERE email=?", (email,))
+            row = cur.fetchone()
+            if row and str(row["id"]) != str(fid):
+                flash("This email is already used by another faculty ❌")
+                con.close()
+                return redirect(url_for("admin_faculty_management"))
+
+            cur.execute("""
+                UPDATE faculty
+                SET name=?, email=?, department=?
+                WHERE id=?
+            """, (name, email, department, fid))
+
+            con.commit()
+            flash("Faculty updated successfully ✅")
+            con.close()
+            return redirect(url_for("admin_faculty_management"))
 
         # ---------- BULK RESET PASSWORD (VISIBLE FILTERED) ----------
         if action == "bulk_reset_password":
