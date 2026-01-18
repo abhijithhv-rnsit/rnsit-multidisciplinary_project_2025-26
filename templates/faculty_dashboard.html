@@ -1,3 +1,9 @@
+{% extends "faculty_base.html" %}
+{% block title %}Faculty Dashboard{% endblock %}
+
+{% block content %}
+
+<h4 class="mb-3">Faculty Dashboard</h4>
 {% if assigned_teams %}
   <div class="table-responsive">
     <table class="table table-bordered table-striped align-middle">
@@ -31,6 +37,9 @@
 {% else %}
   <div class="alert alert-warning">No teams assigned yet.</div>
 {% endif %}
+{% endif %}
+
+{% endblock %}
 <!--{% extends "faculty_base.html" %}
 {% block title %}Faculty Dashboard{% endblock %}
 
