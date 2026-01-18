@@ -56,6 +56,11 @@
               🔒 Registration Closed (Deadline Passed)
             </button>
 
+          {% elif already_in_team %}
+            <button class="btn btn-secondary w-100" disabled>
+              🔒 You are already registered in a team
+            </button>
+
           {% elif c >= 1 %}
             <button class="btn btn-danger w-100" disabled>
               🚫 Registration Closed (1 Team Already Registered)
