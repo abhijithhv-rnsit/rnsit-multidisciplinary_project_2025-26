@@ -940,110 +940,247 @@ def admin_faculty_management():
     con = db()
     cur = con.cursor()
 
+    # ---------------- GET PARAMS ----------------
+    search = request.args.get("search", "").strip().lower()
+    dept_filter = request.args.get("dept", "").strip()
+
+    page = int(request.args.get("page", 1))
+    per_page = 20
+    offset = (page - 1) * per_page
+
+    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
+
     # ---------------- DOWNLOAD TEMPLATE ----------------
     if request.args.get("download") == "template":
         template_df = pd.DataFrame(columns=["Name", "Email", "Department"])
         file_path = "faculty_upload_template.xlsx"
         template_df.to_excel(file_path, index=False)
+        con.close()
         return send_file(file_path, as_attachment=True)
 
-    # ---------------- BULK UPLOAD ----------------
-    if request.method == "POST" and request.form.get("action") == "bulk_upload":
-        file = request.files.get("file")
-        if not file:
-            flash("Please upload an Excel file.")
-            return redirect(request.url)
+    # ---------------- EXPORT FACULTY LIST (FILTERED) ----------------
+    if request.args.get("export") == "excel":
+        where = []
+        params = []
 
-        try:
-            df = pd.read_excel(file)
-        except:
-            flash("Invalid file. Please upload a valid Excel file.")
-            return redirect(request.url)
+        if dept_filter:
+            where.append("department=?")
+            params.append(dept_filter)
 
-        required_cols = ["Name", "Email", "Department"]
-        for col in required_cols:
-            if col not in df.columns:
-                flash(f"Missing column: {col}")
+        if search:
+            where.append("(LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(department) LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+
+        where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+        cur.execute(f"""
+            SELECT id, name, email, department
+            FROM faculty
+            {where_sql}
+            ORDER BY name
+        """, params)
+        rows = cur.fetchall()
+
+        df = pd.DataFrame(rows, columns=["id", "name", "email", "department"])
+        file_path = "faculty_list_export.xlsx"
+        df.to_excel(file_path, index=False)
+
+        con.close()
+        return send_file(file_path, as_attachment=True)
+
+    # ---------------- POST ACTIONS ----------------
+    if request.method == "POST":
+        action = request.form.get("action", "").strip()
+
+        # ---------- BULK UPLOAD ----------
+        if action == "bulk_upload":
+            file = request.files.get("file")
+            if not file:
+                flash("Please upload an Excel file.")
+                con.close()
                 return redirect(request.url)
 
-        created = []
-        skipped = []
+            try:
+                df = pd.read_excel(file)
+            except:
+                flash("Invalid file. Please upload a valid Excel file.")
+                con.close()
+                return redirect(request.url)
 
-        for _, r in df.iterrows():
-            name = str(r["Name"]).strip()
-            email = str(r["Email"]).strip().lower()
-            dept = str(r["Department"]).strip()
+            required_cols = ["Name", "Email", "Department"]
+            for col in required_cols:
+                if col not in df.columns:
+                    flash(f"Missing column: {col}")
+                    con.close()
+                    return redirect(request.url)
 
-            if not name or not email or not dept:
-                skipped.append((name, email, dept, "Missing data"))
-                continue
+            created = []
+            skipped = []
 
-            cur.execute("SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
-            if cur.fetchone()[0] > 0:
-                skipped.append((name, email, dept, "Already exists"))
-                continue
+            for _, r in df.iterrows():
+                name = str(r["Name"]).strip()
+                email = str(r["Email"]).strip().lower()
+                dept = str(r["Department"]).strip()
+
+                if not name or not email or not dept:
+                    skipped.append((name, email, dept, "Missing data"))
+                    continue
+
+                cur.execute("SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
+                if cur.fetchone()[0] > 0:
+                    skipped.append((name, email, dept, "Already exists"))
+                    continue
+
+                raw_password = generate_random_password(10)
+                password_hash = generate_password_hash(raw_password)
+
+                cur.execute("""
+                    INSERT INTO faculty(name, email, password_hash, department)
+                    VALUES (?,?,?,?)
+                """, (name, email, password_hash, dept))
+
+                created.append((name, email, dept, raw_password))
+
+            con.commit()
+
+            if created:
+                out_df = pd.DataFrame(created, columns=["Name", "Email", "Department", "Generated Password"])
+                out_file = "faculty_generated_passwords.xlsx"
+                out_df.to_excel(out_file, index=False)
+
+                flash(f"Bulk upload completed ✅ Created: {len(created)}, Skipped: {len(skipped)}")
+                con.close()
+                return send_file(out_file, as_attachment=True)
+
+            flash("No new faculty created. All were skipped.")
+            con.close()
+            return redirect(url_for("admin_faculty_management"))
+
+        # ---------- MANUAL ADD ----------
+        if action == "manual_add":
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip().lower()
+            department = request.form.get("department", "").strip()
+            password = request.form.get("password", "").strip()
+
+            if not name or not email or not department:
+                flash("Please fill Name, Email and Department.")
+                con.close()
+                return redirect(url_for("admin_faculty_management"))
+
+            if not password:
+                password = generate_random_password(10)
+
+            password_hash = generate_password_hash(password)
+
+            try:
+                cur.execute("""
+                    INSERT INTO faculty(name, email, password_hash, department)
+                    VALUES (?,?,?,?)
+                """, (name, email, password_hash, department))
+                con.commit()
+                flash(f"Faculty created successfully ✅ Password: {password}")
+            except:
+                flash("Faculty email already exists ❌")
+
+            con.close()
+            return redirect(url_for("admin_faculty_management"))
+
+        # ---------- RESET PASSWORD (SINGLE) ----------
+        if action == "reset_password":
+            fid = request.form.get("fid", "").strip()
+            if not fid:
+                flash("Invalid faculty selection.")
+                con.close()
+                return redirect(url_for("admin_faculty_management"))
 
             raw_password = generate_random_password(10)
             password_hash = generate_password_hash(raw_password)
 
-            cur.execute("""
-                INSERT INTO faculty(name, email, password_hash, department)
-                VALUES (?,?,?,?)
-            """, (name, email, password_hash, dept))
-
-            created.append((name, email, dept, raw_password))
-
-        con.commit()
-
-        # Generate excel for admin download
-        if created:
-            out_df = pd.DataFrame(created, columns=["Name", "Email", "Department", "Generated Password"])
-            out_file = "faculty_generated_passwords.xlsx"
-            out_df.to_excel(out_file, index=False)
-
-            flash(f"Bulk upload completed ✅ Created: {len(created)}, Skipped: {len(skipped)}")
-            con.close()
-            return send_file(out_file, as_attachment=True)
-
-        flash("No new faculty created. All were skipped.")
-        con.close()
-        return redirect(request.url)
-
-    # ---------------- MANUAL ADD FACULTY ----------------
-    if request.method == "POST" and request.form.get("action") == "manual_add":
-        name = request.form.get("name", "").strip()
-        email = request.form.get("email", "").strip().lower()
-        department = request.form.get("department", "").strip()
-        password = request.form.get("password", "").strip()
-
-        if not name or not email or not department:
-            flash("Please fill Name, Email and Department.")
-            con.close()
-            return redirect(request.url)
-
-        # If password not given → auto generate
-        if not password:
-            password = generate_random_password(10)
-
-        password_hash = generate_password_hash(password)
-
-        try:
-            cur.execute("""
-                INSERT INTO faculty(name, email, password_hash, department)
-                VALUES (?,?,?,?)
-            """, (name, email, password_hash, department))
+            cur.execute("UPDATE faculty SET password_hash=? WHERE id=?", (password_hash, fid))
             con.commit()
-            flash(f"Faculty created successfully ✅ Password: {password}")
-        except:
-            flash("Faculty email already exists ❌")
 
-    # ---------------- FACULTY LIST ----------------
-    cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+            flash(f"Password reset successful ✅ New Password: {raw_password}")
+            con.close()
+            return redirect(url_for("admin_faculty_management"))
+
+        # ---------- BULK RESET PASSWORD (VISIBLE FILTERED) ----------
+        if action == "bulk_reset_password":
+            faculty_ids = request.form.getlist("faculty_id")
+            if not faculty_ids:
+                flash("Please select at least 1 faculty to reset password.")
+                con.close()
+                return redirect(url_for("admin_faculty_management"))
+
+            reset_list = []
+            for fid in faculty_ids:
+                raw_password = generate_random_password(10)
+                password_hash = generate_password_hash(raw_password)
+
+                cur.execute("SELECT name, email, department FROM faculty WHERE id=?", (fid,))
+                f = cur.fetchone()
+                if not f:
+                    continue
+
+                cur.execute("UPDATE faculty SET password_hash=? WHERE id=?", (password_hash, fid))
+                reset_list.append((f["name"], f["email"], f["department"], raw_password))
+
+            con.commit()
+
+            if reset_list:
+                out_df = pd.DataFrame(reset_list, columns=["Name", "Email", "Department", "New Password"])
+                out_file = "faculty_reset_passwords.xlsx"
+                out_df.to_excel(out_file, index=False)
+
+                flash(f"Bulk password reset completed ✅ Total: {len(reset_list)}")
+                con.close()
+                return send_file(out_file, as_attachment=True)
+
+            flash("No passwords were reset.")
+            con.close()
+            return redirect(url_for("admin_faculty_management"))
+
+    # ---------------- FACULTY LIST (FILTER + PAGINATION) ----------------
+    where = []
+    params = []
+
+    if dept_filter:
+        where.append("department=?")
+        params.append(dept_filter)
+
+    if search:
+        where.append("(LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(department) LIKE ?)")
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    cur.execute(f"SELECT COUNT(*) FROM faculty {where_sql}", params)
+    total_rows = cur.fetchone()[0]
+    total_pages = max(1, (total_rows + per_page - 1) // per_page)
+
+    cur.execute(f"""
+        SELECT id, name, email, department
+        FROM faculty
+        {where_sql}
+        ORDER BY name
+        LIMIT ? OFFSET ?
+    """, params + [per_page, offset])
     faculty = cur.fetchall()
+
     con.close()
 
-    return render_template("admin_faculty_management.html", faculty=faculty, active_page="faculty")
-
+    return render_template(
+        "admin_faculty_management.html",
+        faculty=faculty,
+        active_page="faculty",
+        departments_list=departments_list,
+        search=search,
+        dept_filter=dept_filter,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+        total_rows=total_rows
+    )
 
 @app.route("/admin/faculty/bulk-upload", methods=["GET", "POST"])
 def admin_faculty_bulk_upload():
@@ -1166,16 +1303,15 @@ def admin_delete_faculty(fid):
     con = db()
     cur = con.cursor()
 
-    # Remove assignments first
     cur.execute("DELETE FROM team_faculty WHERE faculty_id=?", (fid,))
-    # Delete faculty
     cur.execute("DELETE FROM faculty WHERE id=?", (fid,))
 
     con.commit()
     con.close()
 
-    flash("Faculty deleted successfully")
-    return redirect(url_for("admin_faculty_list"))
+    flash("Faculty deleted successfully ✅")
+    return redirect(url_for("admin_faculty_management"))
+
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
