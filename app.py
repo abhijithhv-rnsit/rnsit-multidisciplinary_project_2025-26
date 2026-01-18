@@ -2104,6 +2104,10 @@ if __name__ == "__main__":
         cur.execute("ALTER TABLE teams ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
     except:
         pass
+    cur.execute("""
+        INSERT OR IGNORE INTO settings(key,value)
+        VALUES ('project_start_date','2026-02-02')
+    """)
 
     con.commit()
     con.close()
