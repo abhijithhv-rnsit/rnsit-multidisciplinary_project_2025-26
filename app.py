@@ -564,6 +564,78 @@ def student_weekly_progress():
         show=show
     )
 
+@app.route("/student/weekly-progress/edit/<int:progress_id>", methods=["GET", "POST"])
+def student_edit_weekly_progress(progress_id):
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    usn = session["student_usn"]
+
+    con = db()
+    cur = con.cursor()
+
+    # Find student's team_id (leader OR member)
+    cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    team = cur.fetchone()
+
+    if not team:
+        cur.execute("""
+            SELECT t.id
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            WHERE m.usn=?
+        """, (usn,))
+        team = cur.fetchone()
+
+    if not team:
+        con.close()
+        flash("You are not part of any registered team.")
+        return redirect(url_for("student_home"))
+
+    team_id = team["id"]
+
+    # Fetch progress entry
+    cur.execute("""
+        SELECT * FROM weekly_progress
+        WHERE id=? AND team_id=?
+    """, (progress_id, team_id))
+    progress_row = cur.fetchone()
+
+    if not progress_row:
+        con.close()
+        flash("Progress record not found.")
+        return redirect(url_for("student_weekly_progress"))
+
+    # Only allow edit if Pending
+    if progress_row["status"] != "Pending":
+        con.close()
+        flash("You cannot edit this progress after faculty review.")
+        return redirect(url_for("student_weekly_progress"))
+
+    # POST update
+    if request.method == "POST":
+        new_progress = request.form.get("progress", "").strip()
+
+        if not new_progress:
+            flash("Progress cannot be empty.")
+            con.close()
+            return redirect(request.url)
+
+        cur.execute("""
+            UPDATE weekly_progress
+            SET progress=?, submitted_at=CURRENT_TIMESTAMP
+            WHERE id=? AND team_id=?
+        """, (new_progress, progress_id, team_id))
+
+        con.commit()
+        con.close()
+
+        flash("Weekly progress updated successfully ✅")
+        return redirect(url_for("student_weekly_progress"))
+
+    con.close()
+    return render_template("student_edit_weekly_progress.html", p=progress_row)
+
 
 @app.route("/faculty/login", methods=["GET", "POST"])
 def faculty_login():
