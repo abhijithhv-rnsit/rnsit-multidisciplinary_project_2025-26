@@ -255,7 +255,7 @@ def student_problems():
 
     # ---------------- FETCH PROBLEMS ----------------
     cur.execute("""
-        SELECT id, year, title, category, difficulty, max_teams,
+        SELECT id, year, title, category, domain_theme, max_teams,
                problem_description, problem_details, expected_outcome
         FROM problems
         ORDER BY year DESC
@@ -277,7 +277,6 @@ def student_problems():
         registration_closed=registration_closed,
         already_in_team=already_in_team
     )
-
 
 @app.route("/student/my-registration")
 def student_my_registration():
@@ -1795,35 +1794,80 @@ def admin():
 
 
 
-@app.route("/admin/upload", methods=["GET","POST"])
+@app.route("/admin/upload", methods=["GET", "POST"])
 def admin_upload():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
-    if request.method=="POST":
-        file=request.files["file"]
-        df=pd.read_excel(file)
-        con=db(); cur=con.cursor()
-        cur.execute("DELETE FROM problems")
-        for _,r in df.iterrows():
-            cur.execute(
-    """INSERT INTO problems(
-        year, title, category, difficulty, max_teams,
-        problem_description, problem_details, expected_outcome
-    ) VALUES (?,?,?,?,5,?,?,?)""",
-    (
-        r["Year"],
-        r["Problem Statement"],
-        r["Type"],
-        r["Difficulty"],
-        r["Problem Description"],
-        r["Problem Details"],
-        r["Expected Outcome"]
-    )
-)
 
-        con.commit(); con.close()
-        flash("Projects imported successfully")
-    return render_template("admin_upload.html",active_page="upload")
+    if request.method == "POST":
+        file = request.files.get("file")
+        if not file:
+            flash("Please upload an Excel file.")
+            return redirect(request.url)
+
+        try:
+            df = pd.read_excel(file)
+        except:
+            flash("Invalid file. Please upload a valid Excel file.")
+            return redirect(request.url)
+
+        # ✅ Required columns in your NEW excel
+        required_cols = [
+            "Year",
+            "Problem Statement",
+            "Type",
+            "Domain/Theme",
+            "Problem Description",
+            "Problem Details",
+            "Expected Outcome"
+        ]
+
+        for col in required_cols:
+            if col not in df.columns:
+                flash(f"Missing column in Excel: {col}")
+                return redirect(request.url)
+
+        con = db()
+        cur = con.cursor()
+
+        # ⚠️ If you want to replace everything each time upload happens
+        cur.execute("DELETE FROM problems")
+
+        for _, r in df.iterrows():
+            year = str(r["Year"]).strip()
+            title = str(r["Problem Statement"]).strip()
+            category = str(r["Type"]).strip()
+            domain_theme = str(r["Domain/Theme"]).strip()
+
+            problem_description = str(r["Problem Description"]).strip()
+            problem_details = str(r["Problem Details"]).strip()
+            expected_outcome = str(r["Expected Outcome"]).strip()
+
+            # Insert into DB
+            cur.execute("""
+                INSERT INTO problems(
+                    year, title, category, domain_theme, max_teams,
+                    problem_description, problem_details, expected_outcome
+                )
+                VALUES (?,?,?,?,1,?,?,?)
+            """, (
+                year,
+                title,
+                category,
+                domain_theme,
+                problem_description,
+                problem_details,
+                expected_outcome
+            ))
+
+        con.commit()
+        con.close()
+
+        flash("Projects imported successfully ✅ (Domain/Theme included)")
+        return redirect(url_for("admin_upload"))
+
+    return render_template("admin_upload.html", active_page="upload")
+
 @app.route("/admin/teams")
 def admin_teams():
     if not session.get("admin_logged_in"):
@@ -1865,7 +1909,7 @@ def dashboard():
     cur.execute("SELECT COUNT(*) FROM problems")
     total_problems = cur.fetchone()[0]
 
-    # Teams per department (FIXED: leader_department instead of department)
+    # Teams per department (leader_department)
     cur.execute("""
         SELECT leader_department, COUNT(*)
         FROM teams
@@ -1880,19 +1924,21 @@ def dashboard():
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         GROUP BY p.category
+        ORDER BY COUNT(*) DESC
     """)
     type_data = cur.fetchall()
 
-    # Difficulty distribution
+    # ✅ Domain/Theme distribution (replaces difficulty)
     cur.execute("""
-        SELECT p.difficulty, COUNT(*)
+        SELECT p.domain_theme, COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
-        GROUP BY p.difficulty
+        GROUP BY p.domain_theme
+        ORDER BY COUNT(*) DESC
     """)
-    diff_data = cur.fetchall()
+    domain_data = cur.fetchall()
 
-    # ✅ Not assigned teams count
+    # Not assigned teams count
     cur.execute("""
         SELECT COUNT(*)
         FROM teams t
@@ -1901,7 +1947,7 @@ def dashboard():
     """)
     not_assigned_count = cur.fetchone()[0]
 
-    # ✅ Pending weekly progress count
+    # Pending weekly progress count
     cur.execute("""
         SELECT COUNT(*)
         FROM weekly_progress
@@ -1909,7 +1955,7 @@ def dashboard():
     """)
     pending_progress_count = cur.fetchone()[0]
 
-    # ✅ Faculty wise team assignments
+    # Faculty wise team assignments
     cur.execute("""
         SELECT f.name, COUNT(tf.team_id)
         FROM faculty f
@@ -1927,7 +1973,7 @@ def dashboard():
         total_problems=total_problems,
         dept_data=dept_data,
         type_data=type_data,
-        diff_data=diff_data,
+        domain_data=domain_data,  # ✅ new
         not_assigned_count=not_assigned_count,
         pending_progress_count=pending_progress_count,
         faculty_data=faculty_data,
@@ -2463,6 +2509,12 @@ if __name__ == "__main__":
         cur.execute("ALTER TABLE teams ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
     except:
         pass
+    # ---------------- SAFE MIGRATION: Add domain_theme column ----------------
+    try:
+        cur.execute("ALTER TABLE problems ADD COLUMN domain_theme TEXT")
+    except:
+        pass
+
     cur.execute("""
         INSERT OR IGNORE INTO settings(key,value)
         VALUES ('project_start_date','2026-02-02')
