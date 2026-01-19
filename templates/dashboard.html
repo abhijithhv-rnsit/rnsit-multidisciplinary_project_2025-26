@@ -103,15 +103,15 @@
       </div>
     </div>
 
-    <!-- Difficulty Distribution -->
+    <!-- Domain/Theme Distribution -->
     <div class="col-lg-6">
       <div class="card shadow-sm border-0 chart-card">
         <div class="card-header fw-bold bg-white border-0 pt-3">
-          Difficulty Distribution
+          Domain/Theme Distribution
         </div>
         <div class="card-body">
           <div class="chart-box">
-            <canvas id="diffChart"></canvas>
+            <canvas id="domainChart"></canvas>
           </div>
         </div>
       </div>
@@ -144,8 +144,8 @@
   const typeLabels = {{ type_data | map(attribute=0) | list | tojson }};
   const typeValues = {{ type_data | map(attribute=1) | list | tojson }};
 
-  const diffLabels = {{ diff_data | map(attribute=0) | list | tojson }};
-  const diffValues = {{ diff_data | map(attribute=1) | list | tojson }};
+  const domainLabels = {{ domain_data | map(attribute=0) | list | tojson }};
+  const domainValues = {{ domain_data | map(attribute=1) | list | tojson }};
 
   const facultyLabels = {{ faculty_data | map(attribute=0) | list | tojson }};
   const facultyValues = {{ faculty_data | map(attribute=1) | list | tojson }};
@@ -187,13 +187,13 @@
     options: commonOptions
   });
 
-  // Difficulty Distribution (Doughnut)
-  new Chart(document.getElementById("diffChart"), {
+  // Domain/Theme Distribution (Doughnut)
+  new Chart(document.getElementById("domainChart"), {
     type: 'doughnut',
     data: {
-      labels: diffLabels,
+      labels: domainLabels,
       datasets: [{
-        data: diffValues
+        data: domainValues
       }]
     },
     options: commonOptions
