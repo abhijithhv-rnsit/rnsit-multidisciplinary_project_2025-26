@@ -14,7 +14,7 @@
   </div>
 
   <input class="form-control mb-4" id="searchBox"
-         placeholder="Search project title, type, or difficulty...">
+         placeholder="Search project title, type, or domain/theme...">
 
   <div class="row">
     {% for p,c in data %}
@@ -29,25 +29,23 @@
             </a>
           </h5>
 
-          <p>
-            <span class="badge bg-primary">{{p['category']}}</span>
+          <p class="mb-2">
+            <span class="badge bg-primary">{{ p['category'] }}</span>
 
-            {% if p['difficulty'] == 'Easy' %}
-              <span class="badge bg-success">{{p['difficulty']}}</span>
-            {% elif p['difficulty'] == 'Moderate' %}
-              <span class="badge bg-warning text-dark">{{p['difficulty']}}</span>
+            {% if p['domain_theme'] %}
+              <span class="badge bg-info text-dark">{{ p['domain_theme'] }}</span>
             {% else %}
-              <span class="badge bg-danger">{{p['difficulty']}}</span>
+              <span class="badge bg-secondary">Domain/Theme: NA</span>
             {% endif %}
           </p>
 
-          <p class="mt-2">
-            <b>Year:</b> {{p['year']}}
+          <p class="mt-2 mb-2">
+            <b>Year:</b> {{ p['year'] }}
           </p>
 
-          <p>
+          <p class="mb-3">
             <span class="badge bg-secondary">
-              Teams Registered: {{c}} / 1
+              Teams Registered: {{ c }} / 1
             </span>
           </p>
 
@@ -67,7 +65,7 @@
             </button>
 
           {% else %}
-            <a href="/register/{{p['id']}}" class="btn btn-success w-100">
+            <a href="/register/{{ p['id'] }}" class="btn btn-success w-100">
               Register Team
             </a>
           {% endif %}
@@ -82,23 +80,32 @@
         <div class="modal-content">
 
           <div class="modal-header">
-            <h5 class="modal-title">{{p['title']}}</h5>
+            <h5 class="modal-title">{{ p['title'] }}</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
 
           <div class="modal-body">
+
+            {% if p['domain_theme'] %}
+              <div class="mb-2">
+                <span class="badge bg-info text-dark">
+                  Domain/Theme: {{ p['domain_theme'] }}
+                </span>
+              </div>
+            {% endif %}
+
             <h6>Problem Description</h6>
-            <p>{{p['problem_description']}}</p>
+            <p>{{ p['problem_description'] }}</p>
 
             <hr>
 
             <h6>Problem Details</h6>
-            <p>{{p['problem_details']}}</p>
+            <p>{{ p['problem_details'] }}</p>
 
             <hr>
 
             <h6>Expected Outcome</h6>
-            <p>{{p['expected_outcome']}}</p>
+            <p>{{ p['expected_outcome'] }}</p>
           </div>
 
           <div class="modal-footer">
