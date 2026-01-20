@@ -453,26 +453,26 @@ def student_project_details():
         tech_stack = request.form.get("tech_stack", "").strip()
         methodology = request.form.get("methodology", "").strip()
         modules = request.form.get("modules", "").strip()
-        expected_outcome = request.form.get("expected_outcome", "").strip()
+        expected_output = request.form.get("expected_outcome", "").strip()
         project_references = request.form.get("references", "").strip()
 
         if details:
             cur.execute("""
                 UPDATE project_details
-                SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_outcome=?, project_references=?
+                SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_output=?, project_references=?
                 WHERE team_id=?
             """, (
-                abstract, objectives, tech_stack, methodology, modules, expected_outcome, project_references,
+                abstract, objectives, tech_stack, methodology, modules, expected_output, project_references,
                 team_id
             ))
         else:
             cur.execute("""
                 INSERT INTO project_details(
-                    team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, project_references
+                    team_id, abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
                 )
                 VALUES (?,?,?,?,?,?,?,?)
             """, (
-                team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, project_references
+                team_id, abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
             ))
 
         con.commit()
