@@ -483,7 +483,7 @@ def student_project_details():
 
     con.close()
     return render_template("student_project_details.html", details=details)
-)
+
 
 from datetime import datetime, timedelta, timezone
 
