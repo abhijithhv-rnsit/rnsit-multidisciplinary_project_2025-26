@@ -27,7 +27,7 @@
 
   <div class="card shadow-sm mb-4">
     <div class="card-body">
-      <h5 class="mb-3">Project Abstract & Objectives</h5>
+      <h5 class="mb-3">Project Details</h5>
 
       <p><strong>Abstract:</strong>
         {{ project_details.abstract if project_details else "Not submitted" }}
@@ -35,6 +35,26 @@
 
       <p><strong>Objectives:</strong>
         {{ project_details.objectives if project_details else "Not submitted" }}
+      </p>
+      
+      <p><strong>Tech Stack:</strong>
+        {{ project_details.tech_stack if project_details else "Not submitted" }}
+      </p>
+
+      <p><strong>Methodology:</strong>
+        {{ project_details.methodology if project_details else "Not submitted" }}
+      </p>
+
+      <p><strong>Modules/Features:</strong>
+        {{ project_details.modules if project_details else "Not submitted" }}
+      </p>
+
+      <p><strong>Expected Outcomes:</strong>
+        {{ project_details.expected_output if project_details else "Not submitted" }}
+      </p>
+
+      <p><strong>References:</strong>
+        {{ project_details.project_references if project_details else "Not submitted" }}
       </p>
     </div>
   </div>
