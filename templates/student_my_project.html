@@ -4,7 +4,19 @@
 {% block content %}
 
 <div class="container mt-2">
-  <h4 class="mb-3">My Registered Project</h4>
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <h4 class="mb-0">My Registered Project</h4>
+
+    <div class="d-flex gap-2">
+      <a href="/student/project-details" class="btn btn-outline-primary btn-sm">
+        ✏️ Edit Synopsis
+      </a>
+      <a href="/student/weekly-progress" class="btn btn-outline-warning btn-sm">
+        📅 Weekly Progress
+      </a>
+      <!-- PDF button will be added in next step -->
+    </div>
+  </div>
 
   <div class="card shadow-sm">
     <div class="card-body">
@@ -35,7 +47,6 @@
             </thead>
 
             <tbody>
-              <!-- Team Leader Row -->
               <tr class="table-success">
                 <td>{{ team.leader_name }} <strong>(Leader)</strong></td>
                 <td>{{ team.leader_usn }}</td>
@@ -45,7 +56,6 @@
                 <td>{{ team.leader_section }}</td>
               </tr>
 
-              <!-- Team Members Rows -->
               {% for m in members %}
               <tr>
                 <td>{{ m.member_name }}</td>
@@ -66,25 +76,60 @@
 
       <hr>
 
-      <h6>Project Abstract & Objectives</h6>
-      <p><strong>Abstract:</strong> {{ project_details.abstract if project_details else "Not submitted yet" }}</p>
-      <p><strong>Objectives:</strong> {{ project_details.objectives if project_details else "Not submitted yet" }}</p>
+      <h6>Project Synopsis</h6>
 
-      <div class="mt-2">
-        <a href="/student/project-details" class="btn btn-outline-primary btn-sm">
-          Edit Abstract & Objectives
-        </a>
+      <div class="mb-2">
+        <strong>Abstract:</strong><br>
+        <div class="text-muted">
+          {{ project_details.abstract if project_details and project_details.abstract else "Not submitted yet" }}
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <strong>Objectives:</strong><br>
+        <div class="text-muted">
+          {{ project_details.objectives if project_details and project_details.objectives else "Not submitted yet" }}
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <strong>Tech Stack:</strong><br>
+        <div class="text-muted">
+          {{ project_details.tech_stack if project_details and project_details.tech_stack else "Not submitted yet" }}
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <strong>Methodology:</strong><br>
+        <div class="text-muted">
+          {{ project_details.methodology if project_details and project_details.methodology else "Not submitted yet" }}
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <strong>Modules / Features:</strong><br>
+        <div class="text-muted">
+          {{ project_details.modules if project_details and project_details.modules else "Not submitted yet" }}
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <strong>Expected Outcome:</strong><br>
+        <div class="text-muted">
+          {{ project_details.expected_outcome if project_details and project_details.expected_outcome else "Not submitted yet" }}
+        </div>
+      </div>
+
+      <div class="mb-2">
+        <strong>References:</strong><br>
+        <div class="text-muted">
+          {{ project_details.references if project_details and project_details.references else "Not submitted yet" }}
+        </div>
       </div>
 
       <hr>
 
       <p><strong>Total Weekly Progress Updates:</strong> {{ progress_count }}</p>
-
-      <div class="mt-2">
-        <a href="/student/weekly-progress" class="btn btn-outline-warning btn-sm">
-          Weekly Progress
-        </a>
-      </div>
 
       <hr>
 
