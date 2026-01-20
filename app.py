@@ -211,7 +211,7 @@ def student_home():
     con = db()
     cur = con.cursor()
     cur.execute("""
-        SELECT id, title, category, difficulty, max_teams
+        SELECT id, title, category, domain_theme, max_teams
         FROM problems
     """)
     problems = cur.fetchall()
@@ -1493,7 +1493,7 @@ def faculty_review_progress(progress_id):
 def index():
    con=db(); cur=con.cursor()
     cur.execute(""" """
-    SELECT id, year, title, category, difficulty, max_teams,
+    SELECT id, year, title, category, domain_theme, max_teams,
            problem_description, problem_details, expected_outcome
     FROM problems
 """""")
