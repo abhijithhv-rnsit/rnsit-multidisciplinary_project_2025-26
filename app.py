@@ -573,8 +573,8 @@ def student_synopsis_pdf():
         ["Team Name", team["team_name"]],
         ["Problem Title", team["problem_title"]],
         ["Year", str(team["problem_year"])],
-        ["Category", team.get("problem_category", "") or "-"],
-        ["Domain/Theme", team.get("domain_theme", "") or "-"],
+        ["Category", team["problem_category"] if "problem_category" in team.keys() and team["problem_category"] else "-"],
+        ["Domain/Theme", team["domain_theme"] if "domain_theme" in team.keys() and team["domain_theme"] else "-"],
     ]
 
     header_table = Table(header_data, colWidths=[120, 380])
