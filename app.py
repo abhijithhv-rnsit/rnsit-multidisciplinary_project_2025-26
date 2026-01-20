@@ -2177,26 +2177,167 @@ def admin_upload():
 def admin_teams():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
+
     con = db()
-    df = pd.read_sql("""
+    cur = con.cursor()
+
+    # ---------------- FETCH TEAMS + PROBLEM + FACULTY ----------------
+    cur.execute("""
         SELECT
+            t.id AS team_id,
             t.team_name,
-            t.leader_department AS department,
-            t.leader_section AS section,
-            p.title AS problem,
+            t.leader_department,
+            t.leader_section,
+            p.title AS problem_title,
             t.leader_name,
             t.leader_usn,
-            t.leader_phone
+            t.leader_phone,
+
+            f.name AS faculty_name,
+            f.email AS faculty_email,
+            f.department AS faculty_department
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
-        ORDER BY p.title
-    """, con)
+        LEFT JOIN team_faculty tf ON t.id = tf.team_id
+        LEFT JOIN faculty f ON tf.faculty_id = f.id
+        ORDER BY p.title, t.team_name
+    """)
+    teams = cur.fetchall()
+
+    # ---------------- FETCH MEMBERS FOR ALL TEAMS ----------------
+    cur.execute("""
+        SELECT team_id, member_name, usn, department
+        FROM team_members
+        ORDER BY team_id, id
+    """)
+    members_rows = cur.fetchall()
+
     con.close()
+
+    # Build mapping team_id -> list of members
+    members_map = {}
+    for m in members_rows:
+        tid = m["team_id"]
+        members_map.setdefault(tid, []).append({
+            "member_name": m["member_name"],
+            "usn": m["usn"],
+            "department": m["department"]
+        })
+
+    # Final rows for UI + Excel
+    rows = []
+    for t in teams:
+        tid = t["team_id"]
+
+        # Format members as single string (for table + excel)
+        member_list = members_map.get(tid, [])
+        if member_list:
+            members_text = " | ".join([
+                f"{x['member_name']} ({x['usn']}, {x['department']})"
+                for x in member_list
+            ])
+        else:
+            members_text = "-"
+
+        # Faculty details
+        if t["faculty_name"]:
+            faculty_text = f"{t['faculty_name']} ({t['faculty_department']}) - {t['faculty_email']}"
+        else:
+            faculty_text = "Not Assigned"
+
+        rows.append({
+            "team_id": tid,
+            "team_name": t["team_name"],
+            "leader_department": t["leader_department"],
+            "leader_section": t["leader_section"],
+            "problem_title": t["problem_title"],
+            "leader_name": t["leader_name"],
+            "leader_usn": t["leader_usn"],
+            "leader_phone": t["leader_phone"],
+            "members_text": members_text,
+            "faculty_text": faculty_text
+        })
 
     return render_template(
         "admin_teams.html",
-        tables=df.to_dict(orient="records"), active_page="teams"
+        rows=rows,
+        active_page="teams"
     )
+@app.route("/admin/export-teams")
+def admin_export_teams():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    cur.execute("""
+        SELECT
+            t.id AS team_id,
+            t.team_name,
+            t.leader_department,
+            t.leader_section,
+            p.title AS problem_title,
+            t.leader_name,
+            t.leader_usn,
+            t.leader_phone,
+
+            f.name AS faculty_name,
+            f.email AS faculty_email,
+            f.department AS faculty_department
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        LEFT JOIN team_faculty tf ON t.id = tf.team_id
+        LEFT JOIN faculty f ON tf.faculty_id = f.id
+        ORDER BY p.title, t.team_name
+    """)
+    teams = cur.fetchall()
+
+    cur.execute("""
+        SELECT team_id, member_name, usn, department
+        FROM team_members
+        ORDER BY team_id, id
+    """)
+    members_rows = cur.fetchall()
+
+    con.close()
+
+    members_map = {}
+    for m in members_rows:
+        tid = m["team_id"]
+        members_map.setdefault(tid, []).append(
+            f"{m['member_name']} ({m['usn']}, {m['department']})"
+        )
+
+    export_rows = []
+    for t in teams:
+        tid = t["team_id"]
+
+        members_text = " | ".join(members_map.get(tid, [])) if members_map.get(tid) else "-"
+
+        faculty_text = "Not Assigned"
+        if t["faculty_name"]:
+            faculty_text = f"{t['faculty_name']} ({t['faculty_department']}) - {t['faculty_email']}"
+
+        export_rows.append({
+            "Team Name": t["team_name"],
+            "Department": t["leader_department"],
+            "Section": t["leader_section"],
+            "Problem Title": t["problem_title"],
+            "Leader Name": t["leader_name"],
+            "Leader USN": t["leader_usn"],
+            "Leader Phone": t["leader_phone"],
+            "Team Members": members_text,
+            "Faculty Guide": faculty_text
+        })
+
+    df = pd.DataFrame(export_rows)
+
+    out_file = "Guide_Allocation_Report.xlsx"
+    df.to_excel(out_file, index=False)
+
+    return send_file(out_file, as_attachment=True)
+
 
 @app.route("/dashboard")
 def dashboard():
