@@ -172,30 +172,32 @@ def student_signup():
     return render_template("student_signup.html")
 @app.route("/student/login", methods=["GET", "POST"])
 def student_login():
-    ensure_students_table()
     if request.method == "POST":
         usn = request.form["usn"].strip().upper()
         password = request.form["password"]
 
         con = db()
         cur = con.cursor()
-        cur.execute(
-            "SELECT email, password_hash FROM students WHERE usn=?",
-            (usn,)
-        )
 
-        row = cur.fetchone()
+        cur.execute("SELECT * FROM students WHERE usn=?", (usn,))
+        student = cur.fetchone()
         con.close()
-        if not row:
-            flash("User not found. Please sign up first.")
+
+        if not student:
+            flash("Student not found")
             return redirect(request.url)
 
-        if not check_password_hash(row["password_hash"], password):
+        if not check_password_hash(student["password_hash"], password):
             flash("Invalid password")
             return redirect(request.url)
 
-        session["student_usn"] = usn
-        session["student_email"] = row["email"]
+        session["student_usn"] = student["usn"]
+        session["student_id"] = student["id"]
+
+        # 🔥 Force reset on first login
+        if student["must_reset_password"] == 1:
+            return redirect(url_for("student_change_password"))
+
         return redirect(url_for("student_home"))
 
     return render_template("student_login.html")
@@ -1915,37 +1917,7 @@ def admin_students():
         active_page="students"
     )
 
-@app.route("/student/login", methods=["GET", "POST"])
-def student_login():
-    if request.method == "POST":
-        usn = request.form["usn"].strip().upper()
-        password = request.form["password"]
 
-        con = db()
-        cur = con.cursor()
-
-        cur.execute("SELECT * FROM students WHERE usn=?", (usn,))
-        student = cur.fetchone()
-        con.close()
-
-        if not student:
-            flash("Student not found")
-            return redirect(request.url)
-
-        if not check_password_hash(student["password_hash"], password):
-            flash("Invalid password")
-            return redirect(request.url)
-
-        session["student_usn"] = student["usn"]
-        session["student_id"] = student["id"]
-
-        # 🔥 Force reset on first login
-        if student["must_reset_password"] == 1:
-            return redirect(url_for("student_change_password"))
-
-        return redirect(url_for("student_home"))
-
-    return render_template("student_login.html")
 
 @app.route("/student/change-password", methods=["GET", "POST"])
 def student_change_password():
