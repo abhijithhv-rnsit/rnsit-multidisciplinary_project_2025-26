@@ -361,7 +361,7 @@ def student_my_project():
 
     # 4) Fetch abstract/objectives from project_details table
     cur.execute("""
-        SELECT abstract, objectives
+        SELECT abstract, objectives, tech_stack, methodology, modules, dataset_or_inputs, expected_output
         FROM project_details
         WHERE team_id=?
     """, (team_id,))
@@ -412,9 +412,7 @@ def student_project_details():
     cur = con.cursor()
 
     # Get team_id (leader or member)
-    cur.execute("""
-        SELECT id FROM teams WHERE leader_usn=?
-    """, (usn,))
+    cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
     if not team:
@@ -434,37 +432,53 @@ def student_project_details():
     team_id = team["id"]
 
     # Fetch existing details
-    cur.execute("""
-        SELECT * FROM project_details WHERE team_id=?
-    """, (team_id,))
+    cur.execute("SELECT * FROM project_details WHERE team_id=?", (team_id,))
     details = cur.fetchone()
 
     if request.method == "POST":
-        abstract = request.form["abstract"]
-        objectives = request.form["objectives"]
+        abstract = request.form.get("abstract", "").strip()
+        objectives = request.form.get("objectives", "").strip()
+        tech_stack = request.form.get("tech_stack", "").strip()
+        methodology = request.form.get("methodology", "").strip()
+        modules = request.form.get("modules", "").strip()
+        dataset_or_inputs = request.form.get("dataset_or_inputs", "").strip()
+        expected_output = request.form.get("expected_output", "").strip()
+
+        if not abstract or not objectives:
+            flash("Abstract and Objectives are required.")
+            con.close()
+            return redirect(request.url)
 
         if details:
             cur.execute("""
                 UPDATE project_details
-                SET abstract=?, objectives=?
+                SET abstract=?, objectives=?, tech_stack=?, methodology=?,
+                    modules=?, dataset_or_inputs=?, expected_output=?
                 WHERE team_id=?
-            """, (abstract, objectives, team_id))
+            """, (
+                abstract, objectives, tech_stack, methodology,
+                modules, dataset_or_inputs, expected_output,
+                team_id
+            ))
         else:
             cur.execute("""
-                INSERT INTO project_details(team_id, abstract, objectives)
-                VALUES (?,?,?)
-            """, (team_id, abstract, objectives))
+                INSERT INTO project_details(
+                    team_id, abstract, objectives, tech_stack, methodology,
+                    modules, dataset_or_inputs, expected_output
+                )
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (
+                team_id, abstract, objectives, tech_stack, methodology,
+                modules, dataset_or_inputs, expected_output
+            ))
 
         con.commit()
         con.close()
-        flash("Project details saved successfully")
+        flash("Project details saved successfully ✅")
         return redirect(url_for("student_project_details"))
 
     con.close()
-    return render_template(
-        "student_project_details.html",
-        details=details
-    )
+    return render_template("student_project_details.html", details=details)
 
 from datetime import datetime, timedelta, timezone
 
@@ -2519,6 +2533,12 @@ if __name__ == "__main__":
         INSERT OR IGNORE INTO settings(key,value)
         VALUES ('project_start_date','2026-02-02')
     """)
+    # -------- Add new columns in project_details (safe migration) --------
+    add_column_if_not_exists("project_details", "tech_stack", "TEXT")
+    add_column_if_not_exists("project_details", "methodology", "TEXT")
+    add_column_if_not_exists("project_details", "modules", "TEXT")
+    add_column_if_not_exists("project_details", "dataset_or_inputs", "TEXT")
+    add_column_if_not_exists("project_details", "expected_output", "TEXT")
 
     con.commit()
     con.close()
