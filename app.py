@@ -858,7 +858,7 @@ def faculty_team_details(team_id):
     team = cur.fetchone()
     # Fetch abstract/objectives from project_details
     cur.execute("""
-        SELECT abstract, objectives
+        SELECT abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
         FROM project_details
         WHERE team_id=?
     """, (team_id,))
