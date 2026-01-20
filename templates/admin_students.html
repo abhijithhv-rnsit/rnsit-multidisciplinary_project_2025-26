@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Student Management</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    body { background:#f6f7fb; }
+    .card { border-radius: 16px; }
+    .table td, .table th { vertical-align: middle; }
+  </style>
+</head>
+
+<body class="bg-light">
+
+{% include "admin_nav.html" %}
+
+<div class="container mt-4">
+
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h4 class="fw-bold mb-1">Student Management</h4>
+      <div class="text-muted small">
+        Default Password: <b>RNSIT@2026</b> |
+        Total Students (Filtered): <b>{{ total_rows }}</b> |
+        Page: <b>{{ page }}</b> / <b>{{ total_pages }}</b>
+      </div>
+    </div>
+
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="/admin/students?download=template" class="btn btn-success btn-sm">
+        ⬇ Download Template
+      </a>
+
+      <a href="/admin/students?export=excel&search={{ search }}&dept={{ dept_filter }}"
+         class="btn btn-outline-primary btn-sm">
+        ⬇ Export Excel
+      </a>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <div class="alert alert-info">{{ messages[0] }}</div>
+    {% endif %}
+  {% endwith %}
+
+  <!-- BULK UPLOAD -->
+  <div class="card shadow-sm mb-4 border-0">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-3">📌 Bulk Upload Students (Excel)</h5>
+
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="bulk_upload">
+
+        <div class="row g-2 align-items-end">
+          <div class="col-md-8">
+            <label class="form-label fw-semibold">Upload Excel File</label>
+            <input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
+          </div>
+
+          <div class="col-md-4">
+            <button class="btn btn-primary w-100">
+              🚀 Upload & Create Students
+            </button>
+          </div>
+        </div>
+
+        <div class="text-muted small mt-2">
+          Required columns: <b>USN</b>, <b>Email</b>, <b>Name</b>, <b>Department</b>, <b>Section</b>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MANUAL ADD -->
+  <div class="card shadow-sm mb-4 border-0">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-3">➕ Add Student Manually</h5>
+
+      <form method="post">
+        <input type="hidden" name="action" value="manual_add">
+
+        <div class="row g-3">
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">USN</label>
+            <input type="text" name="usn" class="form-control" placeholder="1RN21CS001" required>
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">Email</label>
+            <input type="email" name="email" class="form-control" placeholder="student@rnsit.ac.in" required>
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label fw-semibold">Name</label>
+            <input type="text" name="name" class="form-control" placeholder="Student Name">
+          </div>
+
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">Department</label>
+            <select name="department" class="form-select">
+              <option value="">Select</option>
+              {% for d in departments_list %}
+                <option value="{{ d }}">{{ d }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">Section</label>
+            <input type="text" name="section" class="form-control" placeholder="A">
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <button class="btn btn-success">
+            ✅ Create Student
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- FILTER BAR -->
+  <form method="get" action="/admin/students" class="card shadow-sm p-3 mb-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Search</label>
+        <input class="form-control" name="search" value="{{ search }}"
+               placeholder="USN / Email / Name">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Department</label>
+        <select class="form-select" name="dept">
+          <option value="">All</option>
+          {% for d in departments_list %}
+            <option value="{{ d }}" {% if dept_filter==d %}selected{% endif %}>{{ d }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3 d-flex gap-2">
+        <button class="btn btn-primary w-100">Apply</button>
+        <a href="/admin/students" class="btn btn-outline-secondary w-100">Reset</a>
+      </div>
+    </div>
+  </form>
+
+  <!-- STUDENT LIST -->
+  <div class="card shadow-sm border-0">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-3">📋 Student List</h5>
+
+      {% if students %}
+      <form method="post">
+        <input type="hidden" name="action" value="bulk_reset_password">
+
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <button class="btn btn-warning btn-sm">
+            🔁 Reset Password (Selected)
+          </button>
+
+          <button type="button" class="btn btn-outline-dark btn-sm" onclick="selectAllVisible()">
+            Select All Visible
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover align-middle bg-white">
+            <thead class="table-dark">
+              <tr>
+                <th style="width:60px;" class="text-center">
+                  <input type="checkbox" id="selectAllMaster" onclick="toggleSelectAllMaster()">
+                </th>
+                <th>#</th>
+                <th>USN</th>
+                <th>Email</th>
+                <th>Name</th>
+                <th>Department</th>
+                <th>Section</th>
+                <th>Reset Status</th>
+                <th style="width:260px;">Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {% for s in students %}
+              <tr>
+                <td class="text-center">
+                  <input type="checkbox" class="rowCheck" name="student_id" value="{{ s.id }}">
+                </td>
+                <td>{{ loop.index }}</td>
+                <td class="fw-semibold">{{ s.usn }}</td>
+                <td>{{ s.email }}</td>
+                <td>{{ s.name or "-" }}</td>
+                <td>{{ s.department or "-" }}</td>
+                <td>{{ s.section or "-" }}</td>
+                <td>
+                  {% if s.must_reset_password == 1 %}
+                    <span class="badge bg-danger">Must Reset</span>
+                  {% else %}
+                    <span class="badge bg-success">Reset Done</span>
+                  {% endif %}
+                </td>
+                <td class="d-flex gap-2 flex-wrap">
+
+                  <!-- Reset password -->
+                  <form method="post">
+                    <input type="hidden" name="action" value="reset_password">
+                    <input type="hidden" name="sid" value="{{ s.id }}">
+                    <button class="btn btn-sm btn-outline-warning">
+                      Reset Password
+                    </button>
+                  </form>
+
+                  <!-- Delete (modal trigger) -->
+                  <button type="button"
+                          class="btn btn-sm btn-danger"
+                          data-bs-toggle="modal"
+                          data-bs-target="#deleteModal"
+                          data-id="{{ s.id }}"
+                          data-usn="{{ s.usn }}">
+                    Delete
+                  </button>
+
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      </form>
+
+      <!-- Pagination -->
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <div class="small text-muted">
+          Showing page {{ page }} of {{ total_pages }}
+        </div>
+
+        <div class="d-flex gap-2">
+          {% if page > 1 %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="/admin/students?page={{ page-1 }}&search={{ search }}&dept={{ dept_filter }}">
+              ← Prev
+            </a>
+          {% endif %}
+
+          {% if page < total_pages %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="/admin/students?page={{ page+1 }}&search={{ search }}&dept={{ dept_filter }}">
+              Next →
+            </a>
+          {% endif %}
+        </div>
+      </div>
+
+      {% else %}
+        <div class="alert alert-warning">No students found.</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<!-- DELETE CONFIRM MODAL -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title">Confirm Delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        Are you sure you want to delete student <b id="studentUSN"></b> ?
+        <div class="text-danger small mt-2">
+          This will remove student login account.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+
+        <form method="post">
+          <input type="hidden" name="action" value="delete_student">
+          <input type="hidden" name="sid" id="deleteSid">
+          <button class="btn btn-danger">Delete</button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+  function toggleSelectAllMaster() {
+    const master = document.getElementById("selectAllMaster");
+    document.querySelectorAll(".rowCheck").forEach(cb => cb.checked = master.checked);
+  }
+
+  function selectAllVisible() {
+    document.querySelectorAll(".rowCheck").forEach(cb => cb.checked = true);
+    document.getElementById("selectAllMaster").checked = true;
+  }
+
+  // Delete modal dynamic values
+  const deleteModal = document.getElementById('deleteModal');
+  deleteModal.addEventListener('show.bs.modal', function (event) {
+    const button = event.relatedTarget;
+    const sid = button.getAttribute('data-id');
+    const usn = button.getAttribute('data-usn');
+
+    document.getElementById("studentUSN").innerText = usn;
+    document.getElementById("deleteSid").value = sid;
+  });
+</script>
+
+</body>
+</html>
