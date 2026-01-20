@@ -490,6 +490,15 @@ from reportlab.lib import colors
 import io
 
 
+from flask import send_file
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+import os
+from datetime import datetime
+
 @app.route("/student/synopsis-pdf")
 def student_synopsis_pdf():
     if not session.get("student_usn"):
@@ -500,10 +509,13 @@ def student_synopsis_pdf():
     con = db()
     cur = con.cursor()
 
-    # 1) Find team (leader or member)
+    # -------- Get team (leader/member) --------
     cur.execute("""
-        SELECT t.*, p.title AS problem_title, p.year AS problem_year,
-               p.category AS problem_category, p.domain_theme AS domain_theme
+        SELECT t.*, 
+               p.title AS problem_title,
+               p.year AS problem_year,
+               p.category AS problem_category,
+               p.domain_theme AS domain_theme
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         WHERE t.leader_usn=?
@@ -512,8 +524,11 @@ def student_synopsis_pdf():
 
     if not team:
         cur.execute("""
-            SELECT t.*, p.title AS problem_title, p.year AS problem_year,
-                   p.category AS problem_category, p.domain_theme AS domain_theme
+            SELECT t.*, 
+                   p.title AS problem_title,
+                   p.year AS problem_year,
+                   p.category AS problem_category,
+                   p.domain_theme AS domain_theme
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
             JOIN problems p ON t.problem_id = p.id
@@ -528,16 +543,7 @@ def student_synopsis_pdf():
 
     team_id = team["id"]
 
-    # 2) Project details
-    cur.execute("""
-        SELECT abstract, objectives, tech_stack, methodology, modules,
-               dataset_or_inputs, expected_output, project_references
-        FROM project_details
-        WHERE team_id=?
-    """, (team_id,))
-    pd = cur.fetchone()
-
-    # 3) Members
+    # -------- Members --------
     cur.execute("""
         SELECT member_name, usn, email, phone, department, section
         FROM team_members
@@ -546,129 +552,223 @@ def student_synopsis_pdf():
     """, (team_id,))
     members = cur.fetchall()
 
-    # 4) Faculty assigned
+    # -------- Faculty --------
     cur.execute("""
         SELECT f.name, f.email, f.department
         FROM team_faculty tf
         JOIN faculty f ON tf.faculty_id = f.id
         WHERE tf.team_id=?
     """, (team_id,))
-    faculty_row = cur.fetchone()
+    faculty = cur.fetchone()
+
+    # -------- Project Details --------
+    cur.execute("""
+        SELECT abstract, objectives, tech_stack, methodology, modules, dataset_or_inputs, expected_output, ref_list
+        FROM project_details
+        WHERE team_id=?
+    """, (team_id,))
+    pd = cur.fetchone()
 
     con.close()
 
-    # ---------------- PDF GENERATION ----------------
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    # -------- Safe getters (sqlite3.Row doesn't support .get) --------
+    def safe(row, key, default="-"):
+        try:
+            val = row[key]
+            if val is None or str(val).strip() == "":
+                return default
+            return str(val)
+        except:
+            return default
 
+    # -------- PDF Output Path --------
+    out_path = f"/tmp/Synopsis_{team_id}.pdf"
+
+    # -------- Styles --------
     styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "TitleStyle",
+        parent=styles["Title"],
+        fontSize=16,
+        leading=20,
+        alignment=1,
+        spaceAfter=10
+    )
+
+    subtitle_style = ParagraphStyle(
+        "SubtitleStyle",
+        parent=styles["Normal"],
+        fontSize=11,
+        leading=14,
+        alignment=1,
+        textColor=colors.grey,
+        spaceAfter=12
+    )
+
+    h_style = ParagraphStyle(
+        "HeadingStyle",
+        parent=styles["Heading2"],
+        fontSize=12,
+        spaceBefore=10,
+        spaceAfter=6
+    )
+
+    normal_style = ParagraphStyle(
+        "NormalWrap",
+        parent=styles["Normal"],
+        fontSize=10.5,
+        leading=14
+    )
+
+    small_style = ParagraphStyle(
+        "Small",
+        parent=styles["Normal"],
+        fontSize=9.5,
+        leading=12,
+        textColor=colors.grey
+    )
+
+    # -------- Document --------
+    doc = SimpleDocTemplate(
+        out_path,
+        pagesize=A4,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+
     story = []
 
-    title = f"Project Synopsis"
-    story.append(Paragraph(title, styles["Title"]))
-    story.append(Spacer(1, 10))
+    # ✅ College Header
+    story.append(Paragraph("RNS Institute of Technology, Bengaluru", title_style))
+    story.append(Paragraph("Department of Computer Science & Engineering", subtitle_style))
 
-    # Header table
-    header_data = [
-        ["Team Name", team["team_name"]],
-        ["Problem Title", team["problem_title"]],
-        ["Year", str(team["problem_year"])],
-        ["Category", team["problem_category"] if "problem_category" in team.keys() and team["problem_category"] else "-"],
-        ["Domain/Theme", team["domain_theme"] if "domain_theme" in team.keys() and team["domain_theme"] else "-"],
+    story.append(Paragraph("<b>PROJECT SYNOPSIS</b>", ParagraphStyle(
+        "SynTitle",
+        parent=styles["Heading1"],
+        alignment=1,
+        fontSize=14,
+        spaceAfter=12
+    )))
+
+    # -------- Project Summary Table (wrap title) --------
+    project_table_data = [
+        ["Team Name", safe(team, "team_name")],
+        ["Problem Title", Paragraph(safe(team, "problem_title"), normal_style)],
+        ["Year", safe(team, "problem_year")],
+        ["Category", safe(team, "problem_category")],
+        ["Domain/Theme", safe(team, "domain_theme", "NA")],
     ]
 
-    header_table = Table(header_data, colWidths=[120, 380])
-    header_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.lightgrey),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.black),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+    project_table = Table(project_table_data, colWidths=[120, 360])
+    project_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
         ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
         ("PADDING", (0, 0), (-1, -1), 6),
     ]))
 
-    story.append(header_table)
+    story.append(project_table)
     story.append(Spacer(1, 12))
 
-    # Team details
-    story.append(Paragraph("<b>Team Leader</b>", styles["Heading2"]))
-    story.append(Paragraph(
-        f"{team['leader_name']} ({team['leader_usn']})<br/>"
-        f"Email: {team['leader_email']} | Phone: {team['leader_phone']}<br/>"
-        f"Dept: {team['leader_department']} | Section: {team['leader_section']}",
-        styles["BodyText"]
-    ))
+    # -------- Team Leader Block --------
+    story.append(Paragraph("Team Leader", h_style))
+    leader_line = f"""
+    <b>{safe(team,'leader_name')}</b> ({safe(team,'leader_usn')})<br/>
+    Email: {safe(team,'leader_email')} &nbsp;&nbsp; | &nbsp;&nbsp; Phone: {safe(team,'leader_phone')}<br/>
+    Dept: {safe(team,'leader_department')} &nbsp;&nbsp; | &nbsp;&nbsp; Section: {safe(team,'leader_section')}
+    """
+    story.append(Paragraph(leader_line, normal_style))
     story.append(Spacer(1, 10))
 
-    # Members table
-    story.append(Paragraph("<b>Team Members</b>", styles["Heading2"]))
+    # -------- Members Table --------
+    story.append(Paragraph("Team Members", h_style))
 
-    member_table_data = [["Name", "USN", "Email", "Phone", "Dept", "Section"]]
+    members_table_data = [["Name", "USN", "Email", "Phone", "Dept", "Section"]]
 
-    # Add leader row first
-    member_table_data.append([
-        f"{team['leader_name']} (Leader)",
-        team["leader_usn"],
-        team["leader_email"],
-        team["leader_phone"],
-        team["leader_department"],
-        team["leader_section"],
+    # Add leader as first row
+    members_table_data.append([
+        f"{safe(team,'leader_name')} (Leader)",
+        safe(team, "leader_usn"),
+        safe(team, "leader_email"),
+        safe(team, "leader_phone"),
+        safe(team, "leader_department"),
+        safe(team, "leader_section"),
     ])
 
     for m in members:
-        member_table_data.append([
-            m["member_name"],
-            m["usn"],
-            m["email"],
-            m["phone"],
-            m["department"],
-            m["section"],
+        members_table_data.append([
+            safe(m, "member_name"),
+            safe(m, "usn"),
+            safe(m, "email"),
+            safe(m, "phone"),
+            safe(m, "department"),
+            safe(m, "section"),
         ])
 
-    mem_table = Table(member_table_data, repeatRows=1)
-    mem_table.setStyle(TableStyle([
+    members_table = Table(members_table_data, colWidths=[90, 75, 130, 85, 55, 45])
+    members_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.black),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9.5),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("PADDING", (0, 0), (-1, -1), 5),
+        ("PADDING", (0, 0), (-1, -1), 4),
     ]))
-
-    story.append(mem_table)
+    story.append(members_table)
     story.append(Spacer(1, 12))
 
-    # Faculty guide
-    story.append(Paragraph("<b>Faculty Guide</b>", styles["Heading2"]))
-    if faculty_row:
+    # -------- Faculty --------
+    story.append(Paragraph("Faculty Guide", h_style))
+    if faculty:
         story.append(Paragraph(
-            f"{faculty_row['name']}<br/>Email: {faculty_row['email']}<br/>Department: {faculty_row['department']}",
-            styles["BodyText"]
+            f"<b>{safe(faculty,'name')}</b> ({safe(faculty,'department')})<br/>Email: {safe(faculty,'email')}",
+            normal_style
         ))
     else:
-        story.append(Paragraph("Not assigned yet.", styles["BodyText"]))
+        story.append(Paragraph("Not assigned yet.", normal_style))
+
     story.append(Spacer(1, 12))
 
-    # Project details sections
-    def add_section(label, value):
-        story.append(Paragraph(f"<b>{label}</b>", styles["Heading2"]))
-        story.append(Paragraph((value or "Not submitted yet."), styles["BodyText"]))
-        story.append(Spacer(1, 10))
+    # -------- Project Details Sections --------
+    def add_section(title, text):
+        story.append(Paragraph(title, h_style))
+        story.append(Paragraph(text if text.strip() else "Not submitted yet.", normal_style))
+        story.append(Spacer(1, 8))
 
-    add_section("Abstract", pd["abstract"] if pd else None)
-    add_section("Objectives", pd["objectives"] if pd else None)
-    add_section("Tech Stack", pd["tech_stack"] if pd else None)
-    add_section("Methodology", pd["methodology"] if pd else None)
-    add_section("Modules / Work Breakdown", pd["modules"] if pd else None)
-    add_section("Dataset / Inputs", pd["dataset_or_inputs"] if pd else None)
-    add_section("Expected Output", pd["expected_output"] if pd else None)
-    add_section("References", pd["project_references"] if pd else None)
+    abstract = safe(pd, "abstract", "")
+    objectives = safe(pd, "objectives", "")
+    tech_stack = safe(pd, "tech_stack", "")
+    methodology = safe(pd, "methodology", "")
+    modules = safe(pd, "modules", "")
+    dataset = safe(pd, "dataset_or_inputs", "")
+    expected_output = safe(pd, "expected_output", "")
+    ref_list = safe(pd, "ref_list", "")
+
+    add_section("Abstract", abstract)
+    add_section("Objectives", objectives)
+    add_section("Tech Stack (Software + Hardware)", tech_stack)
+    add_section("Methodology / Approach", methodology)
+    add_section("Modules / Work Breakdown", modules)
+    add_section("Dataset / Inputs", dataset)
+    add_section("Expected Output", expected_output)
+    add_section("References", ref_list)
+
+    # Footer timestamp
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(
+        f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M %p')}",
+        small_style
+    ))
 
     doc.build(story)
-    buffer.seek(0)
 
-    filename = f"Synopsis_{team['team_name'].replace(' ', '_')}.pdf"
-    return send_file(buffer, as_attachment=True, download_name=filename, mimetype="application/pdf")
+    return send_file(out_path, as_attachment=True)
 
 
 from datetime import datetime, timedelta, timezone
