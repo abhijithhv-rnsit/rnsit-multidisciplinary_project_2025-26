@@ -8,6 +8,7 @@ import pytz
 import sqlite3, pandas as pd, os
 
 import os
+import io
 import pandas as pd
 import random, string
 from flask import send_file
@@ -18,6 +19,8 @@ from werkzeug.security import generate_password_hash
 
 app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
+
+DEFAULT_STUDENT_PASSWORD = "RNSIT@2026"
 
 #app.secret_key = "rnsit_admin_secret_2025"
 
@@ -1647,6 +1650,354 @@ def admin_delete_faculty(fid):
     flash("Faculty deleted successfully ✅")
     return redirect(url_for("admin_faculty_management"))
 
+@app.route("/admin/students", methods=["GET", "POST"])
+def admin_students():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
+
+    # ---------------- TEMPLATE DOWNLOAD ----------------
+    if request.method == "GET" and request.args.get("download") == "template":
+        template_df = pd.DataFrame(columns=["USN", "Email", "Name", "Department", "Section"])
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine="openpyxl") as writer:
+            template_df.to_excel(writer, index=False, sheet_name="Students")
+        out.seek(0)
+
+        return send_file(
+            out,
+            as_attachment=True,
+            download_name="student_upload_template.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # ---------------- EXPORT EXCEL ----------------
+    if request.method == "GET" and request.args.get("export") == "excel":
+        search = request.args.get("search", "").strip().lower()
+        dept_filter = request.args.get("dept", "").strip()
+
+        where = []
+        params = []
+
+        if dept_filter:
+            where.append("department=?")
+            params.append(dept_filter)
+
+        if search:
+            where.append("""
+                (
+                  LOWER(usn) LIKE ?
+                  OR LOWER(email) LIKE ?
+                  OR LOWER(COALESCE(name,'')) LIKE ?
+                )
+            """)
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+
+        where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+        cur.execute(f"""
+            SELECT id, usn, email, name, department, section, must_reset_password, created_at
+            FROM students
+            {where_sql}
+            ORDER BY created_at DESC
+        """, params)
+        rows = cur.fetchall()
+
+        export_data = []
+        for r in rows:
+            export_data.append({
+                "USN": r["usn"],
+                "Email": r["email"],
+                "Name": r["name"] or "",
+                "Department": r["department"] or "",
+                "Section": r["section"] or "",
+                "Must Reset Password": "YES" if r["must_reset_password"] == 1 else "NO",
+                "Created At": r["created_at"]
+            })
+
+        df = pd.DataFrame(export_data)
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Students")
+        out.seek(0)
+
+        con.close()
+        return send_file(
+            out,
+            as_attachment=True,
+            download_name="students_export.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # ---------------- POST ACTIONS ----------------
+    if request.method == "POST":
+        action = request.form.get("action")
+
+        # ---- BULK UPLOAD ----
+        if action == "bulk_upload":
+            file = request.files.get("file")
+            if not file:
+                flash("Please upload an Excel file.")
+                con.close()
+                return redirect(request.url)
+
+            try:
+                df = pd.read_excel(file)
+            except:
+                flash("Invalid file. Please upload a valid Excel file.")
+                con.close()
+                return redirect(request.url)
+
+            required_cols = ["USN", "Email", "Name", "Department", "Section"]
+            for col in required_cols:
+                if col not in df.columns:
+                    flash(f"Missing column: {col}")
+                    con.close()
+                    return redirect(request.url)
+
+            created = 0
+            skipped = 0
+
+            for _, r in df.iterrows():
+                usn = str(r["USN"]).strip().upper()
+                email = str(r["Email"]).strip().lower()
+                name = str(r["Name"]).strip()
+                dept = str(r["Department"]).strip()
+                sec = str(r["Section"]).strip()
+
+                if not usn or not email:
+                    skipped += 1
+                    continue
+
+                # prevent duplicates
+                cur.execute("SELECT COUNT(*) AS cnt FROM students WHERE usn=? OR email=?", (usn, email))
+                if cur.fetchone()["cnt"] > 0:
+                    skipped += 1
+                    continue
+
+                password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+
+                cur.execute("""
+                    INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
+                    VALUES (?,?,?,?,?,?,1)
+                """, (usn, email, password_hash, name, dept, sec))
+
+                created += 1
+
+            con.commit()
+            flash(f"Bulk upload done ✅ Created: {created}, Skipped: {skipped}")
+
+        # ---- MANUAL ADD ----
+        elif action == "manual_add":
+            usn = request.form.get("usn", "").strip().upper()
+            email = request.form.get("email", "").strip().lower()
+            name = request.form.get("name", "").strip()
+            dept = request.form.get("department", "").strip()
+            sec = request.form.get("section", "").strip()
+
+            if not usn or not email:
+                flash("USN and Email are required.")
+                con.close()
+                return redirect(request.url)
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM students WHERE usn=? OR email=?", (usn, email))
+            if cur.fetchone()["cnt"] > 0:
+                flash("Student already exists (USN/Email duplicate).")
+                con.close()
+                return redirect(request.url)
+
+            password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+
+            cur.execute("""
+                INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
+                VALUES (?,?,?,?,?,?,1)
+            """, (usn, email, password_hash, name, dept, sec))
+
+            con.commit()
+            flash("Student created successfully ✅")
+
+        # ---- RESET PASSWORD SINGLE ----
+        elif action == "reset_password":
+            sid = request.form.get("sid")
+            if sid:
+                password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+                cur.execute("""
+                    UPDATE students
+                    SET password_hash=?, must_reset_password=1, updated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                """, (password_hash, sid))
+                con.commit()
+                flash("Password reset to default (RNSIT@2026) ✅")
+
+        # ---- BULK RESET PASSWORD ----
+        elif action == "bulk_reset_password":
+            ids = request.form.getlist("student_id")
+            if not ids:
+                flash("Please select at least 1 student.")
+            else:
+                password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+                for sid in ids:
+                    cur.execute("""
+                        UPDATE students
+                        SET password_hash=?, must_reset_password=1, updated_at=CURRENT_TIMESTAMP
+                        WHERE id=?
+                    """, (password_hash, sid))
+                con.commit()
+                flash(f"Reset password for {len(ids)} student(s) ✅")
+
+        # ---- DELETE STUDENT ----
+        elif action == "delete_student":
+            sid = request.form.get("sid")
+            if sid:
+                cur.execute("DELETE FROM students WHERE id=?", (sid,))
+                con.commit()
+                flash("Student deleted successfully ✅")
+
+        con.close()
+        return redirect(url_for("admin_students"))
+
+    # ---------------- FILTERS (GET LIST) ----------------
+    search = request.args.get("search", "").strip().lower()
+    dept_filter = request.args.get("dept", "").strip()
+
+    page = int(request.args.get("page", 1))
+    per_page = 25
+    offset = (page - 1) * per_page
+
+    where = []
+    params = []
+
+    if dept_filter:
+        where.append("department=?")
+        params.append(dept_filter)
+
+    if search:
+        where.append("""
+            (
+              LOWER(usn) LIKE ?
+              OR LOWER(email) LIKE ?
+              OR LOWER(COALESCE(name,'')) LIKE ?
+            )
+        """)
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    # total count
+    cur.execute(f"SELECT COUNT(*) AS cnt FROM students {where_sql}", params)
+    total_rows = cur.fetchone()["cnt"]
+    total_pages = max(1, (total_rows + per_page - 1) // per_page)
+
+    cur.execute(f"""
+        SELECT id, usn, email, name, department, section, must_reset_password, created_at
+        FROM students
+        {where_sql}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """, params + [per_page, offset])
+
+    students = cur.fetchall()
+    con.close()
+
+    return render_template(
+        "admin_students.html",
+        students=students,
+        departments_list=departments_list,
+        search=search,
+        dept_filter=dept_filter,
+        page=page,
+        total_pages=total_pages,
+        total_rows=total_rows,
+        active_page="students"
+    )
+
+@app.route("/student/login", methods=["GET", "POST"])
+def student_login():
+    if request.method == "POST":
+        usn = request.form["usn"].strip().upper()
+        password = request.form["password"]
+
+        con = db()
+        cur = con.cursor()
+
+        cur.execute("SELECT * FROM students WHERE usn=?", (usn,))
+        student = cur.fetchone()
+        con.close()
+
+        if not student:
+            flash("Student not found")
+            return redirect(request.url)
+
+        if not check_password_hash(student["password_hash"], password):
+            flash("Invalid password")
+            return redirect(request.url)
+
+        session["student_usn"] = student["usn"]
+        session["student_id"] = student["id"]
+
+        # 🔥 Force reset on first login
+        if student["must_reset_password"] == 1:
+            return redirect(url_for("student_change_password"))
+
+        return redirect(url_for("student_home"))
+
+    return render_template("student_login.html")
+
+@app.route("/student/change-password", methods=["GET", "POST"])
+def student_change_password():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    usn = session["student_usn"]
+
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not new_password or len(new_password) < 6:
+            flash("New password must be at least 6 characters.")
+            return redirect(request.url)
+
+        if new_password != confirm_password:
+            flash("New password and confirm password do not match.")
+            return redirect(request.url)
+
+        con = db()
+        cur = con.cursor()
+
+        cur.execute("SELECT * FROM students WHERE usn=?", (usn,))
+        student = cur.fetchone()
+
+        if not student:
+            con.close()
+            flash("Student not found.")
+            return redirect(url_for("student_login"))
+
+        if not check_password_hash(student["password_hash"], current_password):
+            con.close()
+            flash("Current password is incorrect.")
+            return redirect(request.url)
+
+        new_hash = generate_password_hash(new_password)
+
+        cur.execute("""
+            UPDATE students
+            SET password_hash=?, must_reset_password=0, updated_at=CURRENT_TIMESTAMP
+            WHERE usn=?
+        """, (new_hash, usn))
+
+        con.commit()
+        con.close()
+
+        flash("Password updated successfully ✅")
+        return redirect(url_for("student_home"))
+
+    return render_template("student_change_password.html")
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
@@ -2969,6 +3320,12 @@ if __name__ == "__main__":
     add_column_if_not_exists("project_details", "expected_output", "TEXT")
     add_column_if_not_exists("project_details", "project_references", "TEXT")
 
+    # -------- Students extra columns (safe migration) --------
+    add_column_if_not_exists("students", "name", "TEXT")
+    add_column_if_not_exists("students", "department", "TEXT")
+    add_column_if_not_exists("students", "section", "TEXT")
+    add_column_if_not_exists("students", "must_reset_password", "INTEGER DEFAULT 1")
+    add_column_if_not_exists("students", "updated_at", "TIMESTAMP")
 
     # ---------------- DEFAULT SETTINGS ----------------
     cur.execute("""
