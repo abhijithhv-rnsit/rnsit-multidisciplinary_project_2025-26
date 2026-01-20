@@ -453,8 +453,8 @@ def student_project_details():
         tech_stack = request.form.get("tech_stack", "").strip()
         methodology = request.form.get("methodology", "").strip()
         modules = request.form.get("modules", "").strip()
-        expected_output = request.form.get("expected_outcome", "").strip()
-        project_references = request.form.get("references", "").strip()
+        expected_output = request.form.get("expected_output", "").strip()
+        project_references = request.form.get("project_references", "").strip()
 
         if details:
             cur.execute("""
