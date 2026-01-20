@@ -3,75 +3,66 @@
 
 {% block content %}
 
-<div class="container mt-3">
+<div class="container mt-2">
 
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-    <h4 class="mb-0">📄 Project Details</h4>
-    <a href="/student/my-project" class="btn btn-outline-dark btn-sm">← Back</a>
+    <h4 class="mb-0">Project Synopsis Details</h4>
+    <a href="/student/my-project" class="btn btn-outline-secondary btn-sm">
+      ← Back to My Project
+    </a>
   </div>
 
   {% with messages = get_flashed_messages() %}
     {% if messages %}
-      <div class="alert alert-info">{{ messages[0] }}</div>
+      <div class="alert alert-success">{{ messages[0] }}</div>
     {% endif %}
   {% endwith %}
 
-  <form method="post" class="card shadow-sm border-0">
-    <div class="card-body p-4">
+  <form method="post" class="card shadow-sm p-4">
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Abstract *</label>
-        <textarea name="abstract" class="form-control" rows="4" required>{{ details.abstract if details else "" }}</textarea>
-      </div>
+    <h6 class="fw-bold mb-2">1) Abstract</h6>
+    <textarea name="abstract" class="form-control mb-3" rows="4" required
+      placeholder="Write your project abstract...">{{ details.abstract if details else "" }}</textarea>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Objectives *</label>
-        <textarea name="objectives" class="form-control" rows="4" required>{{ details.objectives if details else "" }}</textarea>
-        <div class="text-muted small mt-1">Tip: Write in points (Objective 1, 2, 3...)</div>
-      </div>
+    <h6 class="fw-bold mb-2">2) Objectives</h6>
+    <textarea name="objectives" class="form-control mb-3" rows="4" required
+      placeholder="Write your project objectives (bullet points preferred)...">{{ details.objectives if details else "" }}</textarea>
 
-      <hr>
+    <h6 class="fw-bold mb-2">3) Tech Stack</h6>
+    <textarea name="tech_stack" class="form-control mb-3" rows="4"
+      placeholder="Example:
+Programming Language: Python
+Framework: Flask
+Database: SQLite
+Tools: Git, VS Code
+Hardware: Sensors, Arduino...">{{ details.tech_stack if details else "" }}</textarea>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Tech Stack</label>
-        <textarea name="tech_stack" class="form-control" rows="3"
-          placeholder="Example: Python, Flask, SQLite, HTML/CSS/Bootstrap, Arduino Sensors">{{ details.tech_stack if details else "" }}</textarea>
-      </div>
+    <h6 class="fw-bold mb-2">4) Methodology / Approach</h6>
+    <textarea name="methodology" class="form-control mb-3" rows="4"
+      placeholder="Explain step-by-step methodology (flow / approach / algorithms)...">{{ details.methodology if details else "" }}</textarea>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Methodology / Approach</label>
-        <textarea name="methodology" class="form-control" rows="4"
-          placeholder="Example: Data collection → preprocessing → model training → deployment → evaluation">{{ details.methodology if details else "" }}</textarea>
-      </div>
+    <h6 class="fw-bold mb-2">5) Modules / Features</h6>
+    <textarea name="modules" class="form-control mb-3" rows="4"
+      placeholder="List the modules/features (Ex: Login, Registration, Weekly Progress, Faculty Review...)">{{ details.modules if details else "" }}</textarea>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Modules / Work Breakdown (Optional)</label>
-        <textarea name="modules" class="form-control" rows="3"
-          placeholder="Example: UI Module, Backend Module, Database Module, Testing Module">{{ details.modules if details else "" }}</textarea>
-      </div>
+    <h6 class="fw-bold mb-2">6) Expected Outcome</h6>
+    <textarea name="expected_outcome" class="form-control mb-3" rows="3"
+      placeholder="What will be the final outcome/result of your project?">{{ details.expected_outcome if details else "" }}</textarea>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Dataset / Inputs (Optional)</label>
-        <textarea name="dataset_or_inputs" class="form-control" rows="3"
-          placeholder="Example: Sensor readings, Kaggle dataset, user inputs, API data">{{ details.dataset_or_inputs if details else "" }}</textarea>
-      </div>
+    <h6 class="fw-bold mb-2">7) References (Optional)</h6>
+    <textarea name="references" class="form-control mb-3" rows="3"
+      placeholder="Example: IEEE papers, websites, tools documentation...">{{ details.references if details else "" }}</textarea>
 
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Expected Output (Optional)</label>
-        <textarea name="expected_output" class="form-control" rows="3"
-          placeholder="Example: Web dashboard, alert notifications, prediction report">{{ details.expected_output if details else "" }}</textarea>
-      </div>
+    <button class="btn btn-success">
+      💾 Save Project Details
+    </button>
 
-      <button class="btn btn-success w-100">
-        ✅ Save Project Details
-      </button>
-
-    </div>
   </form>
 
 </div>
 
 {% endblock %}
+
 <!--{% extends "student_base.html" %}
 {% block title %}Project Abstract & Objectives{% endblock %}
 
