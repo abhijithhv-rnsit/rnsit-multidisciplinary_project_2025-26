@@ -21,6 +21,7 @@ app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
 
 DEFAULT_STUDENT_PASSWORD = "RNSIT@2026"
+DEFAULT_FACULTY_PASSWORD = "RNSIT@2026"
 
 #app.secret_key = "rnsit_admin_secret_2025"
 
@@ -1028,10 +1029,7 @@ def faculty_login():
 
         con = db()
         cur = con.cursor()
-        cur.execute(
-            "SELECT * FROM faculty WHERE email=?",
-            (email,)
-        )
+        cur.execute("SELECT * FROM faculty WHERE email=?", (email,))
         faculty = cur.fetchone()
         con.close()
 
@@ -1045,11 +1043,70 @@ def faculty_login():
 
         session["faculty_id"] = faculty["id"]
         session["faculty_name"] = faculty["name"]
-        
+
+        # ✅ Mandatory reset on first login
+        try:
+            if faculty["must_reset_password"] == 1:
+                return redirect(url_for("faculty_change_password"))
+        except:
+            # If column not present for some reason, allow dashboard
+            pass
 
         return redirect(url_for("faculty_dashboard"))
 
     return render_template("faculty_login.html")
+@app.route("/faculty/change-password", methods=["GET", "POST"])
+def faculty_change_password():
+    if not session.get("faculty_id"):
+        return redirect(url_for("faculty_login"))
+
+    faculty_id = session["faculty_id"]
+
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "").strip()
+        new_password = request.form.get("new_password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+
+        if not new_password or len(new_password) < 6:
+            flash("New password must be at least 6 characters.")
+            return redirect(request.url)
+
+        if new_password != confirm_password:
+            flash("New password and confirm password do not match.")
+            return redirect(request.url)
+
+        con = db()
+        cur = con.cursor()
+
+        cur.execute("SELECT * FROM faculty WHERE id=?", (faculty_id,))
+        faculty = cur.fetchone()
+
+        if not faculty:
+            con.close()
+            flash("Faculty not found.")
+            return redirect(url_for("faculty_login"))
+
+        if not check_password_hash(faculty["password_hash"], current_password):
+            con.close()
+            flash("Current password is incorrect.")
+            return redirect(request.url)
+
+        new_hash = generate_password_hash(new_password)
+
+        cur.execute("""
+            UPDATE faculty
+            SET password_hash=?, must_reset_password=0, updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+        """, (new_hash, faculty_id))
+
+        con.commit()
+        con.close()
+
+        flash("Password updated successfully ✅")
+        return redirect(url_for("faculty_dashboard"))
+
+    return render_template("faculty_change_password.html")
+
 
 @app.route("/faculty/dashboard")
 def faculty_dashboard():
@@ -1340,13 +1397,14 @@ def admin_faculty_management():
                     skipped.append((name, email, dept, "Already exists"))
                     continue
 
-                raw_password = generate_random_password(10)
+                raw_password = DEFAULT_FACULTY_PASSWORD
                 password_hash = generate_password_hash(raw_password)
 
                 cur.execute("""
-                    INSERT INTO faculty(name, email, password_hash, department)
-                    VALUES (?,?,?,?)
+                    INSERT INTO faculty(name, email, password_hash, department, must_reset_password)
+                    VALUES (?,?,?,?,1)
                 """, (name, email, password_hash, dept))
+
 
                 created.append((name, email, dept, raw_password))
 
@@ -1376,15 +1434,16 @@ def admin_faculty_management():
                 flash("Please fill Name, Email and Department.")
                 con.close()
                 return redirect(url_for("admin_faculty_management"))
-
+            
+            
             if not password:
-                password = generate_random_password(10)
+                password = DEFAULT_FACULTY_PASSWORD
 
             password_hash = generate_password_hash(password)
 
             try:
                 cur.execute("""
-                    INSERT INTO faculty(name, email, password_hash, department)
+                    INSERT INTO faculty(name, email, password_hash, department, must_reset_password)
                     VALUES (?,?,?,?)
                 """, (name, email, password_hash, department))
                 con.commit()
@@ -1403,13 +1462,17 @@ def admin_faculty_management():
                 con.close()
                 return redirect(url_for("admin_faculty_management"))
 
-            raw_password = generate_random_password(10)
-            password_hash = generate_password_hash(raw_password)
+            #raw_password = generate_random_password(10)
+            password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
 
-            cur.execute("UPDATE faculty SET password_hash=? WHERE id=?", (password_hash, fid))
+            cur.execute("""
+                UPDATE faculty
+                SET password_hash=?, must_reset_password=1, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+            """, (password_hash, fid))
+
             con.commit()
-
-            flash(f"Password reset successful ✅ New Password: {raw_password}")
+            flash("Password reset to default (RNSIT@2026) ✅")
             con.close()
             return redirect(url_for("admin_faculty_management"))
         
@@ -3298,6 +3361,9 @@ if __name__ == "__main__":
     add_column_if_not_exists("students", "section", "TEXT")
     add_column_if_not_exists("students", "must_reset_password", "INTEGER DEFAULT 1")
     add_column_if_not_exists("students", "updated_at", "TIMESTAMP")
+
+    add_column_if_not_exists("faculty", "must_reset_password", "INTEGER DEFAULT 1")
+    add_column_if_not_exists("faculty", "updated_at", "TIMESTAMP")
 
     # ---------------- DEFAULT SETTINGS ----------------
     cur.execute("""
