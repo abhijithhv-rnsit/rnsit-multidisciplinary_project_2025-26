@@ -563,7 +563,7 @@ def student_synopsis_pdf():
 
     # -------- Project Details --------
     cur.execute("""
-        SELECT abstract, objectives, tech_stack, methodology, modules, dataset_or_inputs, expected_output, ref_list
+        SELECT abstract, objectives, tech_stack, methodology, modules, dataset_or_inputs, expected_output, project_references
         FROM project_details
         WHERE team_id=?
     """, (team_id,))
@@ -746,18 +746,18 @@ def student_synopsis_pdf():
     tech_stack = safe(pd, "tech_stack", "")
     methodology = safe(pd, "methodology", "")
     modules = safe(pd, "modules", "")
-    dataset = safe(pd, "dataset_or_inputs", "")
+    #dataset = safe(pd, "dataset_or_inputs", "")
     expected_output = safe(pd, "expected_output", "")
-    ref_list = safe(pd, "ref_list", "")
+    project_references = safe(pd, "project_references", "")
 
     add_section("Abstract", abstract)
     add_section("Objectives", objectives)
     add_section("Tech Stack (Software + Hardware)", tech_stack)
     add_section("Methodology / Approach", methodology)
     add_section("Modules / Work Breakdown", modules)
-    add_section("Dataset / Inputs", dataset)
+    #add_section("Dataset / Inputs", dataset)
     add_section("Expected Output", expected_output)
-    add_section("References", ref_list)
+    add_section("References", project_references)
 
     # Footer timestamp
     story.append(Spacer(1, 10))
