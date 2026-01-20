@@ -30,10 +30,22 @@ DB = os.path.join(BASE_DIR, "rnsit_multidisciplinary_project_2025_26_v3.db")
 ADMIN_USER = "rnsit_admin"
 ADMIN_PASS = "RNSIT@2025"
 
+#def db():
+ #   con = sqlite3.connect(DB)
+  #  con.row_factory = sqlite3.Row
+   # return con
+
 def db():
-    con = sqlite3.connect(DB)
+    con = sqlite3.connect("database.db", check_same_thread=False)
     con.row_factory = sqlite3.Row
+
+    # ✅ Prevent "database is locked"
+    con.execute("PRAGMA journal_mode=WAL;")
+    con.execute("PRAGMA synchronous=NORMAL;")
+    con.execute("PRAGMA busy_timeout=5000;")
+
     return con
+
 def ensure_students_table():
     con = db()
     cur = con.cursor()
@@ -361,11 +373,12 @@ def student_my_project():
 
     # 4) Fetch abstract/objectives from project_details table
     cur.execute("""
-        SELECT abstract, objectives, tech_stack, methodology, modules, dataset_or_inputs, expected_output
+        SELECT abstract, objectives, tech_stack, methodology, modules, expected_outcome, references
         FROM project_details
         WHERE team_id=?
     """, (team_id,))
     pd = cur.fetchone()
+
 
     # 5) Fetch team members
     cur.execute("""
@@ -441,35 +454,26 @@ def student_project_details():
         tech_stack = request.form.get("tech_stack", "").strip()
         methodology = request.form.get("methodology", "").strip()
         modules = request.form.get("modules", "").strip()
-        dataset_or_inputs = request.form.get("dataset_or_inputs", "").strip()
-        expected_output = request.form.get("expected_output", "").strip()
-
-        if not abstract or not objectives:
-            flash("Abstract and Objectives are required.")
-            con.close()
-            return redirect(request.url)
+        expected_outcome = request.form.get("expected_outcome", "").strip()
+        references = request.form.get("references", "").strip()
 
         if details:
             cur.execute("""
                 UPDATE project_details
-                SET abstract=?, objectives=?, tech_stack=?, methodology=?,
-                    modules=?, dataset_or_inputs=?, expected_output=?
+                SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_outcome=?, references=?
                 WHERE team_id=?
             """, (
-                abstract, objectives, tech_stack, methodology,
-                modules, dataset_or_inputs, expected_output,
+                abstract, objectives, tech_stack, methodology, modules, expected_outcome, references,
                 team_id
             ))
         else:
             cur.execute("""
                 INSERT INTO project_details(
-                    team_id, abstract, objectives, tech_stack, methodology,
-                    modules, dataset_or_inputs, expected_output
+                    team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, references
                 )
                 VALUES (?,?,?,?,?,?,?,?)
             """, (
-                team_id, abstract, objectives, tech_stack, methodology,
-                modules, dataset_or_inputs, expected_output
+                team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, references
             ))
 
         con.commit()
@@ -479,6 +483,7 @@ def student_project_details():
 
     con.close()
     return render_template("student_project_details.html", details=details)
+)
 
 from datetime import datetime, timedelta, timezone
 
@@ -2391,14 +2396,15 @@ if __name__ == "__main__":
     con = db()
     cur = con.cursor()
 
-    # Ensure tables exist
+    # ---------------- CREATE TABLES ----------------
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS problems(
         id INTEGER PRIMARY KEY,
         year TEXT,
         title TEXT,
         category TEXT,
-        difficulty TEXT,
+        domain_theme TEXT,
         max_teams INT,
         problem_description TEXT,
         problem_details TEXT,
@@ -2416,10 +2422,10 @@ if __name__ == "__main__":
         leader_phone TEXT,
         leader_department TEXT,
         leader_section TEXT,
-        problem_id INT
+        problem_id INT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS team_members(
@@ -2451,19 +2457,22 @@ if __name__ == "__main__":
     )
     """)
 
-    # -------- Project Details (Abstract & Objectives) --------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS project_details (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         team_id INTEGER UNIQUE,
         abstract TEXT,
         objectives TEXT,
+        tech_stack TEXT,
+        methodology TEXT,
+        modules TEXT,
+        dataset_or_inputs TEXT,
+        expected_output TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(team_id) REFERENCES teams(id)
     )
     """)
 
-    # -------- Weekly Progress --------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS weekly_progress (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2476,7 +2485,7 @@ if __name__ == "__main__":
         FOREIGN KEY(team_id) REFERENCES teams(id)
     )
     """)
-    # -------- Faculty Table --------
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS faculty (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2486,7 +2495,7 @@ if __name__ == "__main__":
         department TEXT
     )
     """)
-    # -------- Team – Faculty Mapping --------
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS team_faculty (
         team_id INTEGER UNIQUE,
@@ -2495,13 +2504,12 @@ if __name__ == "__main__":
         FOREIGN KEY(faculty_id) REFERENCES faculty(id)
     )
     """)
-    #add_column_if_not_exists("teams", "abstract", "TEXT")
-    #add_column_if_not_exists("teams", "objectives", "TEXT")
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         team_id INTEGER NOT NULL,
-        sender_role TEXT NOT NULL,   -- 'student' or 'faculty'
+        sender_role TEXT NOT NULL,
         sender_name TEXT,
         message TEXT NOT NULL,
         sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -2509,39 +2517,41 @@ if __name__ == "__main__":
     )
     """)
 
-    # 🔥 GUARANTEED MIGRATION (THIS IS THE FIX)
-    try:
-        cur.execute("ALTER TABLE teams ADD COLUMN leader_department TEXT")
-    except:
-        pass
+    # ---------------- SAFE MIGRATIONS ----------------
+    # If old DB exists, these columns might be missing
 
-    try:
-        cur.execute("ALTER TABLE teams ADD COLUMN leader_section TEXT")
-    except:
-        pass
-    try:
-        cur.execute("ALTER TABLE teams ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-    except:
-        pass
-    # ---------------- SAFE MIGRATION: Add domain_theme column ----------------
-    try:
-        cur.execute("ALTER TABLE problems ADD COLUMN domain_theme TEXT")
-    except:
-        pass
+    def add_column_if_not_exists(table, column, col_type):
+        cur.execute(f"PRAGMA table_info({table})")
+        cols = [r[1] for r in cur.fetchall()]
+        if column not in cols:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
-    cur.execute("""
-        INSERT OR IGNORE INTO settings(key,value)
-        VALUES ('project_start_date','2026-02-02')
-    """)
-    # -------- Add new columns in project_details (safe migration) --------
+    # Problems
+    add_column_if_not_exists("problems", "domain_theme", "TEXT")
+
+    # Teams
+    add_column_if_not_exists("teams", "leader_department", "TEXT")
+    add_column_if_not_exists("teams", "leader_section", "TEXT")
+    add_column_if_not_exists("teams", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+
+    # Project Details
     add_column_if_not_exists("project_details", "tech_stack", "TEXT")
     add_column_if_not_exists("project_details", "methodology", "TEXT")
     add_column_if_not_exists("project_details", "modules", "TEXT")
     add_column_if_not_exists("project_details", "dataset_or_inputs", "TEXT")
     add_column_if_not_exists("project_details", "expected_output", "TEXT")
 
+    # ---------------- DEFAULT SETTINGS ----------------
+    cur.execute("""
+        INSERT OR IGNORE INTO settings(key,value)
+        VALUES ('project_start_date','2026-02-02')
+    """)
+
     con.commit()
     con.close()
+
+    print("✅ Database initialized / migrated successfully.")
+
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
