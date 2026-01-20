@@ -1444,7 +1444,7 @@ def admin_faculty_management():
             try:
                 cur.execute("""
                     INSERT INTO faculty(name, email, password_hash, department, must_reset_password)
-                    VALUES (?,?,?,?)
+                    VALUES (?,?,?,?,1)
                 """, (name, email, password_hash, department))
                 con.commit()
                 flash(f"Faculty created successfully ✅ Password: {password}")
