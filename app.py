@@ -373,12 +373,11 @@ def student_my_project():
 
     # 4) Fetch abstract/objectives from project_details table
     cur.execute("""
-        SELECT abstract, objectives, tech_stack, methodology, modules, expected_outcome, references
+        SELECT abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
         FROM project_details
         WHERE team_id=?
     """, (team_id,))
     pd = cur.fetchone()
-
 
     # 5) Fetch team members
     cur.execute("""
@@ -455,25 +454,25 @@ def student_project_details():
         methodology = request.form.get("methodology", "").strip()
         modules = request.form.get("modules", "").strip()
         expected_outcome = request.form.get("expected_outcome", "").strip()
-        references = request.form.get("references", "").strip()
+        project_references = request.form.get("references", "").strip()
 
         if details:
             cur.execute("""
                 UPDATE project_details
-                SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_outcome=?, references=?
+                SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_outcome=?, project_references=?
                 WHERE team_id=?
             """, (
-                abstract, objectives, tech_stack, methodology, modules, expected_outcome, references,
+                abstract, objectives, tech_stack, methodology, modules, expected_outcome, project_references,
                 team_id
             ))
         else:
             cur.execute("""
                 INSERT INTO project_details(
-                    team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, references
+                    team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, project_references
                 )
                 VALUES (?,?,?,?,?,?,?,?)
             """, (
-                team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, references
+                team_id, abstract, objectives, tech_stack, methodology, modules, expected_outcome, project_references
             ))
 
         con.commit()
@@ -2540,6 +2539,8 @@ if __name__ == "__main__":
     add_column_if_not_exists("project_details", "modules", "TEXT")
     add_column_if_not_exists("project_details", "dataset_or_inputs", "TEXT")
     add_column_if_not_exists("project_details", "expected_output", "TEXT")
+    add_column_if_not_exists("project_details", "project_references", "TEXT")
+
 
     # ---------------- DEFAULT SETTINGS ----------------
     cur.execute("""
