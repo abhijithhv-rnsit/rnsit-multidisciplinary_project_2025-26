@@ -1175,7 +1175,7 @@ def faculty_team_details(team_id):
     con = db()
     cur = con.cursor()
 
-    # Security check: faculty can only access assigned team
+    # 🔐 Security check: faculty can only access assigned team
     cur.execute("""
         SELECT COUNT(*)
         FROM team_faculty
@@ -1187,15 +1187,19 @@ def faculty_team_details(team_id):
         flash("Access denied")
         return redirect(url_for("faculty_dashboard"))
 
-    # Team + Problem info
+    # ---------------- TEAM + PROBLEM INFO ----------------
     cur.execute("""
         SELECT
+            t.id,
             t.team_name,
             t.leader_name,
             t.leader_usn,
             t.leader_email,
             t.leader_phone,
+            t.leader_department,
+            t.leader_section,
             p.title AS problem_title,
+            p.year AS problem_year,
             p.problem_description,
             p.problem_details,
             p.expected_outcome
@@ -1203,17 +1207,27 @@ def faculty_team_details(team_id):
         JOIN problems p ON t.problem_id = p.id
         WHERE t.id=?
     """, (team_id,))
-
     team = cur.fetchone()
-    # Fetch abstract/objectives from project_details
+
+    # ---------------- TEAM MEMBERS ----------------
     cur.execute("""
-        SELECT abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
+        SELECT member_name, usn, email, phone, department, section
+        FROM team_members
+        WHERE team_id=?
+        ORDER BY id
+    """, (team_id,))
+    members = cur.fetchall()
+
+    # ---------------- PROJECT DETAILS ----------------
+    cur.execute("""
+        SELECT abstract, objectives, tech_stack, methodology, modules,
+               dataset_or_inputs, expected_output
         FROM project_details
         WHERE team_id=?
     """, (team_id,))
     project_details = cur.fetchone()
 
-    # Weekly progress
+    # ---------------- WEEKLY PROGRESS ----------------
     cur.execute("""
         SELECT *
         FROM weekly_progress
@@ -1227,8 +1241,9 @@ def faculty_team_details(team_id):
     return render_template(
         "faculty_team_details.html",
         team=team,
-        progress_list=progress_list,
-        project_details=project_details
+        members=members,
+        project_details=project_details,
+        progress_list=progress_list
     )
 
 
