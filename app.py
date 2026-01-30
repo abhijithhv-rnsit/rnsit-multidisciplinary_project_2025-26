@@ -2523,6 +2523,72 @@ def admin():
         return redirect(url_for("admin_home"))
 
     return render_template("admin.html")
+@app.route("/admin/admin-management", methods=["GET", "POST"])
+def admin_management():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    # 🔐 Only super admin allowed
+    if session.get("admin_role") != "super_admin":
+        flash("Access denied")
+        return redirect(url_for("admin_home"))
+
+    con = db()
+    cur = con.cursor()
+
+    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "ME", "CV"]
+
+    # ---------------- CREATE ADMIN ----------------
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        department = request.form.get("department", "").strip()
+        role = request.form.get("role", "").strip()
+
+        if not name or not email or not role:
+            flash("All fields are required")
+            con.close()
+            return redirect(request.url)
+
+        if role == "admin" and not department:
+            flash("Department is required for Department Admin")
+            con.close()
+            return redirect(request.url)
+
+        password = "RNSIT@2026"
+        password_hash = generate_password_hash(password)
+
+        try:
+            cur.execute("""
+                INSERT INTO admins
+                (name, email, password_hash, role, department, must_reset_password)
+                VALUES (?,?,?,?,?,1)
+            """, (name, email, password_hash, role, department if role=="admin" else None))
+
+            con.commit()
+            flash(f"Admin created successfully ✅ Default password: {password}")
+        except:
+            flash("Email already exists ❌")
+
+        con.close()
+        return redirect(request.url)
+
+    # ---------------- LIST ADMINS ----------------
+    cur.execute("""
+        SELECT id, name, email, role, department, created_at
+        FROM admins
+        ORDER BY role DESC, department, name
+    """)
+    admins = cur.fetchall()
+
+    con.close()
+
+    return render_template(
+        "admin_management.html",
+        admins=admins,
+        departments_list=departments_list,
+        active_page="admins"
+    )
 
 
 @app.route("/admin/upload", methods=["GET", "POST"])
