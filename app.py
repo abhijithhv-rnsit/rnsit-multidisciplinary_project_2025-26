@@ -2487,17 +2487,42 @@ def admin_home():
         active_page="home"
     )
 
-@app.route("/admin", methods=["GET","POST"])
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
     if request.method == "POST":
-        if request.form["u"] == ADMIN_USER and request.form["p"] == ADMIN_PASS:
-            session["admin_logged_in"] = True
-            return redirect(url_for("admin_home"))
-        else:
-            flash("Invalid credentials")
-    return render_template("admin.html")
+        email = request.form["u"].strip().lower()
+        password = request.form["p"]
 
+        con = db()
+        cur = con.cursor()
+
+        cur.execute("""
+            SELECT * FROM admins WHERE email=?
+        """, (email,))
+        admin = cur.fetchone()
+        con.close()
+
+        if not admin:
+            flash("Invalid credentials")
+            return redirect(request.url)
+
+        if not check_password_hash(admin["password_hash"], password):
+            flash("Invalid credentials")
+            return redirect(request.url)
+
+        # ✅ SESSION SETUP
+        session["admin_logged_in"] = True
+        session["admin_id"] = admin["id"]
+        session["admin_role"] = admin["role"]              # super_admin / admin
+        session["admin_department"] = admin["department"]  # None or dept
+
+        # Force password reset if needed
+        if admin["must_reset_password"]:
+            return redirect(url_for("admin_change_password"))
+
+        return redirect(url_for("admin_home"))
+
+    return render_template("admin.html")
 
 
 @app.route("/admin/upload", methods=["GET", "POST"])
@@ -3345,6 +3370,20 @@ if __name__ == "__main__":
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS admins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT CHECK(role IN ('super_admin','admin')) NOT NULL,
+        department TEXT,
+        must_reset_password INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+
     # ---------------- SAFE MIGRATIONS ----------------
     # If old DB exists, these columns might be missing
 
@@ -3385,6 +3424,19 @@ if __name__ == "__main__":
         INSERT OR IGNORE INTO settings(key,value)
         VALUES ('project_start_date','2026-02-02')
     """)
+
+    from werkzeug.security import generate_password_hash
+
+    cur.execute("""
+        INSERT OR IGNORE INTO admins (name,email,password_hash,role,must_reset_password)
+        VALUES (?,?,?,?,0)
+    """, (
+        "Super Admin",
+        ADMIN_USER,
+        generate_password_hash(ADMIN_PASS),
+        "super_admin"
+    ))
+
 
     con.commit()
     con.close()
