@@ -2710,8 +2710,19 @@ def admin_teams():
     con = db()
     cur = con.cursor()
 
+    # ---------------- ROLE-BASED FILTER ----------------
+    where = []
+    params = []
+
+    # If department admin, restrict to their department
+    if session.get("admin_role") == "admin":
+        where.append("t.leader_department = ?")
+        params.append(session.get("admin_department"))
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
     # ---------------- FETCH TEAMS + PROBLEM + FACULTY ----------------
-    cur.execute("""
+    cur.execute(f"""
         SELECT
             t.id AS team_id,
             t.team_name,
@@ -2729,8 +2740,10 @@ def admin_teams():
         JOIN problems p ON t.problem_id = p.id
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
         LEFT JOIN faculty f ON tf.faculty_id = f.id
+        {where_sql}
         ORDER BY p.title, t.team_name
-    """)
+    """, params)
+
     teams = cur.fetchall()
 
     # ---------------- FETCH MEMBERS FOR ALL TEAMS ----------------
@@ -2743,7 +2756,7 @@ def admin_teams():
 
     con.close()
 
-    # Build mapping team_id -> list of members
+    # ---------------- BUILD MEMBERS MAP ----------------
     members_map = {}
     for m in members_rows:
         tid = m["team_id"]
@@ -2753,12 +2766,12 @@ def admin_teams():
             "department": m["department"]
         })
 
-    # Final rows for UI + Excel
+    # ---------------- FINAL ROWS FOR UI + EXCEL ----------------
     rows = []
     for t in teams:
         tid = t["team_id"]
 
-        # Format members as single string (for table + excel)
+        # Members text
         member_list = members_map.get(tid, [])
         if member_list:
             members_text = " | ".join([
@@ -2768,7 +2781,7 @@ def admin_teams():
         else:
             members_text = "-"
 
-        # Faculty details
+        # Faculty text
         if t["faculty_name"]:
             faculty_text = f"{t['faculty_name']} ({t['faculty_department']}) - {t['faculty_email']}"
         else:
@@ -2792,6 +2805,7 @@ def admin_teams():
         rows=rows,
         active_page="teams"
     )
+
 @app.route("/admin/export-teams")
 def admin_export_teams():
     if not session.get("admin_logged_in"):
