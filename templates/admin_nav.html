@@ -15,16 +15,28 @@
 
       <ul class="navbar-nav">
 
+        {% if session.get("admin_role") == "super_admin" %}
         <li class="nav-item">
           <a class="nav-link {% if active_page=='home' %}active fw-bold{% endif %}"
              href="/admin/home">Home</a>
         </li>
+        {% endif %}
 
+        {% if session.get("admin_role") == "super_admin" %}
         <li class="nav-item">
           <a class="nav-link {% if active_page=='upload' %}active fw-bold{% endif %}"
              href="/admin/upload">Upload Problems</a>
         </li>
-
+        {% endif %}
+        
+        {% if session.get("admin_role") == "super_admin" %}
+          <li class="nav-item">
+          <a class="nav-link {% if active_page=='admin_mgmt' %}active fw-bold{% endif %}"
+             href="/admin/admin-management">
+             Admin Management
+          </a>
+          </li>
+        {% endif %}
 
         <li class="nav-item">
             <a class="nav-link {% if active_page=='teams' %}active fw-bold{% endif %}"
@@ -68,10 +80,12 @@
              href="/dashboard">Dashboard</a>
         </li>
 
+        {% if session.get("admin_role") == "super_admin" %}
         <li class="nav-item">
           <a class="nav-link {% if active_page=='project_settings' %}active fw-bold{% endif %}"
              href="/admin/project-settings">Project Settings</a>
         </li>
+        {% endif %}
         
         <!--<li class="nav-item">
           <a class="nav-link {% if active_page=='deadline' %}active fw-bold{% endif %}"
