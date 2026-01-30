@@ -2523,6 +2523,43 @@ def admin():
         return redirect(url_for("admin_home"))
 
     return render_template("admin.html")
+
+@app.route("/admin/change-password", methods=["GET", "POST"])
+def admin_change_password():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    if request.method == "POST":
+        new_password = request.form.get("password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+
+        if not new_password or not confirm_password:
+            flash("All fields are required")
+            return redirect(request.url)
+
+        if new_password != confirm_password:
+            flash("Passwords do not match")
+            return redirect(request.url)
+
+        password_hash = generate_password_hash(new_password)
+
+        con = db()
+        cur = con.cursor()
+
+        cur.execute("""
+            UPDATE admins
+            SET password_hash=?, must_reset_password=0
+            WHERE id=?
+        """, (password_hash, session["admin_id"]))
+
+        con.commit()
+        con.close()
+
+        flash("Password updated successfully ✅")
+        return redirect(url_for("admin_home"))
+
+    return render_template("admin_change_password.html")
+
 @app.route("/admin/admin-management", methods=["GET", "POST"])
 def admin_management():
     if not session.get("admin_logged_in"):
