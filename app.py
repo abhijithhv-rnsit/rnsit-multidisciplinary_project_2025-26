@@ -3023,12 +3023,12 @@ def admin_assignments():
 
     # ---------------- SAVE MULTIPLE ASSIGNMENTS ----------------
     if request.method == "POST":
-        team_ids = request.form.getlist("team_id")  # selected rows
+        team_ids = request.form.getlist("team_id")
         updated = 0
 
         for team_id in team_ids:
             faculty_id = request.form.get(f"faculty_{team_id}")
-            if faculty_id and faculty_id.strip() != "":
+            if faculty_id and faculty_id.strip():
                 cur.execute("""
                     INSERT OR REPLACE INTO team_faculty(team_id, faculty_id)
                     VALUES (?, ?)
@@ -3057,13 +3057,18 @@ def admin_assignments():
     cur.execute("SELECT DISTINCT title FROM problems ORDER BY title")
     problems_list = [r["title"] for r in cur.fetchall()]
 
-    # ---------------- DEPARTMENT LIST ----------------
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
     # ---------------- BUILD WHERE CLAUSE ----------------
     where = []
     params = []
 
+    # 🔐 DEPARTMENT ADMIN FILTER (CORE CHANGE)
+    if session.get("admin_role") == "admin":
+        where.append("t.leader_department = ?")
+        params.append(session.get("admin_department"))
+
+    # UI department filter (super admin only)
     if dept_filter:
         where.append("t.leader_department = ?")
         params.append(dept_filter)
@@ -3091,7 +3096,7 @@ def admin_assignments():
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-    # ---------------- TOTAL COUNT (for pagination) ----------------
+    # ---------------- TOTAL COUNT ----------------
     cur.execute(f"""
         SELECT COUNT(*)
         FROM teams t
@@ -3102,7 +3107,7 @@ def admin_assignments():
     total_rows = cur.fetchone()[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
-    # ---------------- GET PAGINATED DATA ----------------
+    # ---------------- FETCH DATA ----------------
     cur.execute(f"""
         SELECT
             t.id AS team_id,
@@ -3131,12 +3136,10 @@ def admin_assignments():
         problems_list=problems_list,
         departments_list=departments_list,
         active_page="assignments",
-        # keep filters in UI
         search=search,
         dept_filter=dept_filter,
         faculty_filter=faculty_filter,
         problem_filter=problem_filter,
-        # pagination
         page=page,
         per_page=per_page,
         total_pages=total_pages,
