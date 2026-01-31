@@ -3026,14 +3026,14 @@ def admin_assignments():
     con = db()
     cur = con.cursor()
 
-    # ---------------- SAVE MULTIPLE ASSIGNMENTS ----------------
+    # ---------------- SAVE ASSIGNMENTS ----------------
     if request.method == "POST":
         team_ids = request.form.getlist("team_id")
         updated = 0
 
         for team_id in team_ids:
             faculty_id = request.form.get(f"faculty_{team_id}")
-            if faculty_id and faculty_id.strip():
+            if faculty_id:
                 cur.execute("""
                     INSERT OR REPLACE INTO team_faculty(team_id, faculty_id)
                     VALUES (?, ?)
@@ -3043,19 +3043,27 @@ def admin_assignments():
         con.commit()
         flash(f"{updated} assignment(s) saved successfully ✅")
 
-    # ---------------- FILTERS (GET) ----------------
+    # ---------------- FILTER INPUTS ----------------
     search = request.args.get("search", "").strip().lower()
     dept_filter = request.args.get("dept", "").strip()
     faculty_filter = request.args.get("faculty", "").strip()
     problem_filter = request.args.get("problem", "").strip()
 
-    # Pagination
     page = int(request.args.get("page", 1))
     per_page = 25
     offset = (page - 1) * per_page
 
-    # ---------------- FACULTY LIST ----------------
-    cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+    # ---------------- FACULTY LIST (ROLE AWARE) ----------------
+    if session.get("admin_role") == "admin":
+        cur.execute("""
+            SELECT id, name, email, department
+            FROM faculty
+            WHERE department=?
+            ORDER BY name
+        """, (session.get("admin_department"),))
+    else:
+        cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+
     faculty_list = cur.fetchall()
 
     # ---------------- PROBLEM LIST ----------------
@@ -3068,13 +3076,13 @@ def admin_assignments():
     where = []
     params = []
 
-    # 🔐 DEPARTMENT ADMIN FILTER (CORE CHANGE)
+    # 🔐 FORCE department for department admin
     if session.get("admin_role") == "admin":
         where.append("t.leader_department = ?")
         params.append(session.get("admin_department"))
 
-    # UI department filter (super admin only)
-    if dept_filter:
+    # Super admin department filter
+    if session.get("admin_role") == "super_admin" and dept_filter:
         where.append("t.leader_department = ?")
         params.append(dept_filter)
 
@@ -3150,6 +3158,7 @@ def admin_assignments():
         total_pages=total_pages,
         total_rows=total_rows
     )
+
 
 @app.route("/admin/export-assignments")
 def export_assignments():
