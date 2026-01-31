@@ -1738,6 +1738,10 @@ def admin_students():
     con = db()
     cur = con.cursor()
 
+    # 🔐 ROLE INFO
+    is_dept_admin = session.get("admin_role") == "admin"
+    dept_admin_department = session.get("admin_department")
+
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
     # ---------------- TEMPLATE DOWNLOAD ----------------
@@ -1763,7 +1767,11 @@ def admin_students():
         where = []
         params = []
 
-        if dept_filter:
+        # 🔐 DEPARTMENT ADMIN LOCK
+        if is_dept_admin:
+            where.append("department=?")
+            params.append(dept_admin_department)
+        elif dept_filter:
             where.append("department=?")
             params.append(dept_filter)
 
@@ -1780,7 +1788,7 @@ def admin_students():
         where_sql = " WHERE " + " AND ".join(where) if where else ""
 
         cur.execute(f"""
-            SELECT id, usn, email, name, department, section, must_reset_password, created_at
+            SELECT usn, email, name, department, section, must_reset_password, created_at
             FROM students
             {where_sql}
             ORDER BY created_at DESC
@@ -1820,43 +1828,17 @@ def admin_students():
         # ---- BULK UPLOAD ----
         if action == "bulk_upload":
             file = request.files.get("file")
-            if not file:
-                flash("Please upload an Excel file.")
-                con.close()
-                return redirect(request.url)
-
-            try:
-                df = pd.read_excel(file)
-            except:
-                flash("Invalid file. Please upload a valid Excel file.")
-                con.close()
-                return redirect(request.url)
-
-            required_cols = ["USN", "Email", "Name", "Department", "Section"]
-            for col in required_cols:
-                if col not in df.columns:
-                    flash(f"Missing column: {col}")
-                    con.close()
-                    return redirect(request.url)
-
-            created = 0
-            skipped = 0
+            df = pd.read_excel(file)
 
             for _, r in df.iterrows():
                 usn = str(r["USN"]).strip().upper()
                 email = str(r["Email"]).strip().lower()
                 name = str(r["Name"]).strip()
-                dept = str(r["Department"]).strip()
+                dept = dept_admin_department if is_dept_admin else str(r["Department"]).strip()
                 sec = str(r["Section"]).strip()
 
-                if not usn or not email:
-                    skipped += 1
-                    continue
-
-                # prevent duplicates
-                cur.execute("SELECT COUNT(*) AS cnt FROM students WHERE usn=? OR email=?", (usn, email))
-                if cur.fetchone()["cnt"] > 0:
-                    skipped += 1
+                cur.execute("SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
+                if cur.fetchone()[0] > 0:
                     continue
 
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
@@ -1866,81 +1848,31 @@ def admin_students():
                     VALUES (?,?,?,?,?,?,1)
                 """, (usn, email, password_hash, name, dept, sec))
 
-                created += 1
-
             con.commit()
-            flash(f"Bulk upload done ✅ Created: {created}, Skipped: {skipped}")
+            flash("Bulk upload completed ✅")
 
         # ---- MANUAL ADD ----
         elif action == "manual_add":
-            usn = request.form.get("usn", "").strip().upper()
-            email = request.form.get("email", "").strip().lower()
+            usn = request.form.get("usn").strip().upper()
+            email = request.form.get("email").strip().lower()
             name = request.form.get("name", "").strip()
-            dept = request.form.get("department", "").strip()
+            dept = dept_admin_department if is_dept_admin else request.form.get("department")
             sec = request.form.get("section", "").strip()
 
-            if not usn or not email:
-                flash("USN and Email are required.")
-                con.close()
-                return redirect(request.url)
-
-            cur.execute("SELECT COUNT(*) AS cnt FROM students WHERE usn=? OR email=?", (usn, email))
-            if cur.fetchone()["cnt"] > 0:
-                flash("Student already exists (USN/Email duplicate).")
-                con.close()
-                return redirect(request.url)
-
-            password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
-
-            cur.execute("""
-                INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
-                VALUES (?,?,?,?,?,?,1)
-            """, (usn, email, password_hash, name, dept, sec))
-
-            con.commit()
-            flash("Student created successfully ✅")
-
-        # ---- RESET PASSWORD SINGLE ----
-        elif action == "reset_password":
-            sid = request.form.get("sid")
-            if sid:
+            cur.execute("SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
+            if cur.fetchone()[0] == 0:
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
                 cur.execute("""
-                    UPDATE students
-                    SET password_hash=?, must_reset_password=1, updated_at=CURRENT_TIMESTAMP
-                    WHERE id=?
-                """, (password_hash, sid))
+                    INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
+                    VALUES (?,?,?,?,?,?,1)
+                """, (usn, email, password_hash, name, dept, sec))
                 con.commit()
-                flash("Password reset to default (RNSIT@2026) ✅")
-
-        # ---- BULK RESET PASSWORD ----
-        elif action == "bulk_reset_password":
-            ids = request.form.getlist("student_id")
-            if not ids:
-                flash("Please select at least 1 student.")
-            else:
-                password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
-                for sid in ids:
-                    cur.execute("""
-                        UPDATE students
-                        SET password_hash=?, must_reset_password=1, updated_at=CURRENT_TIMESTAMP
-                        WHERE id=?
-                    """, (password_hash, sid))
-                con.commit()
-                flash(f"Reset password for {len(ids)} student(s) ✅")
-
-        # ---- DELETE STUDENT ----
-        elif action == "delete_student":
-            sid = request.form.get("sid")
-            if sid:
-                cur.execute("DELETE FROM students WHERE id=?", (sid,))
-                con.commit()
-                flash("Student deleted successfully ✅")
+                flash("Student created successfully ✅")
 
         con.close()
         return redirect(url_for("admin_students"))
 
-    # ---------------- FILTERS (GET LIST) ----------------
+    # ---------------- LIST VIEW ----------------
     search = request.args.get("search", "").strip().lower()
     dept_filter = request.args.get("dept", "").strip()
 
@@ -1951,7 +1883,11 @@ def admin_students():
     where = []
     params = []
 
-    if dept_filter:
+    # 🔐 DEPARTMENT ADMIN LOCK
+    if is_dept_admin:
+        where.append("department=?")
+        params.append(dept_admin_department)
+    elif dept_filter:
         where.append("department=?")
         params.append(dept_filter)
 
@@ -1967,9 +1903,8 @@ def admin_students():
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-    # total count
-    cur.execute(f"SELECT COUNT(*) AS cnt FROM students {where_sql}", params)
-    total_rows = cur.fetchone()["cnt"]
+    cur.execute(f"SELECT COUNT(*) FROM students {where_sql}", params)
+    total_rows = cur.fetchone()[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     cur.execute(f"""
@@ -2819,7 +2754,19 @@ def admin_export_teams():
     con = db()
     cur = con.cursor()
 
-    cur.execute("""
+    # ---------------- ROLE-BASED FILTER ----------------
+    where = []
+    params = []
+
+    # Department admin should see ONLY their department
+    if session.get("admin_role") == "admin":
+        where.append("t.leader_department = ?")
+        params.append(session.get("admin_department"))
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    # ---------------- FETCH TEAMS + PROBLEM + FACULTY ----------------
+    cur.execute(f"""
         SELECT
             t.id AS team_id,
             t.team_name,
@@ -2837,10 +2784,13 @@ def admin_export_teams():
         JOIN problems p ON t.problem_id = p.id
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
         LEFT JOIN faculty f ON tf.faculty_id = f.id
+        {where_sql}
         ORDER BY p.title, t.team_name
-    """)
+    """, params)
+
     teams = cur.fetchall()
 
+    # ---------------- FETCH TEAM MEMBERS ----------------
     cur.execute("""
         SELECT team_id, member_name, usn, department
         FROM team_members
@@ -2850,6 +2800,7 @@ def admin_export_teams():
 
     con.close()
 
+    # ---------------- BUILD MEMBERS MAP ----------------
     members_map = {}
     for m in members_rows:
         tid = m["team_id"]
@@ -2857,15 +2808,17 @@ def admin_export_teams():
             f"{m['member_name']} ({m['usn']}, {m['department']})"
         )
 
+    # ---------------- BUILD EXCEL ROWS ----------------
     export_rows = []
     for t in teams:
         tid = t["team_id"]
 
         members_text = " | ".join(members_map.get(tid, [])) if members_map.get(tid) else "-"
 
-        faculty_text = "Not Assigned"
         if t["faculty_name"]:
             faculty_text = f"{t['faculty_name']} ({t['faculty_department']}) - {t['faculty_email']}"
+        else:
+            faculty_text = "Not Assigned"
 
         export_rows.append({
             "Team Name": t["team_name"],
@@ -2886,7 +2839,6 @@ def admin_export_teams():
 
     return send_file(out_file, as_attachment=True)
 
-
 @app.route("/dashboard")
 def dashboard():
     if not session.get("admin_logged_in"):
@@ -2895,68 +2847,90 @@ def dashboard():
     con = db()
     cur = con.cursor()
 
-    # Total teams
-    cur.execute("SELECT COUNT(*) FROM teams")
+    # ---------------- ROLE-BASED FILTER ----------------
+    where = []
+    params = []
+
+    if session.get("admin_role") == "admin":
+        where.append("t.leader_department = ?")
+        params.append(session.get("admin_department"))
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    # ---------------- TOTAL TEAMS ----------------
+    cur.execute(f"""
+        SELECT COUNT(*)
+        FROM teams t
+        {where_sql}
+    """, params)
     total_teams = cur.fetchone()[0]
 
-    # Total problems
+    # ---------------- TOTAL PROBLEMS ----------------
     cur.execute("SELECT COUNT(*) FROM problems")
     total_problems = cur.fetchone()[0]
 
-    # Teams per department (leader_department)
-    cur.execute("""
-        SELECT leader_department, COUNT(*)
-        FROM teams
-        GROUP BY leader_department
+    # ---------------- TEAMS PER DEPARTMENT ----------------
+    cur.execute(f"""
+        SELECT t.leader_department, COUNT(*)
+        FROM teams t
+        {where_sql}
+        GROUP BY t.leader_department
         ORDER BY COUNT(*) DESC
-    """)
+    """, params)
     dept_data = cur.fetchall()
 
-    # Hardware vs Software (Category)
-    cur.execute("""
+    # ---------------- TEAMS BY CATEGORY ----------------
+    cur.execute(f"""
         SELECT p.category, COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
+        {where_sql}
         GROUP BY p.category
         ORDER BY COUNT(*) DESC
-    """)
+    """, params)
     type_data = cur.fetchall()
 
-    # ✅ Domain/Theme distribution (replaces difficulty)
-    cur.execute("""
+    # ---------------- DOMAIN / THEME DISTRIBUTION ----------------
+    cur.execute(f"""
         SELECT p.domain_theme, COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
+        {where_sql}
         GROUP BY p.domain_theme
         ORDER BY COUNT(*) DESC
-    """)
+    """, params)
     domain_data = cur.fetchall()
 
-    # Not assigned teams count
-    cur.execute("""
+    # ---------------- NOT ASSIGNED TEAMS ----------------
+    cur.execute(f"""
         SELECT COUNT(*)
         FROM teams t
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
-        WHERE tf.faculty_id IS NULL
-    """)
+        {where_sql}
+        AND tf.faculty_id IS NULL
+    """, params)
     not_assigned_count = cur.fetchone()[0]
 
-    # Pending weekly progress count
-    cur.execute("""
+    # ---------------- PENDING WEEKLY PROGRESS ----------------
+    cur.execute(f"""
         SELECT COUNT(*)
-        FROM weekly_progress
-        WHERE status='Pending'
-    """)
+        FROM weekly_progress wp
+        JOIN teams t ON wp.team_id = t.id
+        {where_sql}
+        AND wp.status = 'Pending'
+    """, params)
     pending_progress_count = cur.fetchone()[0]
 
-    # Faculty wise team assignments
-    cur.execute("""
+    # ---------------- FACULTY WISE ASSIGNMENT ----------------
+    cur.execute(f"""
         SELECT f.name, COUNT(tf.team_id)
         FROM faculty f
         LEFT JOIN team_faculty tf ON f.id = tf.faculty_id
+        LEFT JOIN teams t ON tf.team_id = t.id
+        {where_sql}
         GROUP BY f.id
         ORDER BY COUNT(tf.team_id) DESC
-    """)
+    """, params)
     faculty_data = cur.fetchall()
 
     con.close()
@@ -2967,7 +2941,7 @@ def dashboard():
         total_problems=total_problems,
         dept_data=dept_data,
         type_data=type_data,
-        domain_data=domain_data,  # ✅ new
+        domain_data=domain_data,
         not_assigned_count=not_assigned_count,
         pending_progress_count=pending_progress_count,
         faculty_data=faculty_data,
