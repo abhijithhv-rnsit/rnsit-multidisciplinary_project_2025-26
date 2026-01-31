@@ -2714,7 +2714,7 @@ def admin_teams():
     where = []
     params = []
 
-    # If department admin, restrict to their department
+    # Department admin → restrict to their department
     if session.get("admin_role") == "admin":
         where.append("t.leader_department = ?")
         params.append(session.get("admin_department"))
@@ -2746,14 +2746,20 @@ def admin_teams():
 
     teams = cur.fetchall()
 
-    # ---------------- FETCH MEMBERS FOR ALL TEAMS ----------------
-    cur.execute("""
-        SELECT team_id, member_name, usn, department
-        FROM team_members
-        ORDER BY team_id, id
-    """)
-    members_rows = cur.fetchall()
+    # ---------------- FETCH MEMBERS (FILTERED SAME AS TEAMS) ----------------
+    cur.execute(f"""
+        SELECT
+            tm.team_id,
+            tm.member_name,
+            tm.usn,
+            tm.department
+        FROM team_members tm
+        JOIN teams t ON tm.team_id = t.id
+        {where_sql}
+        ORDER BY tm.team_id, tm.id
+    """, params)
 
+    members_rows = cur.fetchall()
     con.close()
 
     # ---------------- BUILD MEMBERS MAP ----------------
@@ -2771,17 +2777,15 @@ def admin_teams():
     for t in teams:
         tid = t["team_id"]
 
-        # Members text
         member_list = members_map.get(tid, [])
         if member_list:
-            members_text = " | ".join([
-                f"{x['member_name']} ({x['usn']}, {x['department']})"
-                for x in member_list
-            ])
+            members_text = " | ".join(
+                f"{m['member_name']} ({m['usn']}, {m['department']})"
+                for m in member_list
+            )
         else:
             members_text = "-"
 
-        # Faculty text
         if t["faculty_name"]:
             faculty_text = f"{t['faculty_name']} ({t['faculty_department']}) - {t['faculty_email']}"
         else:
@@ -2805,6 +2809,7 @@ def admin_teams():
         rows=rows,
         active_page="teams"
     )
+
 
 @app.route("/admin/export-teams")
 def admin_export_teams():
