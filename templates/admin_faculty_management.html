@@ -54,6 +54,10 @@
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="action" value="bulk_upload">
 
+        {% if session.admin_role == "admin" %}
+          <input type="hidden" name="department" value="{{ session.admin_department }}">
+        {% endif %}
+
         <div class="row g-2 align-items-end">
           <div class="col-md-8">
             <label class="form-label fw-semibold">Upload Excel File</label>
@@ -95,12 +99,19 @@
 
           <div class="col-md-3">
             <label class="form-label fw-semibold">Department</label>
-            <select name="department" class="form-select" required>
-              <option value="">Select</option>
-              {% for d in departments_list %}
-                <option value="{{ d }}">{{ d }}</option>
-              {% endfor %}
-            </select>
+
+            {% if session.admin_role == "super_admin" %}
+              <select name="department" class="form-select" required>
+                <option value="">Select</option>
+                {% for d in departments_list %}
+                  <option value="{{ d }}">{{ d }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              <input type="hidden" name="department" value="{{ session.admin_department }}">
+              <input type="text" class="form-control" value="{{ session.admin_department }}" disabled>
+            {% endif %}
+
           </div>
 
           <div class="col-md-3">
@@ -120,6 +131,11 @@
 
   <!-- FILTER BAR -->
   <form method="get" action="/admin/faculty-management" class="card shadow-sm p-3 mb-3">
+
+    {% if session.admin_role == "admin" %}
+      <input type="hidden" name="dept" value="{{ session.admin_department }}">
+    {% endif %}
+
     <div class="row g-2 align-items-end">
       <div class="col-md-6">
         <label class="form-label fw-semibold">Search</label>
@@ -127,6 +143,7 @@
                placeholder="Name / Email / Department">
       </div>
 
+      {% if session.admin_role == "super_admin" %}
       <div class="col-md-3">
         <label class="form-label fw-semibold">Department</label>
         <select class="form-select" name="dept">
@@ -136,6 +153,7 @@
           {% endfor %}
         </select>
       </div>
+      {% endif %}
 
       <div class="col-md-3 d-flex gap-2">
         <button class="btn btn-primary w-100">Apply</button>
