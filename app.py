@@ -1107,6 +1107,14 @@ def faculty_change_password():
 
     return render_template("faculty_change_password.html")
 
+def get_faculty_team_count(cur, faculty_id):
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM teams 
+        WHERE assigned_faculty_id = ?
+    """, (faculty_id,))
+    return cur.fetchone()[0]
+
 
 @app.route("/faculty/dashboard")
 def faculty_dashboard():
@@ -2860,18 +2868,44 @@ def admin_assignments():
     if request.method == "POST":
         team_ids = request.form.getlist("team_id")
         updated = 0
+        skipped = 0
 
         for team_id in team_ids:
             faculty_id = request.form.get(f"faculty_{team_id}")
-            if faculty_id:
-                cur.execute("""
-                    INSERT OR REPLACE INTO team_faculty(team_id, faculty_id)
-                    VALUES (?, ?)
-                """, (team_id, faculty_id))
-                updated += 1
+            if not faculty_id:
+                continue
+
+            # 🔒 CHECK CURRENT LOAD OF FACULTY
+            cur.execute("""
+                SELECT COUNT(*)
+                FROM team_faculty
+                WHERE faculty_id = ?
+                  AND team_id != ?
+            """, (faculty_id, team_id))
+            assigned_count = cur.fetchone()[0]
+
+            # 🚫 LIMIT = 5 TEAMS PER FACULTY
+            if assigned_count >= 5:
+                skipped += 1
+                continue
+
+            # ✅ ASSIGN / UPDATE
+            cur.execute("""
+                INSERT OR REPLACE INTO team_faculty(team_id, faculty_id)
+                VALUES (?, ?)
+            """, (team_id, faculty_id))
+            updated += 1
 
         con.commit()
-        flash(f"{updated} assignment(s) saved successfully ✅")
+
+        if skipped > 0:
+            flash(
+                f"{updated} assignment(s) saved ✅ | "
+                f"{skipped} skipped ❌ (Faculty already has 5 teams)",
+                "warning"
+            )
+        else:
+            flash(f"{updated} assignment(s) saved successfully ✅", "success")
 
     # ---------------- FILTER INPUTS ----------------
     search = request.args.get("search", "").strip().lower()
@@ -2988,7 +3022,6 @@ def admin_assignments():
         total_pages=total_pages,
         total_rows=total_rows
     )
-
 
 @app.route("/admin/export-assignments")
 def export_assignments():
