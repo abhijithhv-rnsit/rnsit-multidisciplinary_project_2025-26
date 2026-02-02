@@ -27,7 +27,17 @@
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <div>
       <h4 class="fw-bold mb-0">Admin Dashboard</h4>
-      <div class="text-muted small">Quick summary and analytics</div>
+
+      <!-- 🔐 ROLE CONTEXT (ONLY ADDITION) -->
+      {% if session.admin_role == "admin" %}
+        <div class="text-muted small">
+          Department: <b>{{ session.admin_department }}</b>
+        </div>
+      {% else %}
+        <div class="text-muted small">
+          All Departments Overview
+        </div>
+      {% endif %}
     </div>
   </div>
 
@@ -75,7 +85,6 @@
   <!-- CHARTS -->
   <div class="row g-3">
 
-    <!-- Teams per Department -->
     <div class="col-lg-6">
       <div class="card shadow-sm border-0 chart-card">
         <div class="card-header fw-bold bg-white border-0 pt-3">
@@ -89,7 +98,6 @@
       </div>
     </div>
 
-    <!-- Teams by Category -->
     <div class="col-lg-6">
       <div class="card shadow-sm border-0 chart-card">
         <div class="card-header fw-bold bg-white border-0 pt-3">
@@ -103,7 +111,6 @@
       </div>
     </div>
 
-    <!-- Domain/Theme Distribution -->
     <div class="col-lg-6">
       <div class="card shadow-sm border-0 chart-card">
         <div class="card-header fw-bold bg-white border-0 pt-3">
@@ -117,7 +124,6 @@
       </div>
     </div>
 
-    <!-- Faculty-wise Assignment Chart -->
     <div class="col-lg-6">
       <div class="card shadow-sm border-0 chart-card">
         <div class="card-header fw-bold bg-white border-0 pt-3">
@@ -136,8 +142,6 @@
 </div>
 
 <script>
-  // ------------------ DATA FROM BACKEND ------------------
-
   const deptLabels = {{ dept_data | map(attribute=0) | list | tojson }};
   const deptValues = {{ dept_data | map(attribute=1) | list | tojson }};
 
@@ -150,69 +154,34 @@
   const facultyLabels = {{ faculty_data | map(attribute=0) | list | tojson }};
   const facultyValues = {{ faculty_data | map(attribute=1) | list | tojson }};
 
-  // ------------------ COMMON OPTIONS ------------------
   const commonOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    plugins: {
-      legend: { position: 'bottom' }
-    }
+    plugins: { legend: { position: 'bottom' } }
   };
 
-  // Teams per Department (Bar)
   new Chart(document.getElementById("deptChart"), {
     type: 'bar',
-    data: {
-      labels: deptLabels,
-      datasets: [{
-        label: 'Teams',
-        data: deptValues
-      }]
-    },
-    options: {
-      ...commonOptions,
-      scales: { y: { beginAtZero: true } }
-    }
+    data: { labels: deptLabels, datasets: [{ data: deptValues }] },
+    options: { ...commonOptions, scales: { y: { beginAtZero: true } } }
   });
 
-  // Teams by Category (Pie)
   new Chart(document.getElementById("typeChart"), {
     type: 'pie',
-    data: {
-      labels: typeLabels,
-      datasets: [{
-        data: typeValues
-      }]
-    },
+    data: { labels: typeLabels, datasets: [{ data: typeValues }] },
     options: commonOptions
   });
 
-  // Domain/Theme Distribution (Doughnut)
   new Chart(document.getElementById("domainChart"), {
     type: 'doughnut',
-    data: {
-      labels: domainLabels,
-      datasets: [{
-        data: domainValues
-      }]
-    },
+    data: { labels: domainLabels, datasets: [{ data: domainValues }] },
     options: commonOptions
   });
 
-  // Faculty-wise Teams (Bar)
   new Chart(document.getElementById("facultyChart"), {
     type: 'bar',
-    data: {
-      labels: facultyLabels,
-      datasets: [{
-        label: 'Assigned Teams',
-        data: facultyValues
-      }]
-    },
-    options: {
-      ...commonOptions,
-      scales: { y: { beginAtZero: true } }
-    }
+    data: { labels: facultyLabels, datasets: [{ data: facultyValues }] },
+    options: { ...commonOptions, scales: { y: { beginAtZero: true } } }
   });
 </script>
 
