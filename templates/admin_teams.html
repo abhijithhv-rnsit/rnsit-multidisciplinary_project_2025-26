@@ -28,13 +28,34 @@
     <div class="card-body p-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
       <div>
         <h4 class="fw-bold mb-0">Registered Teams</h4>
-        <div class="text-muted small">Guide Allocation Report View</div>
+
+        <!-- 🔐 ROLE CONTEXT -->
+        {% if session.admin_role == "admin" %}
+          <div class="text-muted small">
+            Guide Allocation Report – Department: <b>{{ session.admin_department }}</b>
+          </div>
+        {% else %}
+          <div class="text-muted small">
+            Guide Allocation Report – All Departments
+          </div>
+        {% endif %}
       </div>
 
       <div class="d-flex gap-2 flex-wrap">
-        <a href="/admin/export-teams" class="btn btn-success btn-sm">
-          ⬇ Export Guide Allocation Report (Excel)
-        </a>
+
+        <!-- 🔐 ROLE-AWARE EXPORT -->
+        {% if session.admin_role == "admin" %}
+          <a href="/admin/export-teams?dept={{ session.admin_department }}"
+             class="btn btn-success btn-sm">
+            ⬇ Export Guide Allocation Report (Excel)
+          </a>
+        {% else %}
+          <a href="/admin/export-teams"
+             class="btn btn-success btn-sm">
+            ⬇ Export Guide Allocation Report (Excel)
+          </a>
+        {% endif %}
+
         <a href="/dashboard" class="btn btn-outline-dark btn-sm">
           View Admin Dashboard
         </a>
@@ -97,9 +118,7 @@
             <tr class="team-row {% if r.faculty_text == 'Not Assigned' %}not-assigned{% else %}assigned{% endif %}">
 
               <td class="fw-semibold">{{ r.team_name }}</td>
-
               <td>{{ r.leader_department }}</td>
-
               <td>{{ r.leader_section }}</td>
 
               <td class="wrap-text">
@@ -111,10 +130,8 @@
               </td>
 
               <td class="fw-semibold">{{ r.leader_usn }}</td>
-
               <td>{{ r.leader_phone }}</td>
 
-              <!-- Members -->
               <td class="members-box">
                 {% if r.members_text and r.members_text != "-" %}
                   <ul>
@@ -127,7 +144,6 @@
                 {% endif %}
               </td>
 
-              <!-- Faculty -->
               <td>
                 {% if r.faculty_text == "Not Assigned" %}
                   <span class="badge bg-danger">Not Assigned</span>
