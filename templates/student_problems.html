@@ -47,11 +47,20 @@
             <span class="badge bg-secondary">
               Teams Registered: {{ c }} / 1
             </span>
+
+            {% if p['is_locked'] == 1 %}
+              <span class="badge bg-dark ms-1">🔒 Locked by Admin</span>
+            {% endif %}
           </p>
 
           {% if registration_closed %}
             <button class="btn btn-secondary w-100" disabled>
               🔒 Registration Closed (Deadline Passed)
+            </button>
+
+          {% elif p['is_locked'] == 1 %}
+            <button class="btn btn-dark w-100" disabled>
+              🔒 Registration Locked by Admin
             </button>
 
           {% elif already_in_team %}
