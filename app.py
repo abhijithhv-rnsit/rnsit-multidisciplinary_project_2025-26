@@ -2220,6 +2220,95 @@ def unlock_problem(pid):
     flash("Problem unlocked successfully ✅ Team registration cleared.")
 
     return redirect(request.referrer or url_for("admin_dashboard"))
+@app.route("/admin/edit-team/<int:team_id>", methods=["GET", "POST"])
+def admin_edit_team(team_id):
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    # ---------------- LOAD TEAM ----------------
+    cur.execute("SELECT * FROM teams WHERE id=?", (team_id,))
+    team = cur.fetchone()
+    if not team:
+        con.close()
+        flash("Invalid team.")
+        return redirect(url_for("admin_teams"))
+
+    # ---------------- LOAD MEMBERS ----------------
+    cur.execute("""
+        SELECT id, member_name, usn, email, phone, department, section
+        FROM team_members WHERE team_id=?
+    """, (team_id,))
+    members = cur.fetchall()
+
+    # ---------------- SAVE EDIT ----------------
+    if request.method == "POST":
+
+        team_name = request.form.get("team_name").strip()
+        leader_phone = request.form.get("leader_phone").strip()
+        leader_section = request.form.get("leader_section").strip()
+
+        # update team basic info
+        cur.execute("""
+            UPDATE teams
+            SET team_name=?, leader_phone=?, leader_section=?
+            WHERE id=?
+        """, (team_name, leader_phone, leader_section, team_id))
+
+        # delete old members
+        cur.execute("DELETE FROM team_members WHERE team_id=?", (team_id,))
+
+        # collect new members
+        members_new = []
+        for i in range(1, 7):
+            name = request.form.get(f"member{i}_name", "").strip()
+            usn = request.form.get(f"member{i}_usn", "").strip().upper()
+            email = request.form.get(f"member{i}_email", "").strip().lower()
+            phone = request.form.get(f"member{i}_phone", "").strip()
+            dept = request.form.get(f"member{i}_department", "").strip().upper()
+            sec = request.form.get(f"member{i}_section", "").strip().upper()
+
+            if usn:
+                members_new.append((name, usn, email, phone, dept, sec))
+
+        # ---- TEAM SIZE RULE ----
+        team_size = 1 + len(members_new)
+        if team_size < 4 or team_size > 6:
+            con.close()
+            flash("Team size must be between 4 and 6.")
+            return redirect(request.url)
+
+        # ---- CORE BRANCH RULE ----
+        core = ["ECE","EEE","ME","CV","CIVIL"]
+        depts = [team["leader_department"]] + [m[4] for m in members_new]
+
+        if not any(d in core for d in depts):
+            con.close()
+            flash("At least one member must be from ECE/EEE/ME/CV.")
+            return redirect(request.url)
+
+        # ---- INSERT UPDATED MEMBERS ----
+        for m in members_new:
+            cur.execute("""
+                INSERT INTO team_members
+                (team_id, member_name, usn, email, phone, department, section)
+                VALUES (?,?,?,?,?,?,?)
+            """, (team_id, *m))
+
+        con.commit()
+        con.close()
+
+        flash("Team updated successfully ✅")
+        return redirect(url_for("admin_teams"))
+
+    con.close()
+    return render_template(
+        "admin_edit_team.html",
+        team=team,
+        members=members
+    )
 
 @app.route("/admin/home")
 def admin_home():
