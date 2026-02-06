@@ -2458,7 +2458,7 @@ def admin_upload():
 
     return render_template("admin_upload.html", active_page="upload")
 
-@app.route("/admin/teams")
+@app.route("/admin/teams", methods=["GET", "POST"])
 def admin_teams():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
@@ -2466,18 +2466,34 @@ def admin_teams():
     con = db()
     cur = con.cursor()
 
+    # ================= UNLOCK / DELETE TEAM =================
+    if request.method == "POST":
+        team_id = request.form.get("team_id")
+
+        if team_id:
+            # Delete faculty mapping
+            cur.execute("DELETE FROM team_faculty WHERE team_id=?", (team_id,))
+
+            # Delete members
+            cur.execute("DELETE FROM team_members WHERE team_id=?", (team_id,))
+
+            # Delete team itself
+            cur.execute("DELETE FROM teams WHERE id=?", (team_id,))
+
+            con.commit()
+            flash("Team unlocked and removed successfully ✅ Problem is now available again.")
+
     # ---------------- ROLE-BASED FILTER ----------------
     where = []
     params = []
 
-    # Department admin → restrict to their department
     if session.get("admin_role") == "admin":
         where.append("t.leader_department = ?")
         params.append(session.get("admin_department"))
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-    # ---------------- FETCH TEAMS + PROBLEM + FACULTY ----------------
+    # ---------------- FETCH TEAMS ----------------
     cur.execute(f"""
         SELECT
             t.id AS team_id,
@@ -2502,7 +2518,7 @@ def admin_teams():
 
     teams = cur.fetchall()
 
-    # ---------------- FETCH MEMBERS (FILTERED SAME AS TEAMS) ----------------
+    # ---------------- FETCH MEMBERS ----------------
     cur.execute(f"""
         SELECT
             tm.team_id,
@@ -2521,14 +2537,13 @@ def admin_teams():
     # ---------------- BUILD MEMBERS MAP ----------------
     members_map = {}
     for m in members_rows:
-        tid = m["team_id"]
-        members_map.setdefault(tid, []).append({
+        members_map.setdefault(m["team_id"], []).append({
             "member_name": m["member_name"],
             "usn": m["usn"],
             "department": m["department"]
         })
 
-    # ---------------- FINAL ROWS FOR UI + EXCEL ----------------
+    # ---------------- FINAL UI DATA ----------------
     rows = []
     for t in teams:
         tid = t["team_id"]
