@@ -29,7 +29,6 @@
       <div>
         <h4 class="fw-bold mb-0">Registered Teams</h4>
 
-        <!-- 🔐 ROLE CONTEXT -->
         {% if session.admin_role == "admin" %}
           <div class="text-muted small">
             Guide Allocation Report – Department: <b>{{ session.admin_department }}</b>
@@ -42,8 +41,6 @@
       </div>
 
       <div class="d-flex gap-2 flex-wrap">
-
-        <!-- 🔐 ROLE-AWARE EXPORT -->
         {% if session.admin_role == "admin" %}
           <a href="/admin/export-teams?dept={{ session.admin_department }}"
              class="btn btn-success btn-sm">
@@ -101,15 +98,15 @@
         <table class="table table-bordered table-hover align-middle bg-white" id="teamsTable">
           <thead class="table-dark">
             <tr>
-              <th style="min-width:140px;">Team Name</th>
-              <th style="min-width:110px;">Department</th>
-              <th style="min-width:90px;">Section</th>
-              <th style="min-width:320px;">Problem</th>
-              <th style="min-width:160px;">Leader</th>
-              <th style="min-width:140px;">USN</th>
-              <th style="min-width:130px;">Phone</th>
-              <th style="min-width:300px;">Members</th>
-              <th style="min-width:260px;">Faculty Guide</th>
+              <th>Team Name</th>
+              <th>Department</th>
+              <th>Section</th>
+              <th>Problem</th>
+              <th>Leader</th>
+              <th>USN</th>
+              <th>Phone</th>
+              <th>Members</th>
+              <th>Faculty Guide / Unlock</th>
             </tr>
           </thead>
 
@@ -121,14 +118,9 @@
               <td>{{ r.leader_department }}</td>
               <td>{{ r.leader_section }}</td>
 
-              <td class="wrap-text">
-                {{ r.problem_title }}
-              </td>
+              <td class="wrap-text">{{ r.problem_title }}</td>
 
-              <td>
-                <div class="fw-semibold">{{ r.leader_name }}</div>
-              </td>
-
+              <td class="fw-semibold">{{ r.leader_name }}</td>
               <td class="fw-semibold">{{ r.leader_usn }}</td>
               <td>{{ r.leader_phone }}</td>
 
@@ -145,6 +137,7 @@
               </td>
 
               <td>
+
                 {% if r.faculty_text == "Not Assigned" %}
                   <span class="badge bg-danger">Not Assigned</span>
                   <div class="small-muted mt-1">No guide mapped yet</div>
@@ -152,6 +145,20 @@
                   <span class="badge bg-success">Assigned</span>
                   <div class="small mt-1 wrap-text">{{ r.faculty_text }}</div>
                 {% endif %}
+
+                <!-- 🔓 UNLOCK FEATURE (NEW – ONLY ADDITION) -->
+                <form method="post"
+                      class="mt-2"
+                      onsubmit="return confirm('Unlock this team and allow new registration? This will permanently delete the team.');">
+
+                  <input type="hidden" name="team_id" value="{{ r.team_id }}">
+
+                  <button class="btn btn-sm btn-outline-danger w-100">
+                    🔓 Unlock & Remove Team
+                  </button>
+
+                </form>
+
               </td>
 
             </tr>
