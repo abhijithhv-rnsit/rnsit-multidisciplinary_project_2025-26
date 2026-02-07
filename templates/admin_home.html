@@ -10,23 +10,8 @@
 
 <div class="container mt-4">
 
-  <!-- Quick Actions -->
-  <!--<div class="d-flex flex-wrap gap-2 mb-4">
-    <a href="/admin/add-faculty" class="btn btn-outline-primary btn-sm">
-      ➕ Add Faculty
-    </a>
-
-    <a href="/admin/assign-faculty" class="btn btn-outline-secondary btn-sm">
-      🧑‍🏫 Assign Faculty
-    </a>
-
-    <a href="/admin/faculty" class="btn btn-outline-info btn-sm">
-      📋 View Faculty
-    </a>
-  </div>-->
-
   <!-- Stats Cards -->
-  <div class="row g-3 text-center">
+  <div class="row g-3 text-center mb-4">
 
     <div class="col-md-6">
       <div class="card shadow-sm border-0">
@@ -46,6 +31,54 @@
       </div>
     </div>
 
+  </div>
+
+  <!-- ================= NOTICE BOARD ================= -->
+
+  <div class="card shadow-sm border-0">
+    <div class="card-body">
+
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="fw-bold mb-0">📢 Notice Board</h5>
+
+        {% if session.admin_role == "super_admin" %}
+          <a href="/admin/notices" class="btn btn-sm btn-outline-primary">
+            Manage Notices
+          </a>
+        {% endif %}
+      </div>
+
+      {% if notices %}
+
+        <div class="list-group">
+
+          {% for n in notices %}
+            <div class="list-group-item list-group-item-action">
+
+              <div class="fw-semibold">{{ n.title }}</div>
+
+              <div class="text-muted small mt-1">
+                {{ n.message }}
+              </div>
+
+              {% if n.expires_at %}
+                <div class="small text-danger mt-1">
+                  Expires: {{ n.expires_at }}
+                </div>
+              {% endif %}
+
+            </div>
+          {% endfor %}
+
+        </div>
+
+      {% else %}
+        <div class="alert alert-secondary mb-0">
+          No notices posted yet.
+        </div>
+      {% endif %}
+
+    </div>
   </div>
 
 </div>
