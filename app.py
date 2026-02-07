@@ -2331,14 +2331,37 @@ def admin_edit_team(team_id):
 def admin_home():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
+
     con = db()
     cur = con.cursor()
 
+    # ---------------- COUNTS (UNCHANGED) ----------------
     cur.execute("SELECT COUNT(*) FROM teams")
     teams = cur.fetchone()[0]
 
     cur.execute("SELECT COUNT(*) FROM problems")
     problems = cur.fetchone()[0]
+
+    # ---------------- FETCH NOTICES (ROLE AWARE) ----------------
+
+    where = []
+    params = []
+
+    # Department admin → only their dept or common notices
+    if session.get("admin_role") == "admin":
+        where.append("(target_department IS NULL OR target_department=?)")
+        params.append(session.get("admin_department"))
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+    cur.execute(f"""
+        SELECT id, title, message, expires_at, created_at
+        FROM notices
+        {where_sql}
+        ORDER BY created_at DESC
+    """, params)
+
+    notices = cur.fetchall()
 
     con.close()
 
@@ -2346,6 +2369,7 @@ def admin_home():
         "admin_home.html",
         teams=teams,
         problems=problems,
+        notices=notices,          # ✅ NEW
         active_page="home"
     )
 
@@ -3457,8 +3481,18 @@ if __name__ == "__main__":
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-
-
+    cur.execute("""
+    CREATE TABLE notices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        target_role TEXT DEFAULT 'ALL',   -- ALL, STUDENT, FACULTY
+        target_department TEXT,           -- NULL = all depts
+        expires_at TEXT,                  -- optional deadline
+        created_by TEXT,                  -- admin email or role
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
     # ---------------- SAFE MIGRATIONS ----------------
     # If old DB exists, these columns might be missing
 
