@@ -2055,7 +2055,7 @@ def register(pid):
     max_teams = prob[1] if prob[1] else 5
     locked = prob[2]
 
-    # 🔒 NEW: ADMIN LOCK CHECK
+    # 🔒 ADMIN LOCK CHECK
     if locked == 1:
         con.close()
         flash("This problem is temporarily locked by admin. Please choose another problem.")
@@ -2065,7 +2065,6 @@ def register(pid):
     cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (pid,))
     already_registered = cur.fetchone()[0]
 
-    # STRICT 1 team per problem (your existing logic)
     if already_registered >= 1:
         con.close()
         flash("Registration closed for this project (1 team already registered).")
@@ -2100,23 +2099,40 @@ def register(pid):
             if usn:
                 members.append((name, usn, email, phone, dept, sec))
 
-        # -------- TEAM SIZE RULE --------
+        # =====================================================
+        # ✅ NEW RULE 1: TEAM MUST BE EXACTLY 6 MEMBERS
+        # =====================================================
+
         team_size = 1 + len(members)
-        if team_size < 4 or team_size > 6:
+        if team_size != 6:
             con.close()
-            flash("Team size must be between 4 and 6 members (including Team Leader).")
+            flash("Team must have exactly 6 members (1 Leader + 5 Members).")
             return redirect(request.url)
 
-        # -------- CORE BRANCH RULE --------
+        # =====================================================
+        # ✅ NEW RULE 2: BRANCH COMPOSITION CHECK
+        # =====================================================
+
+        cse_branches = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY"]
         core_branches = ["ECE", "EEE", "ME", "CV", "CIVIL"]
+
         all_departments = [leader_department] + [m[4] for m in members]
 
-        if not any(d in core_branches for d in all_departments):
+        cse_count = sum(1 for d in all_departments if d in cse_branches)
+        core_count = sum(1 for d in all_departments if d in core_branches)
+
+        if cse_count < 4:
+            con.close()
+            flash("At least 4 members must be from CSE / AIML / DS / CY branches.")
+            return redirect(request.url)
+
+        if core_count < 1:
             con.close()
             flash("At least 1 member must be from ECE / EEE / ME / Civil branch.")
             return redirect(request.url)
 
         # ---------------- DUPLICATE CHECKS (UNCHANGED) ----------------
+
         cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
         if cur.fetchone()[0] > 0:
             con.close()
@@ -2152,6 +2168,7 @@ def register(pid):
             used_emails.add(email)
 
         # ---------------- INSERT TEAM ----------------
+
         cur.execute("""
             INSERT INTO teams(
                 team_name,
