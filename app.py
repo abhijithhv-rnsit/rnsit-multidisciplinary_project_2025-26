@@ -3337,6 +3337,56 @@ def admin_notices():
         active_page="notices"
     )
 
+@app.route("/student/notices")
+def student_notices():
+    if not session.get("student_usn"):
+        return redirect(url_for("student_login"))
+
+    con = db()
+    cur = con.cursor()
+
+    # Students see global notices (and can extend later to dept)
+    cur.execute("""
+        SELECT title, content, created_at 
+        FROM notices 
+        WHERE is_active=1 
+        ORDER BY created_at DESC
+    """)
+
+    notices = cur.fetchall()
+    con.close()
+
+    return render_template(
+        "student_notices.html",
+        notices=notices
+    )
+@app.route("/faculty/notices")
+def faculty_notices():
+    if not session.get("faculty_logged_in"):
+        return redirect(url_for("faculty_login"))
+
+    dept = session.get("faculty_department")
+
+    con = db()
+    cur = con.cursor()
+
+    # Faculty see global + their department notices
+    cur.execute("""
+        SELECT title, content, created_at, department
+        FROM notices
+        WHERE is_active=1
+          AND (department IS NULL OR department=?)
+        ORDER BY created_at DESC
+    """, (dept,))
+
+    notices = cur.fetchall()
+    con.close()
+
+    return render_template(
+        "faculty_notices.html",
+        notices=notices
+    )
+
 @app.route("/admin/notices/delete/<int:nid>")
 def delete_notice(nid):
     if not session.get("admin_logged_in") or session.get("admin_role") != "super_admin":
