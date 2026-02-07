@@ -3648,7 +3648,7 @@ if __name__ == "__main__":
     add_column_if_not_exists("notices", "expires_at", "TEXT")
     add_column_if_not_exists("notices", "created_at", "TEXT")
 
-    add_column_if_not_exists("table", "new_column", "TYPE")
+    
 
     from werkzeug.security import generate_password_hash
 
