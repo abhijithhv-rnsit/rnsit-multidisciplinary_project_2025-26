@@ -3642,6 +3642,8 @@ if __name__ == "__main__":
         INSERT OR IGNORE INTO settings(key,value)
         VALUES ('project_start_date','2026-02-02')
     """)
+    
+    add_column_if_not_exists("notices", "message", "TEXT")
 
     from werkzeug.security import generate_password_hash
 
