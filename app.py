@@ -3647,6 +3647,9 @@ if __name__ == "__main__":
     
     add_column_if_not_exists("notices", "expires_at", "TEXT")
     add_column_if_not_exists("notices", "created_at", "TEXT")
+    add_column_if_not_exists("notices", "target_department", "TEXT")
+    add_column_if_not_exists("notices", "is_active", "INTEGER DEFAULT 1")
+
 
     add_column_if_not_exists("problems", "locked", "INTEGER DEFAULT 0")
 
