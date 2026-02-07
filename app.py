@@ -3291,6 +3291,66 @@ def student_chat():
         faculty=faculty,
         messages=messages
     )
+
+@app.route("/admin/notices", methods=["GET", "POST"])
+def admin_notices():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    # -------- ADD NOTICE (SUPER ADMIN ONLY) --------
+    if request.method == "POST" and session.get("admin_role") == "super_admin":
+        title = request.form.get("title", "").strip()
+        content = request.form.get("content", "").strip()
+        department = request.form.get("department") or None
+
+        if not title or not content:
+            flash("Title and content required.")
+            return redirect(request.url)
+
+        cur.execute("""
+            INSERT INTO notices(title, content, department, created_by)
+            VALUES (?,?,?,?)
+        """, (title, content, department, session.get("admin_email")))
+
+        con.commit()
+        flash("Notice published successfully ✅")
+
+    # -------- FETCH NOTICES (ROLE AWARE) --------
+    if session.get("admin_role") == "admin":
+        cur.execute("""
+            SELECT * FROM notices
+            WHERE department IS NULL OR department=?
+            ORDER BY created_at DESC
+        """, (session.get("admin_department"),))
+    else:
+        cur.execute("SELECT * FROM notices ORDER BY created_at DESC")
+
+    notices = cur.fetchall()
+    con.close()
+
+    return render_template(
+        "admin_notices.html",
+        notices=notices,
+        active_page="notices"
+    )
+
+@app.route("/admin/notices/delete/<int:nid>")
+def delete_notice(nid):
+    if not session.get("admin_logged_in") or session.get("admin_role") != "super_admin":
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+    cur.execute("DELETE FROM notices WHERE id=?", (nid,))
+    con.commit()
+    con.close()
+
+    flash("Notice deleted successfully ❌")
+    return redirect(url_for("admin_notices"))
+
 @app.route("/faculty/chat/<int:team_id>", methods=["GET", "POST"])
 def faculty_chat(team_id):
     if not session.get("faculty_id"):
@@ -3482,15 +3542,14 @@ if __name__ == "__main__":
     )
     """)
     cur.execute("""
-    CREATE TABLE notices (
+    CREATE TABLE IF NOT EXISTS notices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
-        message TEXT NOT NULL,
-        target_role TEXT DEFAULT 'ALL',   -- ALL, STUDENT, FACULTY
-        target_department TEXT,           -- NULL = all depts
-        expires_at TEXT,                  -- optional deadline
-        created_by TEXT,                  -- admin email or role
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        content TEXT NOT NULL,
+        department TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by TEXT,
+        is_active INTEGER DEFAULT 1
     );
     """)
     # ---------------- SAFE MIGRATIONS ----------------
