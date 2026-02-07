@@ -3362,7 +3362,7 @@ def student_notices():
     )
 @app.route("/faculty/notices")
 def faculty_notices():
-    if not session.get("faculty_logged_in"):
+    if not session.get("faculty_id"):
         return redirect(url_for("faculty_login"))
 
     dept = session.get("faculty_department")
