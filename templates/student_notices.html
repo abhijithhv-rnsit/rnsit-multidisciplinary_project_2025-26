@@ -1,0 +1,26 @@
+{% extends "student_base.html" %}
+{% block title %}Notices{% endblock %}
+
+{% block content %}
+
+<div class="container mt-3">
+
+<h4 class="fw-bold mb-3">📢 Important Notices</h4>
+
+{% if notices %}
+  {% for n in notices %}
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h6 class="fw-bold">{{ n["title"] }}</h6>
+      <div class="text-muted small mb-2">{{ n["created_at"] }}</div>
+      <p class="mb-0">{{ n["content"] }}</p>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="alert alert-warning">No notices available.</div>
+{% endif %}
+
+</div>
+
+{% endblock %}
