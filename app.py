@@ -3544,25 +3544,26 @@ if __name__ == "__main__":
     con = db()
     cur = con.cursor()
 
-    # ---------------- CREATE TABLES ----------------
+    # ---------------- CREATE TABLES (POSTGRES SAFE) ----------------
 
-    execute(cur,"""
-    CREATE TABLE IF NOT EXISTS problems(
-        id INTEGER PRIMARY KEY,
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS problems (
+        id SERIAL PRIMARY KEY,
         year TEXT,
         title TEXT,
         category TEXT,
         domain_theme TEXT,
-        max_teams INT,
+        max_teams INTEGER DEFAULT 1,
         problem_description TEXT,
         problem_details TEXT,
-        expected_outcome TEXT
+        expected_outcome TEXT,
+        locked INTEGER DEFAULT 0
     )
     """)
 
-    execute(cur,"""
-    CREATE TABLE IF NOT EXISTS teams(
-        id INTEGER PRIMARY KEY,
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS teams (
+        id SERIAL PRIMARY KEY,
         team_name TEXT,
         leader_name TEXT,
         leader_usn TEXT UNIQUE,
@@ -3570,15 +3571,15 @@ if __name__ == "__main__":
         leader_phone TEXT,
         leader_department TEXT,
         leader_section TEXT,
-        problem_id INT,
+        problem_id INTEGER REFERENCES problems(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    execute(cur,"""
-    CREATE TABLE IF NOT EXISTS team_members(
-        id INTEGER PRIMARY KEY,
-        team_id INT,
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS team_members (
+        id SERIAL PRIMARY KEY,
+        team_id INTEGER REFERENCES teams(id),
         member_name TEXT,
         usn TEXT UNIQUE,
         email TEXT,
@@ -3588,27 +3589,32 @@ if __name__ == "__main__":
     )
     """)
 
-    execute(cur,"""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS students (
         id SERIAL PRIMARY KEY,
-        usn TEXT UNIQUE NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        usn TEXT UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        name TEXT,
+        department TEXT,
+        section TEXT,
+        must_reset_password INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP
     )
     """)
 
-    execute(cur,"""
-    CREATE TABLE IF NOT EXISTS settings(
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )
     """)
 
-    execute(cur,"""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS project_details (
         id SERIAL PRIMARY KEY,
-        team_id INTEGER UNIQUE,
+        team_id INTEGER UNIQUE REFERENCES teams(id),
         abstract TEXT,
         objectives TEXT,
         tech_stack TEXT,
@@ -3616,137 +3622,94 @@ if __name__ == "__main__":
         modules TEXT,
         dataset_or_inputs TEXT,
         expected_output TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(team_id) REFERENCES teams(id)
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    execute(cur,"""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS weekly_progress (
         id SERIAL PRIMARY KEY,
-        team_id INTEGER,
+        team_id INTEGER REFERENCES teams(id),
         week_no INTEGER,
         progress TEXT,
         submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         faculty_remark TEXT,
-        status TEXT DEFAULT 'Pending',
-        FOREIGN KEY(team_id) REFERENCES teams(id)
+        status TEXT DEFAULT 'Pending'
     )
     """)
 
-    execute(cur,"""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS faculty (
         id SERIAL PRIMARY KEY,
         name TEXT,
         email TEXT UNIQUE,
         password_hash TEXT,
-        department TEXT
+        department TEXT,
+        must_reset_password INTEGER DEFAULT 1,
+        updated_at TIMESTAMP
     )
     """)
 
-    execute(cur,"""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS team_faculty (
-        team_id INTEGER UNIQUE,
-        faculty_id INTEGER,
-        FOREIGN KEY(team_id) REFERENCES teams(id),
-        FOREIGN KEY(faculty_id) REFERENCES faculty(id)
+        team_id INTEGER UNIQUE REFERENCES teams(id),
+        faculty_id INTEGER REFERENCES faculty(id)
     )
     """)
 
-    execute(cur,"""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS chat_messages (
         id SERIAL PRIMARY KEY,
-        team_id INTEGER NOT NULL,
-        sender_role TEXT NOT NULL,
+        team_id INTEGER REFERENCES teams(id),
+        sender_role TEXT,
         sender_name TEXT,
-        message TEXT NOT NULL,
-        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(team_id) REFERENCES teams(id)
+        message TEXT,
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    execute(cur,"""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS admins (
         id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT CHECK(role IN ('super_admin','admin')) NOT NULL,
+        name TEXT,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        role TEXT CHECK(role IN ('super_admin','admin')),
         department TEXT,
         must_reset_password INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    execute(cur,"""
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS notices (
         id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
+        title TEXT,
+        content TEXT,
         department TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_by TEXT,
+        expires_at TIMESTAMP,
         is_active INTEGER DEFAULT 1
-    );
+    )
     """)
-    # ---------------- SAFE MIGRATIONS ----------------
-    # If old DB exists, these columns might be missing
-
-    #def add_column_if_not_exists(table, column, col_type):
-    #    execute(cur,f"PRAGMA table_info({table})")
-    #    cols = [r[1] for r in cur.fetchall()]
-    #   if column not in cols:
-    #       execute(cur,f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-
-    # Problems
-    add_column_if_not_exists("problems", "domain_theme", "TEXT")
-
-    # Teams
-    add_column_if_not_exists("teams", "leader_department", "TEXT")
-    add_column_if_not_exists("teams", "leader_section", "TEXT")
-    add_column_if_not_exists("teams", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-
-    # Project Details
-    add_column_if_not_exists("project_details", "tech_stack", "TEXT")
-    add_column_if_not_exists("project_details", "methodology", "TEXT")
-    add_column_if_not_exists("project_details", "modules", "TEXT")
-    add_column_if_not_exists("project_details", "dataset_or_inputs", "TEXT")
-    add_column_if_not_exists("project_details", "expected_output", "TEXT")
-    add_column_if_not_exists("project_details", "project_references", "TEXT")
-
-    # -------- Students extra columns (safe migration) --------
-    add_column_if_not_exists("students", "name", "TEXT")
-    add_column_if_not_exists("students", "department", "TEXT")
-    add_column_if_not_exists("students", "section", "TEXT")
-    add_column_if_not_exists("students", "must_reset_password", "INTEGER DEFAULT 1")
-    add_column_if_not_exists("students", "updated_at", "TIMESTAMP")
-
-    add_column_if_not_exists("faculty", "must_reset_password", "INTEGER DEFAULT 1")
-    add_column_if_not_exists("faculty", "updated_at", "TIMESTAMP")
 
     # ---------------- DEFAULT SETTINGS ----------------
-    execute(cur,"""
-        INSERT OR IGNORE INTO settings(key,value)
+
+    cur.execute("""
+        INSERT INTO settings(key,value)
         VALUES ('project_start_date','2026-02-02')
+        ON CONFLICT (key) DO NOTHING
     """)
-    
-    add_column_if_not_exists("notices", "message", "TEXT")
-    
-    add_column_if_not_exists("notices", "expires_at", "TEXT")
-    add_column_if_not_exists("notices", "created_at", "TEXT")
-    add_column_if_not_exists("notices", "target_department", "TEXT")
-    add_column_if_not_exists("notices", "is_active", "INTEGER DEFAULT 1")
 
-
-    add_column_if_not_exists("problems", "locked", "INTEGER DEFAULT 0")
-
-
-    
+    # ---------------- DEFAULT SUPER ADMIN ----------------
 
     from werkzeug.security import generate_password_hash
 
-    execute(cur,"""
-        INSERT OR IGNORE INTO admins (name,email,password_hash,role,must_reset_password)
-        VALUES (?,?,?,?,0)
+    cur.execute("""
+        INSERT INTO admins (name,email,password_hash,role,must_reset_password)
+        VALUES (%s,%s,%s,%s,0)
+        ON CONFLICT (email) DO NOTHING
     """, (
         "Super Admin",
         ADMIN_USER,
@@ -3754,16 +3717,12 @@ if __name__ == "__main__":
         "super_admin"
     ))
 
-    execute(cur,"""
-        ALTER TABLE problems ADD COLUMN is_locked INTEGER DEFAULT 0
-    """)
-
     con.commit()
     con.close()
 
-    print("✅ Database initialized / migrated successfully.")
-
+    print("✅ PostgreSQL schema initialized successfully")
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
