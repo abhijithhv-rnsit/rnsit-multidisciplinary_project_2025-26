@@ -44,6 +44,8 @@ import sqlite3
 import psycopg2
 from urllib.parse import urlparse
 
+from psycopg2.extras import RealDictCursor
+
 def db():
     database_url = os.environ.get("DATABASE_URL")
 
@@ -55,7 +57,8 @@ def db():
             user=url.username,
             password=url.password,
             host=url.hostname,
-            port=url.port
+            port=url.port,
+            cursor_factory=RealDictCursor   # 🔥 THIS FIXES YOUR ERROR
         )
         return conn
     else:
@@ -63,6 +66,8 @@ def db():
         conn = sqlite3.connect("database.db")
         conn.row_factory = sqlite3.Row
         return conn
+
+
 def execute(cur, query, params=()):
     # Convert SQLite ? to PostgreSQL %s if needed
     if "?" in query:
