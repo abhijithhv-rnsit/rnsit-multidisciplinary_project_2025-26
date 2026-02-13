@@ -69,11 +69,23 @@ def db():
 
 
 def execute(cur, query, params=()):
-    # Convert SQLite ? to PostgreSQL %s if needed
-    if "?" in query:
-        query = query.replace("?", "%s")
+    # SQLite → PostgreSQL compatibility fixes
 
-    # Now execute only ONCE
+    # placeholders
+    query = query.replace("?", "%s")
+
+    # SQLite functions to PostgreSQL
+    query = query.replace("IFNULL", "COALESCE")
+
+    # SQLite replace insert
+    query = query.replace("INSERT OR REPLACE", "INSERT")
+
+    # SQLite ignore insert
+    query = query.replace("INSERT OR IGNORE", "INSERT")
+
+    # autoincrement safety
+    query = query.replace("AUTOINCREMENT", "")
+
     if params:
         cur.execute(query, params)
     else:
