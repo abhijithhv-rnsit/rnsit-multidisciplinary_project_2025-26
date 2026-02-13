@@ -3691,11 +3691,11 @@ if __name__ == "__main__":
     # ---------------- SAFE MIGRATIONS ----------------
     # If old DB exists, these columns might be missing
 
-    def add_column_if_not_exists(table, column, col_type):
-        execute(cur,f"PRAGMA table_info({table})")
-        cols = [r[1] for r in cur.fetchall()]
-        if column not in cols:
-            execute(cur,f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    #def add_column_if_not_exists(table, column, col_type):
+    #    execute(cur,f"PRAGMA table_info({table})")
+    #    cols = [r[1] for r in cur.fetchall()]
+    #   if column not in cols:
+    #       execute(cur,f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
     # Problems
     add_column_if_not_exists("problems", "domain_theme", "TEXT")
