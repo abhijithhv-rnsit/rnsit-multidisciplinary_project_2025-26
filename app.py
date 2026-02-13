@@ -64,12 +64,15 @@ def db():
         conn.row_factory = sqlite3.Row
         return conn
 def execute(cur, query, params=()):
-    if "%s" in query:
-        execute(cur,query, params)
+    # Convert SQLite ? to PostgreSQL %s if needed
+    if "?" in query:
+        query = query.replace("?", "%s")
+
+    # Now execute only ONCE
+    if params:
+        cur.execute(query, params)
     else:
-        # convert SQLite ? → PostgreSQL %s
-        q = query.replace("?", "%s")
-        execute(cur,q, params)
+        cur.execute(query)
 
 
 def ensure_students_table():
