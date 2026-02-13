@@ -319,7 +319,7 @@ def student_home():
             cur, "SELECT COUNT(*) FROM teams WHERE problem_id=?",
             (p["id"],)
         )
-        count = cur.fetchone()[0]
+        count = list(cur.fetchone().values())[0]
         data.append((p, count))
 
     con.close()
@@ -364,7 +364,7 @@ def student_problems():
     execute(cur,"""
         SELECT id, year, title, category, domain_theme, max_teams,
                problem_description, problem_details, expected_outcome,
-               IFNULL(is_locked,0) AS is_locked
+               COALESCE(is_locked,0) AS is_locked
         FROM problems
         ORDER BY year DESC
     """)
@@ -495,7 +495,7 @@ def student_my_project():
 
     # 7) Weekly progress count
     execute(cur,"SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team_id,))
-    progress_count = cur.fetchone()[0]
+    progress_count = list(cur.fetchone().values())[0]
 
     con.close()
 
@@ -1203,7 +1203,7 @@ def get_faculty_team_count(cur, faculty_id):
         FROM teams 
         WHERE assigned_faculty_id = ?
     """, (faculty_id,))
-    return cur.fetchone()[0]
+    return list(cur.fetchone().values())[0]
 
 
 @app.route("/faculty/dashboard")
@@ -1242,7 +1242,7 @@ def faculty_dashboard():
         JOIN team_faculty tf ON wp.team_id = tf.team_id
         WHERE tf.faculty_id=? AND wp.status='Pending'
     """, (faculty_id,))
-    pending_count = cur.fetchone()[0]
+    pending_count = list(cur.fetchone().values())[0]
 
     con.close()
 
@@ -1280,7 +1280,7 @@ def faculty_team_details(team_id):
         WHERE team_id=? AND faculty_id=?
     """, (team_id, faculty_id))
 
-    if cur.fetchone()[0] == 0:
+    if list(cur.fetchone().values())[0] == 0:
         con.close()
         flash("Access denied")
         return redirect(url_for("faculty_dashboard"))
@@ -1528,7 +1528,7 @@ def admin_faculty_management():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     execute(cur,f"SELECT COUNT(*) FROM faculty {where_sql}", params)
-    total_rows = cur.fetchone()[0]
+    total_rows = list(cur.fetchone().values())[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     execute(cur,f"""
@@ -1594,7 +1594,7 @@ def admin_faculty_bulk_upload():
 
             # check duplicate
             execute(cur,"SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
-            if cur.fetchone()[0] > 0:
+            if list(cur.fetchone().values())[0] > 0:
                 skipped.append((name, email, dept, "Already exists"))
                 continue
 
@@ -1792,7 +1792,7 @@ def admin_students():
                 sec = str(r["Section"]).strip()
 
                 execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
-                if cur.fetchone()[0] > 0:
+                if list(cur.fetchone().values())[0] > 0:
                     continue
 
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
@@ -1814,7 +1814,7 @@ def admin_students():
             sec = request.form.get("section", "").strip()
 
             execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
-            if cur.fetchone()[0] == 0:
+            if list(cur.fetchone().values())[0] == 0:
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
                 execute(cur,"""
                     INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
@@ -1858,7 +1858,7 @@ def admin_students():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     execute(cur,f"SELECT COUNT(*) FROM students {where_sql}", params)
-    total_rows = cur.fetchone()[0]
+    total_rows = list(cur.fetchone().values())[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     execute(cur,f"""
@@ -2078,7 +2078,7 @@ def index():
     data=[]
     for p in probs:
         execute(cur,"SELECT COUNT(*) FROM teams WHERE problem_id=?", (p[0],))
-        data.append((p, cur.fetchone()[0]))
+        data.append((p, list(cur.fetchone().values())[0]))
     con.close()
     from datetime import datetime
 
@@ -2154,7 +2154,7 @@ def register(pid):
 
     # ---------------- TEAM COUNT CHECK ----------------
     execute(cur,"SELECT COUNT(*) FROM teams WHERE problem_id=?", (pid,))
-    already_registered = cur.fetchone()[0]
+    already_registered = list(cur.fetchone().values())[0]
 
     if already_registered >= 1:
         con.close()
@@ -2225,19 +2225,19 @@ def register(pid):
         # ---------------- DUPLICATE CHECKS (UNCHANGED) ----------------
 
         execute(cur,"SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
-        if cur.fetchone()[0] > 0:
+        if list(cur.fetchone().values())[0] > 0:
             con.close()
             flash("Team Leader USN already registered.")
             return redirect(request.url)
 
         execute(cur,"SELECT COUNT(*) FROM team_members WHERE usn=?", (leader_usn,))
-        if cur.fetchone()[0] > 0:
+        if list(cur.fetchone().values())[0] > 0:
             con.close()
             flash("This USN already exists as team member.")
             return redirect(request.url)
 
         execute(cur,"SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(?)", (leader_email,))
-        if cur.fetchone()[0] > 0:
+        if list(cur.fetchone().values())[0] > 0:
             con.close()
             flash("Email already used as Team Leader.")
             return redirect(request.url)
@@ -2284,7 +2284,7 @@ def register(pid):
             datetime.now()
         ))
 
-        team_id = cur.lastrowid
+        team_id = cur.fetchone()["id"]
 
         for name, usn, email, phone, dept, sec in members:
             execute(cur,"""
@@ -2428,10 +2428,10 @@ def admin_home():
 
     # ---------------- COUNTS (UNCHANGED) ----------------
     execute(cur,"SELECT COUNT(*) FROM teams")
-    teams = cur.fetchone()[0]
+    teams = list(cur.fetchone().values())[0]
 
     execute(cur,"SELECT COUNT(*) FROM problems")
-    problems = cur.fetchone()[0]
+    problems = list(cur.fetchone().values())[0]
 
     # ---------------- FETCH NOTICES (ROLE AWARE) ----------------
 
@@ -2920,11 +2920,11 @@ def dashboard():
         FROM teams t
         {where_sql}
     """, params)
-    total_teams = cur.fetchone()[0]
+    total_teams = list(cur.fetchone().values())[0]
 
     # ---------------- TOTAL PROBLEMS ----------------
     execute(cur,"SELECT COUNT(*) FROM problems")
-    total_problems = cur.fetchone()[0]
+    total_problems = list(cur.fetchone().values())[0]
 
     # ---------------- TEAMS PER DEPARTMENT ----------------
     execute(cur,f"""
@@ -2966,7 +2966,7 @@ def dashboard():
         {where_sql}
         AND tf.faculty_id IS NULL
     """, params)
-    not_assigned_count = cur.fetchone()[0]
+    not_assigned_count = list(cur.fetchone().values())[0]
 
     # ---------------- PENDING WEEKLY PROGRESS ----------------
     execute(cur,f"""
@@ -2976,7 +2976,7 @@ def dashboard():
         {where_sql}
         AND wp.status = 'Pending'
     """, params)
-    pending_progress_count = cur.fetchone()[0]
+    pending_progress_count = list(cur.fetchone().values())[0]
 
     # ---------------- FACULTY WISE ASSIGNMENT ----------------
     execute(cur,f"""
@@ -3075,7 +3075,7 @@ def admin_assignments():
                 WHERE faculty_id = ?
                   AND team_id != ?
             """, (faculty_id, team_id))
-            assigned_count = cur.fetchone()[0]
+            assigned_count = list(cur.fetchone().values())[0]
 
             # 🚫 LIMIT = 5 TEAMS PER FACULTY
             if assigned_count >= 5:
@@ -3174,7 +3174,7 @@ def admin_assignments():
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
         {where_sql}
     """, params)
-    total_rows = cur.fetchone()[0]
+    total_rows = list(cur.fetchone().values())[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     # ---------------- FETCH DATA ----------------
