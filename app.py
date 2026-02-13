@@ -74,6 +74,54 @@ def execute(cur, query, params=()):
     else:
         cur.execute(query)
 
+@app.route("/__migrate_to_postgres_once")
+def migrate_once():
+    import sqlite3
+    import psycopg2
+    from psycopg2.extras import execute_batch
+    import os
+
+    SQLITE_DB = "database.db"
+    POSTGRES_URL = os.environ["DATABASE_URL"]
+
+    sqlite_conn = sqlite3.connect(SQLITE_DB)
+    sqlite_conn.row_factory = sqlite3.Row
+    sqlite_cur = sqlite_conn.cursor()
+
+    pg_conn = psycopg2.connect(POSTGRES_URL)
+    pg_cur = pg_conn.cursor()
+
+    sqlite_cur.execute("""
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name NOT LIKE 'sqlite_%'
+    """)
+
+    tables = [r[0] for r in sqlite_cur.fetchall()]
+    report = []
+
+    for table in tables:
+        sqlite_cur.execute(f"SELECT * FROM {table}")
+        rows = sqlite_cur.fetchall()
+        if not rows:
+            continue
+
+        cols = rows[0].keys()
+        col_list = ",".join(cols)
+        placeholders = ",".join(["%s"] * len(cols))
+
+        insert = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"
+
+        values = [tuple(r[c] for c in cols) for r in rows]
+
+        execute_batch(pg_cur, insert, values)
+        report.append(f"{table}: {len(rows)} rows")
+
+    pg_conn.commit()
+    sqlite_conn.close()
+    pg_conn.close()
+
+    return "Migration done ✅<br>" + "<br>".join(report)
+
 
 def ensure_students_table():
     con = db()
