@@ -2446,7 +2446,7 @@ def admin_home():
     where_sql = "WHERE " + " AND ".join(where) if where else ""
 
     execute(cur,f"""
-        SELECT id, title, message, expires_at, created_at
+        SELECT id, title, content AS message, expires_at, created_at
         FROM notices
         {where_sql}
         ORDER BY created_at DESC
