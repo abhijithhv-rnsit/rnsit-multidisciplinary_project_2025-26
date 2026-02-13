@@ -128,7 +128,7 @@ def ensure_students_table():
     cur = con.cursor()
     execute(cur,"""
         CREATE TABLE IF NOT EXISTS students (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             usn TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
@@ -3577,7 +3577,7 @@ if __name__ == "__main__":
 
     execute(cur,"""
     CREATE TABLE IF NOT EXISTS students (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         usn TEXT UNIQUE NOT NULL,
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
@@ -3594,7 +3594,7 @@ if __name__ == "__main__":
 
     execute(cur,"""
     CREATE TABLE IF NOT EXISTS project_details (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         team_id INTEGER UNIQUE,
         abstract TEXT,
         objectives TEXT,
@@ -3610,7 +3610,7 @@ if __name__ == "__main__":
 
     execute(cur,"""
     CREATE TABLE IF NOT EXISTS weekly_progress (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         team_id INTEGER,
         week_no INTEGER,
         progress TEXT,
@@ -3623,7 +3623,7 @@ if __name__ == "__main__":
 
     execute(cur,"""
     CREATE TABLE IF NOT EXISTS faculty (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT,
         email TEXT UNIQUE,
         password_hash TEXT,
@@ -3642,7 +3642,7 @@ if __name__ == "__main__":
 
     execute(cur,"""
     CREATE TABLE IF NOT EXISTS chat_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         team_id INTEGER NOT NULL,
         sender_role TEXT NOT NULL,
         sender_name TEXT,
@@ -3654,7 +3654,7 @@ if __name__ == "__main__":
 
     execute(cur,"""
     CREATE TABLE IF NOT EXISTS admins (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
@@ -3666,7 +3666,7 @@ if __name__ == "__main__":
     """)
     execute(cur,"""
     CREATE TABLE IF NOT EXISTS notices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         content TEXT NOT NULL,
         department TEXT,
