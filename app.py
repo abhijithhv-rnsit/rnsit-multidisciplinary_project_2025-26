@@ -39,21 +39,43 @@ ADMIN_PASS = "RNSIT@2025"
   #  con.row_factory = sqlite3.Row
    # return con
 
+import os
+import sqlite3
+import psycopg2
+from urllib.parse import urlparse
+
 def db():
-    con = sqlite3.connect("database.db", check_same_thread=False)
-    con.row_factory = sqlite3.Row
+    database_url = os.environ.get("DATABASE_URL")
 
-    # ✅ Prevent "database is locked"
-    con.execute("PRAGMA journal_mode=WAL;")
-    con.execute("PRAGMA synchronous=NORMAL;")
-    con.execute("PRAGMA busy_timeout=5000;")
+    if database_url:
+        # PostgreSQL (Render production)
+        url = urlparse(database_url)
+        conn = psycopg2.connect(
+            dbname=url.path[1:],
+            user=url.username,
+            password=url.password,
+            host=url.hostname,
+            port=url.port
+        )
+        return conn
+    else:
+        # SQLite (Local development)
+        conn = sqlite3.connect("database.db")
+        conn.row_factory = sqlite3.Row
+        return conn
+def execute(cur, query, params=()):
+    if "%s" in query:
+        execute(cur,query, params)
+    else:
+        # convert SQLite ? → PostgreSQL %s
+        q = query.replace("?", "%s")
+        execute(cur,q, params)
 
-    return con
 
 def ensure_students_table():
     con = db()
     cur = con.cursor()
-    cur.execute("""
+    execute(cur,"""
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             usn TEXT UNIQUE NOT NULL,
@@ -68,10 +90,10 @@ def ensure_students_table():
 def add_column_if_not_exists(table, column, col_type):
     con = db()
     cur = con.cursor()
-    cur.execute(f"PRAGMA table_info({table})")
+    execute(cur,f"PRAGMA table_info({table})")
     cols = [r[1] for r in cur.fetchall()]
     if column not in cols:
-        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        execute(cur,f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
         con.commit()
     con.close()
 
@@ -134,7 +156,7 @@ from datetime import datetime
 def debug_team_faculty():
     con = db()
     cur = con.cursor()
-    cur.execute("SELECT * FROM team_faculty")
+    execute(cur,"SELECT * FROM team_faculty")
     rows = cur.fetchall()
     con.close()
     return str([dict(r) for r in rows])
@@ -158,8 +180,8 @@ def student_signup():
         cur = con.cursor()
 
         try:
-            cur.execute(
-                "INSERT INTO students (usn, email, password_hash) VALUES (?,?,?)",
+            execute(
+                cur,"INSERT INTO students (usn, email, password_hash) VALUES (?,?,?)",
                 (usn, email, password_hash)
             )
             con.commit()
@@ -180,7 +202,7 @@ def student_login():
         con = db()
         cur = con.cursor()
 
-        cur.execute("SELECT * FROM students WHERE usn=?", (usn,))
+        execute(cur, "SELECT * FROM students WHERE usn=?", (usn,))
         student = cur.fetchone()
         con.close()
 
@@ -216,7 +238,7 @@ def student_home():
 
     con = db()
     cur = con.cursor()
-    cur.execute("""
+    execute(cur,"""
         SELECT id, title, category, domain_theme, max_teams
         FROM problems
     """)
@@ -224,8 +246,8 @@ def student_home():
 
     data = []
     for p in problems:
-        cur.execute(
-            "SELECT COUNT(*) FROM teams WHERE problem_id=?",
+        execute(
+            cur, "SELECT COUNT(*) FROM teams WHERE problem_id=?",
             (p["id"],)
         )
         count = cur.fetchone()[0]
@@ -247,7 +269,7 @@ def student_problems():
 
     # ---------------- DEADLINE CHECK ----------------
     registration_closed = False
-    cur.execute("SELECT value FROM settings WHERE key='registration_deadline'")
+    execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
 
     if row and row["value"]:
@@ -261,16 +283,16 @@ def student_problems():
     # ---------------- CHECK IF STUDENT ALREADY IN ANY TEAM ----------------
     already_in_team = False
 
-    cur.execute("SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=?", (student_usn,))
+    execute(cur,"SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=?", (student_usn,))
     if cur.fetchone()["cnt"] > 0:
         already_in_team = True
     else:
-        cur.execute("SELECT COUNT(*) AS cnt FROM team_members WHERE usn=?", (student_usn,))
+        execute(cur,"SELECT COUNT(*) AS cnt FROM team_members WHERE usn=?", (student_usn,))
         if cur.fetchone()["cnt"] > 0:
             already_in_team = True
 
     # ---------------- FETCH PROBLEMS (WITH LOCK STATUS) ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT id, year, title, category, domain_theme, max_teams,
                problem_description, problem_details, expected_outcome,
                IFNULL(is_locked,0) AS is_locked
@@ -282,7 +304,7 @@ def student_problems():
     # ---------------- BUILD DATA ----------------
     data = []
     for p in probs:
-        cur.execute("SELECT COUNT(*) AS cnt FROM teams WHERE problem_id=?", (p["id"],))
+        execute(cur,"SELECT COUNT(*) AS cnt FROM teams WHERE problem_id=?", (p["id"],))
         registered_count = cur.fetchone()["cnt"]
         data.append((p, registered_count))
 
@@ -306,7 +328,7 @@ def student_my_registration():
     cur = con.cursor()
 
     # 1️⃣ Check if student is TEAM LEADER
-    cur.execute("""
+    execute(cur,"""
         SELECT
             t.team_name,
             t.leader_usn,
@@ -319,7 +341,7 @@ def student_my_registration():
 
     # 2️⃣ If not leader, check TEAM MEMBERS
     if not row:
-        cur.execute("""
+        execute(cur,"""
             SELECT
                 t.team_name,
                 t.leader_usn,
@@ -349,7 +371,7 @@ def student_my_project():
     cur = con.cursor()
 
     # 1) First check if student is a leader
-    cur.execute("""
+    execute(cur,"""
         SELECT t.*, p.title AS problem_title, p.year AS problem_year
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
@@ -359,7 +381,7 @@ def student_my_project():
 
     # 2) If not leader, check if student is a member
     if not team:
-        cur.execute("""
+        execute(cur,"""
             SELECT t.*, p.title AS problem_title, p.year AS problem_year
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
@@ -377,7 +399,7 @@ def student_my_project():
     team_id = team["id"]
 
     # 4) Fetch abstract/objectives from project_details table
-    cur.execute("""
+    execute(cur,"""
         SELECT abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
         FROM project_details
         WHERE team_id=?
@@ -385,7 +407,7 @@ def student_my_project():
     pd = cur.fetchone()
 
     # 5) Fetch team members
-    cur.execute("""
+    execute(cur,"""
         SELECT member_name, usn, email, phone, department, section
         FROM team_members
         WHERE team_id=?
@@ -394,7 +416,7 @@ def student_my_project():
     members = cur.fetchall()
 
     # 6) Get faculty assigned
-    cur.execute("""
+    execute(cur,"""
         SELECT f.name, f.email, f.department
         FROM team_faculty tf
         JOIN faculty f ON tf.faculty_id = f.id
@@ -403,7 +425,7 @@ def student_my_project():
     faculty_row = cur.fetchone()
 
     # 7) Weekly progress count
-    cur.execute("SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team_id,))
+    execute(cur,"SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team_id,))
     progress_count = cur.fetchone()[0]
 
     con.close()
@@ -429,11 +451,11 @@ def student_project_details():
     cur = con.cursor()
 
     # Get team_id (leader or member)
-    cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
     if not team:
-        cur.execute("""
+        execute(cur,"""
             SELECT t.id
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
@@ -449,7 +471,7 @@ def student_project_details():
     team_id = team["id"]
 
     # Fetch existing details
-    cur.execute("SELECT * FROM project_details WHERE team_id=?", (team_id,))
+    execute(cur,"SELECT * FROM project_details WHERE team_id=?", (team_id,))
     details = cur.fetchone()
 
     if request.method == "POST":
@@ -462,7 +484,7 @@ def student_project_details():
         project_references = request.form.get("project_references", "").strip()
 
         if details:
-            cur.execute("""
+            execute(cur,"""
                 UPDATE project_details
                 SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_output=?, project_references=?
                 WHERE team_id=?
@@ -471,7 +493,7 @@ def student_project_details():
                 team_id
             ))
         else:
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO project_details(
                     team_id, abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
                 )
@@ -515,7 +537,7 @@ def student_synopsis_pdf():
     cur = con.cursor()
 
     # -------- Get team (leader/member) --------
-    cur.execute("""
+    execute(cur,"""
         SELECT t.*, 
                p.title AS problem_title,
                p.year AS problem_year,
@@ -528,7 +550,7 @@ def student_synopsis_pdf():
     team = cur.fetchone()
 
     if not team:
-        cur.execute("""
+        execute(cur,"""
             SELECT t.*, 
                    p.title AS problem_title,
                    p.year AS problem_year,
@@ -549,7 +571,7 @@ def student_synopsis_pdf():
     team_id = team["id"]
 
     # -------- Members --------
-    cur.execute("""
+    execute(cur,"""
         SELECT member_name, usn, email, phone, department, section
         FROM team_members
         WHERE team_id=?
@@ -558,7 +580,7 @@ def student_synopsis_pdf():
     members = cur.fetchall()
 
     # -------- Faculty --------
-    cur.execute("""
+    execute(cur,"""
         SELECT f.name, f.email, f.department
         FROM team_faculty tf
         JOIN faculty f ON tf.faculty_id = f.id
@@ -567,7 +589,7 @@ def student_synopsis_pdf():
     faculty = cur.fetchone()
 
     # -------- Project Details --------
-    cur.execute("""
+    execute(cur,"""
         SELECT abstract, objectives, tech_stack, methodology, modules, dataset_or_inputs, expected_output, project_references
         FROM project_details
         WHERE team_id=?
@@ -789,11 +811,11 @@ def student_weekly_progress():
     cur = con.cursor()
 
     # ---------------- FIND TEAM ID (leader or member) ----------------
-    cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
     if not team:
-        cur.execute("""
+        execute(cur,"""
             SELECT t.id
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
@@ -813,7 +835,7 @@ def student_weekly_progress():
     now_ist = datetime.now(IST)
 
     # ---------------- GET PROJECT START DATE FROM DB ----------------
-    cur.execute("SELECT value FROM settings WHERE key='project_start_date'")
+    execute(cur,"SELECT value FROM settings WHERE key='project_start_date'")
     row = cur.fetchone()
 
     if row and row["value"]:
@@ -861,7 +883,7 @@ def student_weekly_progress():
             return redirect(request.url)
 
         # Prevent duplicate submission for same week
-        cur.execute("""
+        execute(cur,"""
             SELECT COUNT(*) AS cnt
             FROM weekly_progress
             WHERE team_id=? AND week_no=?
@@ -871,7 +893,7 @@ def student_weekly_progress():
             con.close()
             return redirect(url_for("student_weekly_progress"))
 
-        cur.execute("""
+        execute(cur,"""
             INSERT INTO weekly_progress(team_id, week_no, progress, submitted_at, status)
             VALUES (?,?,?,?,?)
         """, (team_id, auto_week_no, progress, now_ist.strftime("%Y-%m-%d %H:%M:%S"), "Pending"))
@@ -882,7 +904,7 @@ def student_weekly_progress():
         return redirect(url_for("student_weekly_progress"))
 
     # ---------------- FETCH ALL PROGRESS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT *
         FROM weekly_progress
         WHERE team_id=?
@@ -958,11 +980,11 @@ def student_edit_weekly_progress(progress_id):
     cur = con.cursor()
 
     # Find student's team_id (leader OR member)
-    cur.execute("SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
     if not team:
-        cur.execute("""
+        execute(cur,"""
             SELECT t.id
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
@@ -978,7 +1000,7 @@ def student_edit_weekly_progress(progress_id):
     team_id = team["id"]
 
     # Fetch progress entry
-    cur.execute("""
+    execute(cur,"""
         SELECT * FROM weekly_progress
         WHERE id=? AND team_id=?
     """, (progress_id, team_id))
@@ -1004,7 +1026,7 @@ def student_edit_weekly_progress(progress_id):
             con.close()
             return redirect(request.url)
 
-        cur.execute("""
+        execute(cur,"""
             UPDATE weekly_progress
             SET progress=?, submitted_at=CURRENT_TIMESTAMP
             WHERE id=? AND team_id=?
@@ -1028,7 +1050,7 @@ def faculty_login():
 
         con = db()
         cur = con.cursor()
-        cur.execute("SELECT * FROM faculty WHERE email=?", (email,))
+        execute(cur,"SELECT * FROM faculty WHERE email=?", (email,))
         faculty = cur.fetchone()
         con.close()
 
@@ -1077,7 +1099,7 @@ def faculty_change_password():
         con = db()
         cur = con.cursor()
 
-        cur.execute("SELECT * FROM faculty WHERE id=?", (faculty_id,))
+        execute(cur,"SELECT * FROM faculty WHERE id=?", (faculty_id,))
         faculty = cur.fetchone()
 
         if not faculty:
@@ -1092,7 +1114,7 @@ def faculty_change_password():
 
         new_hash = generate_password_hash(new_password)
 
-        cur.execute("""
+        execute(cur,"""
             UPDATE faculty
             SET password_hash=?, must_reset_password=0, updated_at=CURRENT_TIMESTAMP
             WHERE id=?
@@ -1107,7 +1129,7 @@ def faculty_change_password():
     return render_template("faculty_change_password.html")
 
 def get_faculty_team_count(cur, faculty_id):
-    cur.execute("""
+    execute(cur,"""
         SELECT COUNT(*) 
         FROM teams 
         WHERE assigned_faculty_id = ?
@@ -1128,7 +1150,7 @@ def faculty_dashboard():
     con = db()
     cur = con.cursor()
 
-    cur.execute("""
+    execute(cur,"""
         SELECT
             t.id AS team_id,
             t.team_name,
@@ -1145,7 +1167,7 @@ def faculty_dashboard():
     assigned_teams = cur.fetchall()
 
     # Pending review count
-    cur.execute("""
+    execute(cur,"""
         SELECT COUNT(*)
         FROM weekly_progress wp
         JOIN team_faculty tf ON wp.team_id = tf.team_id
@@ -1183,7 +1205,7 @@ def faculty_team_details(team_id):
     cur = con.cursor()
 
     # 🔐 Security check: faculty can only access assigned team
-    cur.execute("""
+    execute(cur,"""
         SELECT COUNT(*)
         FROM team_faculty
         WHERE team_id=? AND faculty_id=?
@@ -1195,7 +1217,7 @@ def faculty_team_details(team_id):
         return redirect(url_for("faculty_dashboard"))
 
     # ---------------- TEAM + PROBLEM INFO ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT
             t.id,
             t.team_name,
@@ -1217,7 +1239,7 @@ def faculty_team_details(team_id):
     team = cur.fetchone()
 
     # ---------------- TEAM MEMBERS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT member_name, usn, email, phone, department, section
         FROM team_members
         WHERE team_id=?
@@ -1226,7 +1248,7 @@ def faculty_team_details(team_id):
     members = cur.fetchall()
 
     # ---------------- PROJECT DETAILS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT abstract, objectives, tech_stack, methodology, modules,
                dataset_or_inputs, expected_output
         FROM project_details
@@ -1235,7 +1257,7 @@ def faculty_team_details(team_id):
     project_details = cur.fetchone()
 
     # ---------------- WEEKLY PROGRESS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT *
         FROM weekly_progress
         WHERE team_id=?
@@ -1270,11 +1292,11 @@ def admin_assign_faculty():
     cur = con.cursor()
 
     # Fetch teams
-    cur.execute("SELECT id, team_name, leader_usn FROM teams")
+    execute(cur,"SELECT id, team_name, leader_usn FROM teams")
     teams = cur.fetchall()
 
     # Fetch faculty
-    cur.execute("SELECT id, name, department FROM faculty")
+    execute(cur,"SELECT id, name, department FROM faculty")
     faculty = cur.fetchall()
 
     if request.method == "POST":
@@ -1282,7 +1304,7 @@ def admin_assign_faculty():
         faculty_id = request.form["faculty_id"]
 
         # Insert or update mapping
-        cur.execute("""
+        execute(cur,"""
             INSERT INTO team_faculty(team_id, faculty_id)
             VALUES (?, ?)
             ON CONFLICT(team_id) DO UPDATE SET faculty_id=excluded.faculty_id
@@ -1374,7 +1396,7 @@ def admin_faculty_management():
 
         where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-        cur.execute(f"""
+        execute(cur,f"""
             SELECT name, email, department
             FROM faculty
             {where_sql}
@@ -1408,7 +1430,7 @@ def admin_faculty_management():
             password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
 
             try:
-                cur.execute("""
+                execute(cur,"""
                     INSERT INTO faculty(name, email, password_hash, department, must_reset_password)
                     VALUES (?,?,?,?,1)
                 """, (name, email, password_hash, department))
@@ -1436,11 +1458,11 @@ def admin_faculty_management():
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-    cur.execute(f"SELECT COUNT(*) FROM faculty {where_sql}", params)
+    execute(cur,f"SELECT COUNT(*) FROM faculty {where_sql}", params)
     total_rows = cur.fetchone()[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT id, name, email, department
         FROM faculty
         {where_sql}
@@ -1502,7 +1524,7 @@ def admin_faculty_bulk_upload():
                 continue
 
             # check duplicate
-            cur.execute("SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
+            execute(cur,"SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
             if cur.fetchone()[0] > 0:
                 skipped.append((name, email, dept, "Already exists"))
                 continue
@@ -1511,7 +1533,7 @@ def admin_faculty_bulk_upload():
             raw_password = generate_random_password(10)
             password_hash = generate_password_hash(raw_password)
 
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO faculty(name, email, password_hash, department)
                 VALUES (?,?,?,?)
             """, (name, email, password_hash, dept))
@@ -1551,7 +1573,7 @@ def admin_add_faculty():
         con = db()
         cur = con.cursor()
         try:
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO faculty(name, email, password_hash, department)
                 VALUES (?,?,?,?)
             """, (name, email, password_hash, department))
@@ -1570,7 +1592,7 @@ def admin_faculty_list():
 
     con = db()
     cur = con.cursor()
-    cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+    execute(cur,"SELECT id, name, email, department FROM faculty ORDER BY name")
     faculty = cur.fetchall()
     con.close()
 
@@ -1584,8 +1606,8 @@ def admin_delete_faculty(fid):
     con = db()
     cur = con.cursor()
 
-    cur.execute("DELETE FROM team_faculty WHERE faculty_id=?", (fid,))
-    cur.execute("DELETE FROM faculty WHERE id=?", (fid,))
+    execute(cur,"DELETE FROM team_faculty WHERE faculty_id=?", (fid,))
+    execute(cur,"DELETE FROM faculty WHERE id=?", (fid,))
 
     con.commit()
     con.close()
@@ -1650,7 +1672,7 @@ def admin_students():
 
         where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-        cur.execute(f"""
+        execute(cur,f"""
             SELECT usn, email, name, department, section, must_reset_password, created_at
             FROM students
             {where_sql}
@@ -1700,13 +1722,13 @@ def admin_students():
                 dept = dept_admin_department if is_dept_admin else str(r["Department"]).strip()
                 sec = str(r["Section"]).strip()
 
-                cur.execute("SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
+                execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
                 if cur.fetchone()[0] > 0:
                     continue
 
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
 
-                cur.execute("""
+                execute(cur,"""
                     INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
                     VALUES (?,?,?,?,?,?,1)
                 """, (usn, email, password_hash, name, dept, sec))
@@ -1722,10 +1744,10 @@ def admin_students():
             dept = dept_admin_department if is_dept_admin else request.form.get("department")
             sec = request.form.get("section", "").strip()
 
-            cur.execute("SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
+            execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
             if cur.fetchone()[0] == 0:
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
-                cur.execute("""
+                execute(cur,"""
                     INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
                     VALUES (?,?,?,?,?,?,1)
                 """, (usn, email, password_hash, name, dept, sec))
@@ -1766,11 +1788,11 @@ def admin_students():
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
-    cur.execute(f"SELECT COUNT(*) FROM students {where_sql}", params)
+    execute(cur,f"SELECT COUNT(*) FROM students {where_sql}", params)
     total_rows = cur.fetchone()[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT id, usn, email, name, department, section, must_reset_password, created_at
         FROM students
         {where_sql}
@@ -1818,7 +1840,7 @@ def student_change_password():
         con = db()
         cur = con.cursor()
 
-        cur.execute("SELECT * FROM students WHERE usn=?", (usn,))
+        execute(cur,"SELECT * FROM students WHERE usn=?", (usn,))
         student = cur.fetchone()
 
         if not student:
@@ -1833,7 +1855,7 @@ def student_change_password():
 
         new_hash = generate_password_hash(new_password)
 
-        cur.execute("""
+        execute(cur,"""
             UPDATE students
             SET password_hash=?, must_reset_password=0, updated_at=CURRENT_TIMESTAMP
             WHERE usn=?
@@ -1856,7 +1878,7 @@ def admin_deadline():
 
     if request.method == "POST":
         deadline = request.form["deadline"]
-        cur.execute(
+        execute(cur,
             "REPLACE INTO settings(key,value) VALUES (?,?)",
             ("registration_deadline", deadline)
         )
@@ -1865,7 +1887,7 @@ def admin_deadline():
         flash("Registration deadline updated successfully")
         return redirect(url_for("admin_deadline"))
 
-    cur.execute(
+    execute(cur,
         "SELECT value FROM settings WHERE key='registration_deadline'"
     )
     row = cur.fetchone()
@@ -1891,19 +1913,19 @@ def admin_project_settings():
 
         # Save values into settings table
         if project_start_date:
-            cur.execute("""
+            execute(cur,"""
                 INSERT OR REPLACE INTO settings(key, value)
                 VALUES (?, ?)
             """, ("project_start_date", project_start_date))
 
         if registration_deadline:
-            cur.execute("""
+            execute(cur,"""
                 INSERT OR REPLACE INTO settings(key, value)
                 VALUES (?, ?)
             """, ("registration_deadline", registration_deadline))
 
         if total_weeks:
-            cur.execute("""
+            execute(cur,"""
                 INSERT OR REPLACE INTO settings(key, value)
                 VALUES (?, ?)
             """, ("total_weeks", total_weeks))
@@ -1914,7 +1936,7 @@ def admin_project_settings():
 
     # Fetch existing values
     def get_setting(key, default=""):
-        cur.execute("SELECT value FROM settings WHERE key=?", (key,))
+        execute(cur,"SELECT value FROM settings WHERE key=?", (key,))
         row = cur.fetchone()
         return row["value"] if row and row["value"] else default
 
@@ -1946,7 +1968,7 @@ def faculty_review_progress(progress_id):
     cur = con.cursor()
 
     # Security check: faculty can only review progress of assigned teams
-    cur.execute("""
+    execute(cur,"""
         SELECT wp.team_id
         FROM weekly_progress wp
         JOIN team_faculty tf ON wp.team_id = tf.team_id
@@ -1962,7 +1984,7 @@ def faculty_review_progress(progress_id):
     team_id = row["team_id"]
 
     # Update progress review
-    cur.execute("""
+    execute(cur,"""
         UPDATE weekly_progress
         SET faculty_remark=?, status=?
         WHERE id=?
@@ -1977,7 +1999,7 @@ def faculty_review_progress(progress_id):
 """@app.route("/")
 def index():
    con=db(); cur=con.cursor()
-    cur.execute(""" """
+    execute(cur,""" """
     SELECT id, year, title, category, domain_theme, max_teams,
            problem_description, problem_details, expected_outcome
     FROM problems
@@ -1986,7 +2008,7 @@ def index():
     probs=cur.fetchall()
     data=[]
     for p in probs:
-        cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (p[0],))
+        execute(cur,"SELECT COUNT(*) FROM teams WHERE problem_id=?", (p[0],))
         data.append((p, cur.fetchone()[0]))
     con.close()
     from datetime import datetime
@@ -1994,7 +2016,7 @@ def index():
     # Check registration deadline
     con = db()
     cur = con.cursor()
-    cur.execute("SELECT value FROM settings WHERE key='registration_deadline'")
+    execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
     con.close()
 
@@ -2026,7 +2048,7 @@ def register(pid):
     # ---------------- DEADLINE CHECK ----------------
     con = db()
     cur = con.cursor()
-    cur.execute("SELECT value FROM settings WHERE key='registration_deadline'")
+    execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
 
     if row and row[0]:
@@ -2039,7 +2061,7 @@ def register(pid):
             pass
 
     # ---------------- GET PROBLEM DETAILS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT title, max_teams, locked 
         FROM problems 
         WHERE id=?
@@ -2062,7 +2084,7 @@ def register(pid):
         return redirect(url_for("student_problems"))
 
     # ---------------- TEAM COUNT CHECK ----------------
-    cur.execute("SELECT COUNT(*) FROM teams WHERE problem_id=?", (pid,))
+    execute(cur,"SELECT COUNT(*) FROM teams WHERE problem_id=?", (pid,))
     already_registered = cur.fetchone()[0]
 
     if already_registered >= 1:
@@ -2133,19 +2155,19 @@ def register(pid):
 
         # ---------------- DUPLICATE CHECKS (UNCHANGED) ----------------
 
-        cur.execute("SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
+        execute(cur,"SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
         if cur.fetchone()[0] > 0:
             con.close()
             flash("Team Leader USN already registered.")
             return redirect(request.url)
 
-        cur.execute("SELECT COUNT(*) FROM team_members WHERE usn=?", (leader_usn,))
+        execute(cur,"SELECT COUNT(*) FROM team_members WHERE usn=?", (leader_usn,))
         if cur.fetchone()[0] > 0:
             con.close()
             flash("This USN already exists as team member.")
             return redirect(request.url)
 
-        cur.execute("SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(?)", (leader_email,))
+        execute(cur,"SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(?)", (leader_email,))
         if cur.fetchone()[0] > 0:
             con.close()
             flash("Email already used as Team Leader.")
@@ -2169,7 +2191,7 @@ def register(pid):
 
         # ---------------- INSERT TEAM ----------------
 
-        cur.execute("""
+        execute(cur,"""
             INSERT INTO teams(
                 team_name,
                 leader_name,
@@ -2196,7 +2218,7 @@ def register(pid):
         team_id = cur.lastrowid
 
         for name, usn, email, phone, dept, sec in members:
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO team_members(
                     team_id,
                     member_name,
@@ -2226,10 +2248,10 @@ def unlock_problem(pid):
     cur = con.cursor()
 
     # unlock problem
-    cur.execute("UPDATE problems SET is_locked=0 WHERE id=?", (pid,))
+    execute(cur,"UPDATE problems SET is_locked=0 WHERE id=?", (pid,))
 
     # remove teams linked to this problem (optional but recommended)
-    cur.execute("DELETE FROM teams WHERE problem_id=?", (pid,))
+    execute(cur,"DELETE FROM teams WHERE problem_id=?", (pid,))
 
     con.commit()
     con.close()
@@ -2246,7 +2268,7 @@ def admin_edit_team(team_id):
     cur = con.cursor()
 
     # ---------------- LOAD TEAM ----------------
-    cur.execute("SELECT * FROM teams WHERE id=?", (team_id,))
+    execute(cur,"SELECT * FROM teams WHERE id=?", (team_id,))
     team = cur.fetchone()
     if not team:
         con.close()
@@ -2254,7 +2276,7 @@ def admin_edit_team(team_id):
         return redirect(url_for("admin_teams"))
 
     # ---------------- LOAD MEMBERS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT id, member_name, usn, email, phone, department, section
         FROM team_members WHERE team_id=?
     """, (team_id,))
@@ -2268,14 +2290,14 @@ def admin_edit_team(team_id):
         leader_section = request.form.get("leader_section").strip()
 
         # update team basic info
-        cur.execute("""
+        execute(cur,"""
             UPDATE teams
             SET team_name=?, leader_phone=?, leader_section=?
             WHERE id=?
         """, (team_name, leader_phone, leader_section, team_id))
 
         # delete old members
-        cur.execute("DELETE FROM team_members WHERE team_id=?", (team_id,))
+        execute(cur,"DELETE FROM team_members WHERE team_id=?", (team_id,))
 
         # collect new members
         members_new = []
@@ -2308,7 +2330,7 @@ def admin_edit_team(team_id):
 
         # ---- INSERT UPDATED MEMBERS ----
         for m in members_new:
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO team_members
                 (team_id, member_name, usn, email, phone, department, section)
                 VALUES (?,?,?,?,?,?,?)
@@ -2336,10 +2358,10 @@ def admin_home():
     cur = con.cursor()
 
     # ---------------- COUNTS (UNCHANGED) ----------------
-    cur.execute("SELECT COUNT(*) FROM teams")
+    execute(cur,"SELECT COUNT(*) FROM teams")
     teams = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(*) FROM problems")
+    execute(cur,"SELECT COUNT(*) FROM problems")
     problems = cur.fetchone()[0]
 
     # ---------------- FETCH NOTICES (ROLE AWARE) ----------------
@@ -2354,7 +2376,7 @@ def admin_home():
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
 
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT id, title, message, expires_at, created_at
         FROM notices
         {where_sql}
@@ -2382,7 +2404,7 @@ def admin():
         con = db()
         cur = con.cursor()
 
-        cur.execute("""
+        execute(cur,"""
             SELECT * FROM admins WHERE email=?
         """, (email,))
         admin = cur.fetchone()
@@ -2432,7 +2454,7 @@ def admin_change_password():
         con = db()
         cur = con.cursor()
 
-        cur.execute("""
+        execute(cur,"""
             UPDATE admins
             SET password_hash=?, must_reset_password=0
             WHERE id=?
@@ -2482,7 +2504,7 @@ def admin_management():
         password_hash = generate_password_hash(password)
 
         try:
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO admins
                 (name, email, password_hash, role, department, must_reset_password)
                 VALUES (?,?,?,?,?,1)
@@ -2497,7 +2519,7 @@ def admin_management():
         return redirect(request.url)
 
     # ---------------- LIST ADMINS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT id, name, email, role, department, created_at
         FROM admins
         ORDER BY role DESC, department, name
@@ -2551,7 +2573,7 @@ def admin_upload():
         cur = con.cursor()
 
         # ⚠️ If you want to replace everything each time upload happens
-        cur.execute("DELETE FROM problems")
+        execute(cur,"DELETE FROM problems")
 
         for _, r in df.iterrows():
             year = str(r["Year"]).strip()
@@ -2564,7 +2586,7 @@ def admin_upload():
             expected_outcome = str(r["Expected Outcome"]).strip()
 
             # Insert into DB
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO problems(
                     year, title, category, domain_theme, max_teams,
                     problem_description, problem_details, expected_outcome
@@ -2602,13 +2624,13 @@ def admin_teams():
 
         if team_id:
             # Delete faculty mapping
-            cur.execute("DELETE FROM team_faculty WHERE team_id=?", (team_id,))
+            execute(cur,"DELETE FROM team_faculty WHERE team_id=?", (team_id,))
 
             # Delete members
-            cur.execute("DELETE FROM team_members WHERE team_id=?", (team_id,))
+            execute(cur,"DELETE FROM team_members WHERE team_id=?", (team_id,))
 
             # Delete team itself
-            cur.execute("DELETE FROM teams WHERE id=?", (team_id,))
+            execute(cur,"DELETE FROM teams WHERE id=?", (team_id,))
 
             con.commit()
             flash("Team unlocked and removed successfully ✅ Problem is now available again.")
@@ -2624,7 +2646,7 @@ def admin_teams():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     # ---------------- FETCH TEAMS ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT
             t.id AS team_id,
             t.team_name,
@@ -2649,7 +2671,7 @@ def admin_teams():
     teams = cur.fetchall()
 
     # ---------------- FETCH MEMBERS ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT
             tm.team_id,
             tm.member_name,
@@ -2732,7 +2754,7 @@ def admin_export_teams():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     # ---------------- FETCH TEAMS + PROBLEM + FACULTY ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT
             t.id AS team_id,
             t.team_name,
@@ -2757,7 +2779,7 @@ def admin_export_teams():
     teams = cur.fetchall()
 
     # ---------------- FETCH TEAM MEMBERS ----------------
-    cur.execute("""
+    execute(cur,"""
         SELECT team_id, member_name, usn, department
         FROM team_members
         ORDER BY team_id, id
@@ -2824,7 +2846,7 @@ def dashboard():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     # ---------------- TOTAL TEAMS ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT COUNT(*)
         FROM teams t
         {where_sql}
@@ -2832,11 +2854,11 @@ def dashboard():
     total_teams = cur.fetchone()[0]
 
     # ---------------- TOTAL PROBLEMS ----------------
-    cur.execute("SELECT COUNT(*) FROM problems")
+    execute(cur,"SELECT COUNT(*) FROM problems")
     total_problems = cur.fetchone()[0]
 
     # ---------------- TEAMS PER DEPARTMENT ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT t.leader_department, COUNT(*)
         FROM teams t
         {where_sql}
@@ -2846,7 +2868,7 @@ def dashboard():
     dept_data = cur.fetchall()
 
     # ---------------- TEAMS BY CATEGORY ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT p.category, COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
@@ -2857,7 +2879,7 @@ def dashboard():
     type_data = cur.fetchall()
 
     # ---------------- DOMAIN / THEME DISTRIBUTION ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT p.domain_theme, COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
@@ -2868,7 +2890,7 @@ def dashboard():
     domain_data = cur.fetchall()
 
     # ---------------- NOT ASSIGNED TEAMS ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT COUNT(*)
         FROM teams t
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
@@ -2878,7 +2900,7 @@ def dashboard():
     not_assigned_count = cur.fetchone()[0]
 
     # ---------------- PENDING WEEKLY PROGRESS ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT COUNT(*)
         FROM weekly_progress wp
         JOIN teams t ON wp.team_id = t.id
@@ -2888,7 +2910,7 @@ def dashboard():
     pending_progress_count = cur.fetchone()[0]
 
     # ---------------- FACULTY WISE ASSIGNMENT ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT f.name, COUNT(tf.team_id)
         FROM faculty f
         LEFT JOIN team_faculty tf ON f.id = tf.faculty_id
@@ -2978,7 +3000,7 @@ def admin_assignments():
                 continue
 
             # 🔒 CHECK CURRENT LOAD OF FACULTY
-            cur.execute("""
+            execute(cur,"""
                 SELECT COUNT(*)
                 FROM team_faculty
                 WHERE faculty_id = ?
@@ -2992,7 +3014,7 @@ def admin_assignments():
                 continue
 
             # ✅ ASSIGN / UPDATE
-            cur.execute("""
+            execute(cur,"""
                 INSERT OR REPLACE INTO team_faculty(team_id, faculty_id)
                 VALUES (?, ?)
             """, (team_id, faculty_id))
@@ -3021,19 +3043,19 @@ def admin_assignments():
 
     # ---------------- FACULTY LIST (ROLE AWARE) ----------------
     if session.get("admin_role") == "admin":
-        cur.execute("""
+        execute(cur,"""
             SELECT id, name, email, department
             FROM faculty
             WHERE department=?
             ORDER BY name
         """, (session.get("admin_department"),))
     else:
-        cur.execute("SELECT id, name, email, department FROM faculty ORDER BY name")
+        execute(cur,"SELECT id, name, email, department FROM faculty ORDER BY name")
 
     faculty_list = cur.fetchall()
 
     # ---------------- PROBLEM LIST ----------------
-    cur.execute("SELECT DISTINCT title FROM problems ORDER BY title")
+    execute(cur,"SELECT DISTINCT title FROM problems ORDER BY title")
     problems_list = [r["title"] for r in cur.fetchall()]
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
@@ -3076,7 +3098,7 @@ def admin_assignments():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     # ---------------- TOTAL COUNT ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
@@ -3087,7 +3109,7 @@ def admin_assignments():
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     # ---------------- FETCH DATA ----------------
-    cur.execute(f"""
+    execute(cur,f"""
         SELECT
             t.id AS team_id,
             t.team_name,
@@ -3231,11 +3253,11 @@ def student_chat():
     cur = con.cursor()
 
     # Find team_id (leader or member)
-    cur.execute("SELECT id, team_name, leader_name FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id, team_name, leader_name FROM teams WHERE leader_usn=?", (usn,))
     team = cur.fetchone()
 
     if not team:
-        cur.execute("""
+        execute(cur,"""
             SELECT t.id, t.team_name, t.leader_name
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
@@ -3251,7 +3273,7 @@ def student_chat():
     team_id = team["id"]
 
     # Check faculty assigned
-    cur.execute("""
+    execute(cur,"""
         SELECT f.name, f.email, f.department
         FROM team_faculty tf
         JOIN faculty f ON tf.faculty_id = f.id
@@ -3268,7 +3290,7 @@ def student_chat():
     if request.method == "POST":
         msg = request.form.get("message", "").strip()
         if msg:
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO chat_messages(team_id, sender_role, sender_name, message)
                 VALUES (?,?,?,?)
             """, (team_id, "student", usn, msg))
@@ -3276,7 +3298,7 @@ def student_chat():
         return redirect(url_for("student_chat"))
 
     # Fetch chat history
-    cur.execute("""
+    execute(cur,"""
         SELECT * FROM chat_messages
         WHERE team_id=?
         ORDER BY sent_at ASC
@@ -3310,7 +3332,7 @@ def admin_notices():
             flash("Title and content required.")
             return redirect(request.url)
 
-        cur.execute("""
+        execute(cur,"""
             INSERT INTO notices(title, content, department, created_by)
             VALUES (?,?,?,?)
         """, (title, content, department, session.get("admin_email")))
@@ -3320,13 +3342,13 @@ def admin_notices():
 
     # -------- FETCH NOTICES (ROLE AWARE) --------
     if session.get("admin_role") == "admin":
-        cur.execute("""
+        execute(cur,"""
             SELECT * FROM notices
             WHERE department IS NULL OR department=?
             ORDER BY created_at DESC
         """, (session.get("admin_department"),))
     else:
-        cur.execute("SELECT * FROM notices ORDER BY created_at DESC")
+        execute(cur,"SELECT * FROM notices ORDER BY created_at DESC")
 
     notices = cur.fetchall()
     con.close()
@@ -3346,7 +3368,7 @@ def student_notices():
     cur = con.cursor()
 
     # Students see global notices (and can extend later to dept)
-    cur.execute("""
+    execute(cur,"""
         SELECT title, content, created_at 
         FROM notices 
         WHERE is_active=1 
@@ -3371,7 +3393,7 @@ def faculty_notices():
     cur = con.cursor()
 
     # Faculty see global + their department notices
-    cur.execute("""
+    execute(cur,"""
         SELECT title, content, created_at, department
         FROM notices
         WHERE is_active=1
@@ -3394,7 +3416,7 @@ def delete_notice(nid):
 
     con = db()
     cur = con.cursor()
-    cur.execute("DELETE FROM notices WHERE id=?", (nid,))
+    execute(cur,"DELETE FROM notices WHERE id=?", (nid,))
     con.commit()
     con.close()
 
@@ -3412,7 +3434,7 @@ def faculty_chat(team_id):
     cur = con.cursor()
 
     # Ensure this team belongs to this faculty
-    cur.execute("""
+    execute(cur,"""
         SELECT t.id, t.team_name, t.leader_name, t.leader_usn
         FROM team_faculty tf
         JOIN teams t ON tf.team_id = t.id
@@ -3429,7 +3451,7 @@ def faculty_chat(team_id):
     if request.method == "POST":
         msg = request.form.get("message", "").strip()
         if msg:
-            cur.execute("""
+            execute(cur,"""
                 INSERT INTO chat_messages(team_id, sender_role, sender_name, message)
                 VALUES (?,?,?,?)
             """, (team_id, "faculty", session.get("faculty_name", "Faculty"), msg))
@@ -3437,7 +3459,7 @@ def faculty_chat(team_id):
         return redirect(url_for("faculty_chat", team_id=team_id))
 
     # Fetch chat history
-    cur.execute("""
+    execute(cur,"""
         SELECT * FROM chat_messages
         WHERE team_id=?
         ORDER BY sent_at ASC
@@ -3460,7 +3482,7 @@ if __name__ == "__main__":
 
     # ---------------- CREATE TABLES ----------------
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS problems(
         id INTEGER PRIMARY KEY,
         year TEXT,
@@ -3474,7 +3496,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS teams(
         id INTEGER PRIMARY KEY,
         team_name TEXT,
@@ -3489,7 +3511,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS team_members(
         id INTEGER PRIMARY KEY,
         team_id INT,
@@ -3502,7 +3524,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS students (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usn TEXT UNIQUE NOT NULL,
@@ -3512,14 +3534,14 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS settings(
         key TEXT PRIMARY KEY,
         value TEXT
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS project_details (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         team_id INTEGER UNIQUE,
@@ -3535,7 +3557,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS weekly_progress (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         team_id INTEGER,
@@ -3548,7 +3570,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS faculty (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
@@ -3558,7 +3580,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS team_faculty (
         team_id INTEGER UNIQUE,
         faculty_id INTEGER,
@@ -3567,7 +3589,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         team_id INTEGER NOT NULL,
@@ -3579,7 +3601,7 @@ if __name__ == "__main__":
     )
     """)
 
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS admins (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -3591,7 +3613,7 @@ if __name__ == "__main__":
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    cur.execute("""
+    execute(cur,"""
     CREATE TABLE IF NOT EXISTS notices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -3606,10 +3628,10 @@ if __name__ == "__main__":
     # If old DB exists, these columns might be missing
 
     def add_column_if_not_exists(table, column, col_type):
-        cur.execute(f"PRAGMA table_info({table})")
+        execute(cur,f"PRAGMA table_info({table})")
         cols = [r[1] for r in cur.fetchall()]
         if column not in cols:
-            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+            execute(cur,f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
     # Problems
     add_column_if_not_exists("problems", "domain_theme", "TEXT")
@@ -3638,7 +3660,7 @@ if __name__ == "__main__":
     add_column_if_not_exists("faculty", "updated_at", "TIMESTAMP")
 
     # ---------------- DEFAULT SETTINGS ----------------
-    cur.execute("""
+    execute(cur,"""
         INSERT OR IGNORE INTO settings(key,value)
         VALUES ('project_start_date','2026-02-02')
     """)
@@ -3658,7 +3680,7 @@ if __name__ == "__main__":
 
     from werkzeug.security import generate_password_hash
 
-    cur.execute("""
+    execute(cur,"""
         INSERT OR IGNORE INTO admins (name,email,password_hash,role,must_reset_password)
         VALUES (?,?,?,?,0)
     """, (
@@ -3668,7 +3690,7 @@ if __name__ == "__main__":
         "super_admin"
     ))
 
-    cur.execute("""
+    execute(cur,"""
         ALTER TABLE problems ADD COLUMN is_locked INTEGER DEFAULT 0
     """)
 
