@@ -138,15 +138,28 @@ def ensure_students_table():
     con.commit()
     con.close()
  
-def add_column_if_not_exists(table, column, col_type):
+def add_column_if_not_exists(table, column, column_type):
     con = db()
     cur = con.cursor()
-    execute(cur,f"PRAGMA table_info({table})")
-    cols = [r[1] for r in cur.fetchall()]
-    if column not in cols:
-        execute(cur,f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+    # Check if column exists (PostgreSQL way)
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name=%s AND column_name=%s
+    """, (table, column))
+
+    exists = cur.fetchone()
+
+    if not exists:
+        cur.execute(f"""
+            ALTER TABLE {table}
+            ADD COLUMN {column} {column_type}
+        """)
         con.commit()
+
     con.close()
+
 
 from datetime import datetime, timedelta
 
