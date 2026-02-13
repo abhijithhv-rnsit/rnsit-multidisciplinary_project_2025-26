@@ -138,7 +138,24 @@ def migrate_once():
     pg_conn.close()
 
     return "Migration done ✅<br>" + "<br>".join(report)
+@app.route("/__fix_db_now")
+def fix_db_now():
+    con = db()
+    cur = con.cursor()
 
+    try:
+        cur.execute("ALTER TABLE problems ADD COLUMN is_locked INTEGER DEFAULT 0;")
+    except:
+        pass  # column may already exist
+
+    try:
+        cur.execute("UPDATE problems SET is_locked = locked;")
+    except:
+        pass
+
+    con.commit()
+    con.close()
+    return "DB fixed ✅"
 
 def ensure_students_table():
     con = db()
