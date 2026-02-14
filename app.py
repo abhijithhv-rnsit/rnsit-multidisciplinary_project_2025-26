@@ -3040,17 +3040,20 @@ def dashboard():
     con.close()
 
     return render_template(
-        "dashboard.html",
-        total_teams=total_teams,
-        total_problems=total_problems,
-        dept_data=dept_data,
-        type_data=type_data,
-        domain_data=domain_data,
-        not_assigned_count=not_assigned_count,
-        pending_progress_count=pending_progress_count,
-        faculty_data=faculty_data,
-        active_page="dashboard"
-    )
+    "dashboard.html",
+    total_teams=total_teams,
+    total_problems=total_problems,
+
+    dept_data=dept_data or [],
+    type_data=type_data or [],
+    domain_data=domain_data or [],
+    faculty_data=faculty_data or [],
+
+    not_assigned_count=not_assigned_count or 0,
+    pending_progress_count=pending_progress_count or 0,
+
+    active_page="dashboard"
+)
 
 
 @app.route("/export")
