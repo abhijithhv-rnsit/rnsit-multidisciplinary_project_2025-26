@@ -4,6 +4,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 from datetime import datetime, timedelta
 import pytz
+import psycopg2.extras
+
 
 import sqlite3, pandas as pd, os
 
@@ -44,7 +46,7 @@ import sqlite3
 import psycopg2
 from urllib.parse import urlparse
 
-from psycopg2.extras import RealDictCursor
+#from psycopg2.extras import RealDictCursor
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 pg_pool = None
@@ -54,14 +56,16 @@ if DATABASE_URL:
     url = urlparse(DATABASE_URL)
 
     pg_pool = psycopg2.pool.SimpleConnectionPool(
-        5,   # minimum connections
-        50,  # maximum connections
+        minconn=5,
+        maxconn=50,
         dbname=url.path[1:],
         user=url.username,
         password=url.password,
         host=url.hostname,
-        port=url.port
+        port=url.port,
+        cursor_factory=psycopg2.extras.RealDictCursor
     )
+
 def db():
     if pg_pool:
         conn = pg_pool.getconn()
