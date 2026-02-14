@@ -2715,7 +2715,7 @@ def admin_home():
     con = db()
     cur = con.cursor()
 
-    # ---------------- COUNTS (UNCHANGED) ----------------
+    # ---------------- COUNTS ----------------
     execute(cur,"SELECT COUNT(*) FROM teams")
     teams = list(cur.fetchone().values())[0]
 
@@ -2729,7 +2729,7 @@ def admin_home():
 
     # Department admin → only their dept or common notices
     if session.get("admin_role") == "admin":
-        where.append("(target_department IS NULL OR target_department=?)")
+        where.append("(department IS NULL OR department=?)")   # ✅ FIXED
         params.append(session.get("admin_department"))
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
@@ -2752,10 +2752,9 @@ def admin_home():
         "admin_home.html",
         teams=teams,
         problems=problems,
-        notices=notices,          # ✅ NEW
+        notices=notices,
         active_page="home"
     )
-
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
     if request.method == "POST":
