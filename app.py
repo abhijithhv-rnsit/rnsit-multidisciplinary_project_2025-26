@@ -457,7 +457,20 @@ def student_my_registration():
         "student_my_registration.html",
         registration=row
     )
+@app.route("/__fix_project_references")
+def fix_project_references():
+    con = db()
+    cur = con.cursor()
 
+    cur.execute("""
+        ALTER TABLE project_details
+        ADD COLUMN IF NOT EXISTS project_references TEXT
+    """)
+
+    con.commit()
+    con.close()
+
+    return "project_references column added successfully ✅"
 @app.route("/student/my-project")
 def student_my_project():
     if not session.get("student_usn"):
