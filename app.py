@@ -2300,7 +2300,8 @@ def register(pid):
                 leader_section,
                 problem_id,
                 created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id
         """, (
             team_name,
             leader_name,
