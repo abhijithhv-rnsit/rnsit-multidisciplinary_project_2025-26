@@ -3009,15 +3009,19 @@ def dashboard():
 
     # ---------------- FACULTY WISE ASSIGNMENT ----------------
     execute(cur,f"""
-        SELECT f.name, COUNT(tf.team_id)
+        SELECT f.name AS name, COUNT(tf.team_id) AS count
         FROM faculty f
         LEFT JOIN team_faculty tf ON f.id = tf.faculty_id
         LEFT JOIN teams t ON tf.team_id = t.id
         {where_sql}
-        GROUP BY f.id
+        GROUP BY f.id, f.name
         ORDER BY COUNT(tf.team_id) DESC
     """, params)
-    faculty_data = cur.fetchall()
+
+rows = cur.fetchall()
+
+# Convert dict rows back to tuple style for old templates
+faculty_data = [(r["name"], r["count"]) for r in rows]
 
     con.close()
 
