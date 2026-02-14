@@ -4047,12 +4047,15 @@ if __name__ == "__main__":
         title TEXT,
         content TEXT,
         department TEXT,
+        target_department TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_by TEXT,
         expires_at TIMESTAMP,
         is_active INTEGER DEFAULT 1
     )
     """)
+
+    # 🔥 Ensure column exists even on old DB
     cur.execute("""
         ALTER TABLE notices
         ADD COLUMN IF NOT EXISTS target_department TEXT
