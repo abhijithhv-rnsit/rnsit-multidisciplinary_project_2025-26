@@ -15,7 +15,7 @@ from flask import send_file
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash
 
-
+from psycopg2 import pool
 
 app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
@@ -45,24 +45,29 @@ import psycopg2
 from urllib.parse import urlparse
 
 from psycopg2.extras import RealDictCursor
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
+pg_pool = None
+
+if DATABASE_URL:
+    from urllib.parse import urlparse
+    url = urlparse(DATABASE_URL)
+
+    pg_pool = psycopg2.pool.SimpleConnectionPool(
+        5,   # minimum connections
+        50,  # maximum connections
+        dbname=url.path[1:],
+        user=url.username,
+        password=url.password,
+        host=url.hostname,
+        port=url.port
+    )
 def db():
-    database_url = os.environ.get("DATABASE_URL")
-
-    if database_url:
-        # PostgreSQL (Render production)
-        url = urlparse(database_url)
-        conn = psycopg2.connect(
-            dbname=url.path[1:],
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=url.port,
-            cursor_factory=RealDictCursor   # 🔥 THIS FIXES YOUR ERROR
-        )
+    if pg_pool:
+        conn = pg_pool.getconn()
+        conn.autocommit = False
         return conn
     else:
-        # SQLite (Local development)
         conn = sqlite3.connect("database.db")
         conn.row_factory = sqlite3.Row
         return conn
@@ -154,7 +159,10 @@ def fix_db_now():
         pass
 
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
     return "DB fixed ✅"
 
 def ensure_students_table():
@@ -170,7 +178,10 @@ def ensure_students_table():
         )
     """)
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
  
 def add_column_if_not_exists(table, column, column_type):
     con = db()
@@ -192,7 +203,10 @@ def add_column_if_not_exists(table, column, column_type):
         """)
         con.commit()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
 
 from datetime import datetime, timedelta
@@ -256,7 +270,10 @@ def debug_team_faculty():
     cur = con.cursor()
     execute(cur,"SELECT * FROM team_faculty")
     rows = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
     return str([dict(r) for r in rows])
 
 
@@ -283,11 +300,17 @@ def student_signup():
                 (usn, email, password_hash)
             )
             con.commit()
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Account created successfully. Please login.")
             return redirect(url_for("student_login"))
         except:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("USN or Email already registered")
 
     return render_template("student_signup.html")
@@ -302,7 +325,10 @@ def student_login():
 
         execute(cur, "SELECT * FROM students WHERE usn=?", (usn,))
         student = cur.fetchone()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         if not student:
             flash("Student not found")
@@ -351,7 +377,10 @@ def student_home():
         count = list(cur.fetchone().values())[0]
         data.append((p, count))
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template("student_home.html", problems=data)
 
@@ -406,7 +435,10 @@ def student_problems():
         registered_count = cur.fetchone()["cnt"]
         data.append((p, registered_count))
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "student_problems.html",
@@ -451,7 +483,10 @@ def student_my_registration():
         """, (usn,))
         row = cur.fetchone()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "student_my_registration.html",
@@ -468,7 +503,10 @@ def fix_project_references():
     """)
 
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return "project_references column added successfully ✅"
 @app.route("/student/my-project")
@@ -503,7 +541,10 @@ def student_my_project():
 
     # 3) If still no team found
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("You are not registered under any project yet.")
         return redirect(url_for("student_home"))
 
@@ -539,7 +580,10 @@ def student_my_project():
     execute(cur,"SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team_id,))
     progress_count = list(cur.fetchone().values())[0]
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "student_my_project.html",
@@ -575,7 +619,10 @@ def student_project_details():
         team = cur.fetchone()
 
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("You are not part of any registered team.")
         return redirect(url_for("student_home"))
 
@@ -614,11 +661,17 @@ def student_project_details():
             ))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Project details saved successfully ✅")
         return redirect(url_for("student_project_details"))
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
     return render_template("student_project_details.html", details=details)
 from flask import send_file
 from reportlab.lib.pagesizes import A4
@@ -675,7 +728,10 @@ def student_synopsis_pdf():
         team = cur.fetchone()
 
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("You are not registered under any project yet.")
         return redirect(url_for("student_home"))
 
@@ -707,7 +763,10 @@ def student_synopsis_pdf():
     """, (team_id,))
     pd = cur.fetchone()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     # -------- Safe getters (sqlite3.Row doesn't support .get) --------
     def safe(row, key, default="-"):
@@ -935,7 +994,10 @@ def student_weekly_progress():
         team = cur.fetchone()
 
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("You are not part of any registered team.")
         return redirect(url_for("student_home"))
 
@@ -990,7 +1052,10 @@ def student_weekly_progress():
 
         if not progress:
             flash("Progress cannot be empty.")
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             return redirect(request.url)
 
         # Prevent duplicate submission for same week
@@ -1001,7 +1066,10 @@ def student_weekly_progress():
         """, (team_id, auto_week_no))
         if cur.fetchone()["cnt"] > 0:
             flash(f"Week {auto_week_no} progress already submitted.")
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             return redirect(url_for("student_weekly_progress"))
 
         execute(cur,"""
@@ -1011,7 +1079,10 @@ def student_weekly_progress():
 
         con.commit()
         flash(f"Weekly progress submitted for Week {auto_week_no} ✅")
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         return redirect(url_for("student_weekly_progress"))
 
     # ---------------- FETCH ALL PROGRESS ----------------
@@ -1022,7 +1093,10 @@ def student_weekly_progress():
         ORDER BY week_no DESC
     """, (team_id,))
     rows = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     progress_list = []
 
@@ -1104,7 +1178,10 @@ def student_edit_weekly_progress(progress_id):
         team = cur.fetchone()
 
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("You are not part of any registered team.")
         return redirect(url_for("student_home"))
 
@@ -1118,13 +1195,19 @@ def student_edit_weekly_progress(progress_id):
     progress_row = cur.fetchone()
 
     if not progress_row:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Progress record not found.")
         return redirect(url_for("student_weekly_progress"))
 
     # Only allow edit if Pending
     if progress_row["status"] != "Pending":
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("You cannot edit this progress after faculty review.")
         return redirect(url_for("student_weekly_progress"))
 
@@ -1134,7 +1217,10 @@ def student_edit_weekly_progress(progress_id):
 
         if not new_progress:
             flash("Progress cannot be empty.")
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             return redirect(request.url)
 
         execute(cur,"""
@@ -1144,12 +1230,18 @@ def student_edit_weekly_progress(progress_id):
         """, (new_progress, progress_id, team_id))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         flash("Weekly progress updated successfully ✅")
         return redirect(url_for("student_weekly_progress"))
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
     return render_template("student_edit_weekly_progress.html", p=progress_row)
 
 
@@ -1163,7 +1255,10 @@ def faculty_login():
         cur = con.cursor()
         execute(cur,"SELECT * FROM faculty WHERE email=?", (email,))
         faculty = cur.fetchone()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         if not faculty:
             flash("Faculty not found")
@@ -1214,12 +1309,18 @@ def faculty_change_password():
         faculty = cur.fetchone()
 
         if not faculty:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Faculty not found.")
             return redirect(url_for("faculty_login"))
 
         if not check_password_hash(faculty["password_hash"], current_password):
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Current password is incorrect.")
             return redirect(request.url)
 
@@ -1232,7 +1333,10 @@ def faculty_change_password():
         """, (new_hash, faculty_id))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         flash("Password updated successfully ✅")
         return redirect(url_for("faculty_dashboard"))
@@ -1286,7 +1390,10 @@ def faculty_dashboard():
     """, (faculty_id,))
     pending_count = list(cur.fetchone().values())[0]
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     # Apply search/filter in python (simple)
     filtered = []
@@ -1323,7 +1430,10 @@ def faculty_team_details(team_id):
     """, (team_id, faculty_id))
 
     if list(cur.fetchone().values())[0] == 0:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Access denied")
         return redirect(url_for("faculty_dashboard"))
 
@@ -1376,7 +1486,10 @@ def faculty_team_details(team_id):
     """, (team_id,))
     progress_list = cur.fetchall()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "faculty_team_details.html",
@@ -1424,7 +1537,10 @@ def admin_assign_faculty():
         con.commit()
         flash("Faculty assigned successfully")
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_assign_faculty.html",
@@ -1487,7 +1603,10 @@ def admin_faculty_management():
         template_df = pd.DataFrame(columns=["Name", "Email", "Department"])
         file_path = "faculty_upload_template.xlsx"
         template_df.to_excel(file_path, index=False)
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         return send_file(file_path, as_attachment=True)
 
     # ============================================================
@@ -1520,7 +1639,10 @@ def admin_faculty_management():
         file_path = "faculty_export.xlsx"
         df.to_excel(file_path, index=False)
 
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         return send_file(file_path, as_attachment=True)
 
     # ============================================================
@@ -1550,7 +1672,10 @@ def admin_faculty_management():
             except:
                 flash("Faculty email already exists ❌")
 
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             return redirect(url_for("admin_faculty_management"))
 
     # ============================================================
@@ -1582,7 +1707,10 @@ def admin_faculty_management():
     """, params + [per_page, offset])
 
     faculty = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_faculty_management.html",
@@ -1652,7 +1780,10 @@ def admin_faculty_bulk_upload():
             created.append((name, email, dept, raw_password))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         # Save generated passwords to Excel for admin download
         if created:
@@ -1692,7 +1823,10 @@ def admin_add_faculty():
             flash("Faculty created successfully")
         except:
             flash("Faculty email already exists")
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
     return render_template("admin_add_faculty.html")
 
@@ -1705,7 +1839,10 @@ def admin_faculty_list():
     cur = con.cursor()
     execute(cur,"SELECT id, name, email, department FROM faculty ORDER BY name")
     faculty = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template("admin_faculty_list.html", faculty=faculty)
 
@@ -1721,7 +1858,10 @@ def admin_delete_faculty(fid):
     execute(cur,"DELETE FROM faculty WHERE id=?", (fid,))
 
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     flash("Faculty deleted successfully ✅")
     return redirect(url_for("admin_faculty_management"))
@@ -1809,7 +1949,10 @@ def admin_students():
             df.to_excel(writer, index=False, sheet_name="Students")
         out.seek(0)
 
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         return send_file(
             out,
             as_attachment=True,
@@ -1865,7 +2008,10 @@ def admin_students():
                 con.commit()
                 flash("Student created successfully ✅")
 
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         return redirect(url_for("admin_students"))
 
     # ---------------- LIST VIEW ----------------
@@ -1912,7 +2058,10 @@ def admin_students():
     """, params + [per_page, offset])
 
     students = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_students.html",
@@ -1955,12 +2104,18 @@ def student_change_password():
         student = cur.fetchone()
 
         if not student:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Student not found.")
             return redirect(url_for("student_login"))
 
         if not check_password_hash(student["password_hash"], current_password):
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Current password is incorrect.")
             return redirect(request.url)
 
@@ -1973,7 +2128,10 @@ def student_change_password():
         """, (new_hash, usn))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         flash("Password updated successfully ✅")
         return redirect(url_for("student_home"))
@@ -1994,7 +2152,10 @@ def admin_deadline():
             ("registration_deadline", deadline)
         )
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Registration deadline updated successfully")
         return redirect(url_for("admin_deadline"))
 
@@ -2002,7 +2163,10 @@ def admin_deadline():
         "SELECT value FROM settings WHERE key='registration_deadline'"
     )
     row = cur.fetchone()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_deadline.html",active_page="deadline",
@@ -2055,7 +2219,10 @@ def admin_project_settings():
     registration_deadline = get_setting("registration_deadline", "")
     total_weeks = get_setting("total_weeks", "16")
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_project_settings.html",
@@ -2088,7 +2255,10 @@ def faculty_review_progress(progress_id):
 
     row = cur.fetchone()
     if not row:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Access denied")
         return redirect(url_for("faculty_dashboard"))
 
@@ -2102,7 +2272,10 @@ def faculty_review_progress(progress_id):
     """, (remark, status, progress_id))
 
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     flash("Review updated successfully")
     return redirect(url_for("faculty_team_details", team_id=team_id))
@@ -2121,7 +2294,10 @@ def index():
     for p in probs:
         execute(cur,"SELECT COUNT(*) FROM teams WHERE problem_id=?", (p[0],))
         data.append((p, list(cur.fetchone().values())[0]))
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
     from datetime import datetime
 
     # Check registration deadline
@@ -2129,7 +2305,10 @@ def index():
     cur = con.cursor()
     execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     registration_closed = False
     if row:
@@ -2180,7 +2359,10 @@ def register(pid):
     prob = cur.fetchone()
 
     if not prob:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Invalid problem selected.")
         return redirect(url_for("index"))
 
@@ -2190,7 +2372,10 @@ def register(pid):
 
     # 🔒 ADMIN LOCK CHECK
     if locked == 1:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("This problem is temporarily locked by admin. Please choose another problem.")
         return redirect(url_for("student_problems"))
 
@@ -2199,7 +2384,10 @@ def register(pid):
     already_registered = list(cur.fetchone().values())[0]
 
     if already_registered >= 1:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Registration closed for this project (1 team already registered).")
         return redirect(url_for("student_problems"))
 
@@ -2216,7 +2404,10 @@ def register(pid):
         leader_section = request.form.get("leader_section", "").strip().upper()
 
         if not team_name or not leader_name or not leader_usn or not leader_email:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Please fill all required Team Leader details.")
             return redirect(request.url)
 
@@ -2238,7 +2429,10 @@ def register(pid):
 
         team_size = 1 + len(members)
         if team_size != 6:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Team must have exactly 6 members (1 Leader + 5 Members).")
             return redirect(request.url)
 
@@ -2255,12 +2449,18 @@ def register(pid):
         core_count = sum(1 for d in all_departments if d in core_branches)
 
         if cse_count < 4:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("At least 4 members must be from CSE / AIML / DS / CY branches.")
             return redirect(request.url)
 
         if core_count < 1:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("At least 1 member must be from ECE / EEE / ME / Civil branch.")
             return redirect(request.url)
 
@@ -2268,19 +2468,28 @@ def register(pid):
 
         execute(cur,"SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
         if list(cur.fetchone().values())[0] > 0:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Team Leader USN already registered.")
             return redirect(request.url)
 
         execute(cur,"SELECT COUNT(*) FROM team_members WHERE usn=?", (leader_usn,))
         if list(cur.fetchone().values())[0] > 0:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("This USN already exists as team member.")
             return redirect(request.url)
 
         execute(cur,"SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(?)", (leader_email,))
         if list(cur.fetchone().values())[0] > 0:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Email already used as Team Leader.")
             return redirect(request.url)
 
@@ -2289,13 +2498,19 @@ def register(pid):
 
         for name, usn, email, phone, dept, sec in members:
             if usn in used_usns:
-                con.close()
+                if pg_pool:
+                    pg_pool.putconn(con)
+                else:
+                    con.close()
                 flash(f"Duplicate USN: {usn}")
                 return redirect(request.url)
             used_usns.add(usn)
 
             if email and email in used_emails:
-                con.close()
+                if pg_pool:
+                    pg_pool.putconn(con)
+                else:
+                    con.close()
                 flash(f"Duplicate Email: {email}")
                 return redirect(request.url)
             used_emails.add(email)
@@ -2343,12 +2558,18 @@ def register(pid):
             """, (team_id, name, usn, email, phone, dept, sec))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         flash("Team registered successfully ✅")
         return redirect(url_for("student_my_project"))
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
     return render_template("register.html", title=problem_title)
 
 @app.route("/admin/unlock-problem/<int:pid>", methods=["POST"])
@@ -2366,7 +2587,10 @@ def unlock_problem(pid):
     execute(cur,"DELETE FROM teams WHERE problem_id=?", (pid,))
 
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     flash("Problem unlocked successfully ✅ Team registration cleared.")
 
@@ -2383,7 +2607,10 @@ def admin_edit_team(team_id):
     execute(cur,"SELECT * FROM teams WHERE id=?", (team_id,))
     team = cur.fetchone()
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Invalid team.")
         return redirect(url_for("admin_teams"))
 
@@ -2427,7 +2654,10 @@ def admin_edit_team(team_id):
         # ---- TEAM SIZE RULE ----
         team_size = 1 + len(members_new)
         if team_size < 4 or team_size > 6:
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("Team size must be between 4 and 6.")
             return redirect(request.url)
 
@@ -2436,7 +2666,10 @@ def admin_edit_team(team_id):
         depts = [team["leader_department"]] + [m[4] for m in members_new]
 
         if not any(d in core for d in depts):
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             flash("At least one member must be from ECE/EEE/ME/CV.")
             return redirect(request.url)
 
@@ -2449,12 +2682,18 @@ def admin_edit_team(team_id):
             """, (team_id, *m))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         flash("Team updated successfully ✅")
         return redirect(url_for("admin_teams"))
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
     return render_template(
         "admin_edit_team.html",
         team=team,
@@ -2497,7 +2736,10 @@ def admin_home():
 
     notices = cur.fetchall()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_home.html",
@@ -2520,7 +2762,10 @@ def admin():
             SELECT * FROM admins WHERE email=?
         """, (email,))
         admin = cur.fetchone()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         if not admin:
             flash("Invalid credentials")
@@ -2573,7 +2818,10 @@ def admin_change_password():
         """, (password_hash, session["admin_id"]))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         flash("Password updated successfully ✅")
         return redirect(url_for("admin_home"))
@@ -2604,12 +2852,18 @@ def admin_management():
 
         if not name or not email or not role:
             flash("All fields are required")
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             return redirect(request.url)
 
         if role == "admin" and not department:
             flash("Department is required for Department Admin")
-            con.close()
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
             return redirect(request.url)
 
         password = "RNSIT@2026"
@@ -2627,7 +2881,10 @@ def admin_management():
         except:
             flash("Email already exists ❌")
 
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         return redirect(request.url)
 
     # ---------------- LIST ADMINS ----------------
@@ -2638,7 +2895,10 @@ def admin_management():
     """)
     admins = cur.fetchall()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_management.html",
@@ -2715,7 +2975,10 @@ def admin_upload():
             ))
 
         con.commit()
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
         flash("Projects imported successfully ✅ (Domain/Theme included)")
         return redirect(url_for("admin_upload"))
@@ -2796,7 +3059,10 @@ def admin_teams():
     """, params)
 
     members_rows = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     # ---------------- BUILD MEMBERS MAP ----------------
     members_map = {}
@@ -2898,7 +3164,10 @@ def admin_export_teams():
     """)
     members_rows = cur.fetchall()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     # ---------------- BUILD MEMBERS MAP ----------------
     members_map = {}
@@ -3033,7 +3302,10 @@ def dashboard():
     """, params)
     faculty_data = [(r[list(r.keys())[0]], r[list(r.keys())[1]]) for r in cur.fetchall()]
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "dashboard.html",
@@ -3079,7 +3351,10 @@ def export():
     ORDER BY p.title, t.team_name
     """
     df = pd.read_sql(query, con)
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     file_name = "rnsit_multidisciplinary_project_registrations.xlsx"
     df.to_excel(file_name, index=False)
@@ -3240,7 +3515,10 @@ def admin_assignments():
     """, params + [per_page, offset])
 
     teams = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_assignments.html",
@@ -3343,7 +3621,10 @@ def export_assignments():
     """
 
     df = pd.read_sql(base_query, con, params=params)
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     # File name based on export type
     if only_unassigned == "1":
@@ -3378,7 +3659,10 @@ def student_chat():
         team = cur.fetchone()
 
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("You are not part of any registered team.")
         return redirect(url_for("student_home"))
 
@@ -3394,7 +3678,10 @@ def student_chat():
     faculty = cur.fetchone()
 
     if not faculty:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Faculty guide not assigned yet. Chat will be available after assignment.")
         return redirect(url_for("student_my_project"))
 
@@ -3417,7 +3704,10 @@ def student_chat():
     """, (team_id,))
     messages = cur.fetchall()
 
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "student_chat.html",
@@ -3463,7 +3753,10 @@ def admin_notices():
         execute(cur,"SELECT * FROM notices ORDER BY created_at DESC")
 
     notices = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "admin_notices.html",
@@ -3488,7 +3781,10 @@ def student_notices():
     """)
 
     notices = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "student_notices.html",
@@ -3514,7 +3810,10 @@ def faculty_notices():
     """, (dept,))
 
     notices = cur.fetchall()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     return render_template(
         "faculty_notices.html",
@@ -3530,7 +3829,10 @@ def delete_notice(nid):
     cur = con.cursor()
     execute(cur,"DELETE FROM notices WHERE id=?", (nid,))
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     flash("Notice deleted successfully ❌")
     return redirect(url_for("admin_notices"))
@@ -3555,7 +3857,10 @@ def faculty_chat(team_id):
     team = cur.fetchone()
 
     if not team:
-        con.close()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
         flash("Unauthorized access.")
         return redirect(url_for("faculty_dashboard"))
 
@@ -3766,7 +4071,10 @@ if __name__ == "__main__":
     ))
 
     con.commit()
-    con.close()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
 
     print("✅ PostgreSQL schema initialized successfully")
 
