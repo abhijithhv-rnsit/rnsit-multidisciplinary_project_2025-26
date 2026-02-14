@@ -46,6 +46,9 @@ import sqlite3
 import psycopg2
 from urllib.parse import urlparse
 
+import psycopg2
+import psycopg2.pool
+import psycopg2.extras
 #from psycopg2.extras import RealDictCursor
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -63,7 +66,7 @@ if DATABASE_URL:
         password=url.password,
         host=url.hostname,
         port=url.port,
-        cursor_factory=psycopg2.extras.RealDictCursor
+        cursor_factory=psycopg2.extras.RealDictCursor  # now REALLY works
     )
 
 def db():
