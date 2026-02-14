@@ -3018,10 +3018,10 @@ def dashboard():
         ORDER BY COUNT(tf.team_id) DESC
     """, params)
 
-rows = cur.fetchall()
+    rows = cur.fetchall()
 
 # Convert dict rows back to tuple style for old templates
-faculty_data = [(r["name"], r["count"]) for r in rows]
+    faculty_data = [(r["name"], r["count"]) for r in rows]
 
     con.close()
 
