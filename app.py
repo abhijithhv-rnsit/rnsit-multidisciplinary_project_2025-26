@@ -2171,9 +2171,9 @@ def register(pid):
         flash("Invalid problem selected.")
         return redirect(url_for("index"))
 
-    problem_title = prob[0]
-    max_teams = prob[1] if prob[1] else 5
-    locked = prob[2]
+    problem_title = prob["title"]
+    max_teams = prob["max_teams"] if prob["max_teams"] else 5
+    locked = prob["locked"]
 
     # 🔒 ADMIN LOCK CHECK
     if locked == 1:
