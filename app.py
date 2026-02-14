@@ -2952,13 +2952,13 @@ def dashboard():
     params = []
 
     if session.get("admin_role") == "admin":
-        where.append("t.leader_department = ?")
+        where.append("t.leader_department = %s")
         params.append(session.get("admin_department"))
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     # ---------------- TOTAL TEAMS ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT COUNT(*)
         FROM teams t
         {where_sql}
@@ -2966,21 +2966,21 @@ def dashboard():
     total_teams = list(cur.fetchone().values())[0]
 
     # ---------------- TOTAL PROBLEMS ----------------
-    execute(cur,"SELECT COUNT(*) FROM problems")
+    execute(cur, "SELECT COUNT(*) FROM problems")
     total_problems = list(cur.fetchone().values())[0]
 
     # ---------------- TEAMS PER DEPARTMENT ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT t.leader_department, COUNT(*)
         FROM teams t
         {where_sql}
         GROUP BY t.leader_department
         ORDER BY COUNT(*) DESC
     """, params)
-    dept_data = cur.fetchall()
+    dept_data = [(r[list(r.keys())[0]], r[list(r.keys())[1]]) for r in cur.fetchall()]
 
     # ---------------- TEAMS BY CATEGORY ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT p.category, COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
@@ -2988,10 +2988,10 @@ def dashboard():
         GROUP BY p.category
         ORDER BY COUNT(*) DESC
     """, params)
-    type_data = cur.fetchall()
+    type_data = [(r[list(r.keys())[0]], r[list(r.keys())[1]]) for r in cur.fetchall()]
 
     # ---------------- DOMAIN / THEME DISTRIBUTION ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT p.domain_theme, COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
@@ -2999,10 +2999,10 @@ def dashboard():
         GROUP BY p.domain_theme
         ORDER BY COUNT(*) DESC
     """, params)
-    domain_data = cur.fetchall()
+    domain_data = [(r[list(r.keys())[0]], r[list(r.keys())[1]]) for r in cur.fetchall()]
 
     # ---------------- NOT ASSIGNED TEAMS ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT COUNT(*)
         FROM teams t
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
@@ -3012,7 +3012,7 @@ def dashboard():
     not_assigned_count = list(cur.fetchone().values())[0]
 
     # ---------------- PENDING WEEKLY PROGRESS ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT COUNT(*)
         FROM weekly_progress wp
         JOIN teams t ON wp.team_id = t.id
@@ -3022,38 +3022,31 @@ def dashboard():
     pending_progress_count = list(cur.fetchone().values())[0]
 
     # ---------------- FACULTY WISE ASSIGNMENT ----------------
-    execute(cur,f"""
-        SELECT f.name AS name, COUNT(tf.team_id) AS count
+    execute(cur, f"""
+        SELECT f.name, COUNT(tf.team_id)
         FROM faculty f
         LEFT JOIN team_faculty tf ON f.id = tf.faculty_id
         LEFT JOIN teams t ON tf.team_id = t.id
         {where_sql}
-        GROUP BY f.id, f.name
+        GROUP BY f.name
         ORDER BY COUNT(tf.team_id) DESC
     """, params)
-
-    rows = cur.fetchall()
-
-# Convert dict rows back to tuple style for old templates
-    faculty_data = [(r["name"], r["count"]) for r in rows]
+    faculty_data = [(r[list(r.keys())[0]], r[list(r.keys())[1]]) for r in cur.fetchall()]
 
     con.close()
 
     return render_template(
-    "dashboard.html",
-    total_teams=total_teams,
-    total_problems=total_problems,
-
-    dept_data=dept_data or [],
-    type_data=type_data or [],
-    domain_data=domain_data or [],
-    faculty_data=faculty_data or [],
-
-    not_assigned_count=not_assigned_count or 0,
-    pending_progress_count=pending_progress_count or 0,
-
-    active_page="dashboard"
-)
+        "dashboard.html",
+        total_teams=total_teams,
+        total_problems=total_problems,
+        dept_data=dept_data,
+        type_data=type_data,
+        domain_data=domain_data,
+        faculty_data=faculty_data,
+        not_assigned_count=not_assigned_count,
+        pending_progress_count=pending_progress_count,
+        active_page="dashboard"
+    )
 
 
 @app.route("/export")
