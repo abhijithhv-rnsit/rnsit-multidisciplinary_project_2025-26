@@ -4053,7 +4053,10 @@ if __name__ == "__main__":
         is_active INTEGER DEFAULT 1
     )
     """)
-
+    cur.execute("""
+        ALTER TABLE notices
+        ADD COLUMN IF NOT EXISTS target_department TEXT
+    """)
     # ---------------- DEFAULT SETTINGS ----------------
 
     cur.execute("""
