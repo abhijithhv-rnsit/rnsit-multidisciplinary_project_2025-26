@@ -1361,7 +1361,7 @@ def faculty_team_details(team_id):
     # ---------------- PROJECT DETAILS ----------------
     execute(cur,"""
         SELECT abstract, objectives, tech_stack, methodology, modules,
-               dataset_or_inputs, expected_output
+               dataset_or_inputs, expected_output, project_references
         FROM project_details
         WHERE team_id=?
     """, (team_id,))
