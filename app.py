@@ -171,7 +171,26 @@ def fix_db_now():
     else:
         con.close()
     return "DB fixed ✅"
+@app.route("/__add_chat_cascade_once")
+def add_chat_cascade_once():
+    con = db()
+    cur = con.cursor()
 
+    cur.execute("""
+        ALTER TABLE chat_messages
+        DROP CONSTRAINT IF EXISTS chat_messages_team_id_fkey,
+        ADD CONSTRAINT chat_messages_team_id_fkey
+        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+    """)
+
+    con.commit()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    return "✅ Chat cascade enabled successfully"
 def ensure_students_table():
     con = db()
     cur = con.cursor()
