@@ -282,7 +282,52 @@ def debug_team_faculty():
     else:
         con.close()
     return str([dict(r) for r in rows])
+@app.route("/__add_cascade_once")
+def add_cascade_once():
+    con = db()
+    cur = con.cursor()
 
+    sql = [
+        """
+        ALTER TABLE project_details
+        DROP CONSTRAINT IF EXISTS project_details_team_id_fkey,
+        ADD CONSTRAINT project_details_team_id_fkey
+        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+        """,
+
+        """
+        ALTER TABLE weekly_progress
+        DROP CONSTRAINT IF EXISTS weekly_progress_team_id_fkey,
+        ADD CONSTRAINT weekly_progress_team_id_fkey
+        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+        """,
+
+        """
+        ALTER TABLE team_members
+        DROP CONSTRAINT IF EXISTS team_members_team_id_fkey,
+        ADD CONSTRAINT team_members_team_id_fkey
+        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+        """,
+
+        """
+        ALTER TABLE team_faculty
+        DROP CONSTRAINT IF EXISTS team_faculty_team_id_fkey,
+        ADD CONSTRAINT team_faculty_team_id_fkey
+        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+        """
+    ]
+
+    for q in sql:
+        cur.execute(q)
+
+    con.commit()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    return "✅ Cascade deletes enabled successfully"
 
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
