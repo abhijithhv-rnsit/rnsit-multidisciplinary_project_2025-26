@@ -2193,32 +2193,46 @@ def admin_project_settings():
         registration_deadline = request.form.get("registration_deadline", "").strip()
         total_weeks = request.form.get("total_weeks", "16").strip()
 
-        # Save values into settings table
+        # ✅ PostgreSQL UPSERT instead of INSERT OR REPLACE
+
         if project_start_date:
-            execute(cur,"""
-                INSERT OR REPLACE INTO settings(key, value)
-                VALUES (?, ?)
+            execute(cur, """
+                INSERT INTO settings(key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value
             """, ("project_start_date", project_start_date))
 
         if registration_deadline:
-            execute(cur,"""
-                INSERT OR REPLACE INTO settings(key, value)
-                VALUES (?, ?)
+            execute(cur, """
+                INSERT INTO settings(key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value
             """, ("registration_deadline", registration_deadline))
 
         if total_weeks:
-            execute(cur,"""
-                INSERT OR REPLACE INTO settings(key, value)
-                VALUES (?, ?)
+            execute(cur, """
+                INSERT INTO settings(key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value
             """, ("total_weeks", total_weeks))
 
         con.commit()
         flash("Project settings saved successfully ✅")
+
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
         return redirect(url_for("admin_project_settings"))
 
-    # Fetch existing values
+    # -------- Fetch existing values --------
+
     def get_setting(key, default=""):
-        execute(cur,"SELECT value FROM settings WHERE key=?", (key,))
+        execute(cur, "SELECT value FROM settings WHERE key=%s", (key,))
         row = cur.fetchone()
         return row["value"] if row and row["value"] else default
 
