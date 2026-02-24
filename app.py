@@ -1955,7 +1955,7 @@ def admin_students():
         with pd.ExcelWriter(out, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Students")
         out.seek(0)
-
+        con.commit() 
         if pg_pool:
             pg_pool.putconn(con)
         else:
