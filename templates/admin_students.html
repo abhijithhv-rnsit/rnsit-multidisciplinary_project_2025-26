@@ -172,12 +172,24 @@
 
       {% if students %}
       <form method="post">
-        <input type="hidden" name="action" value="bulk_reset_password">
+        <input type="hidden" name="action" id="bulkAction" value="">
 
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-          <button class="btn btn-warning btn-sm">
-            🔁 Reset Password (Selected)
-          </button>
+         <div class="d-flex gap-2">
+
+    <button type="submit"
+            class="btn btn-warning btn-sm"
+            onclick="document.getElementById('bulkAction').value='bulk_reset_password'">
+        🔁 Reset Password (Selected)
+    </button>
+
+    <button type="submit"
+            class="btn btn-danger btn-sm"
+            onclick="document.getElementById('bulkAction').value='bulk_delete'">
+        🗑️ Delete Selected
+    </button>
+
+</div>
 
           <button type="button" class="btn btn-outline-dark btn-sm" onclick="selectAllVisible()">
             Select All Visible
