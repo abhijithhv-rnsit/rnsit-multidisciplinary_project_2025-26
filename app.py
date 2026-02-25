@@ -1949,13 +1949,16 @@ def admin_students():
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
-    # ---------------- POST ACTIONS ----------------
+    # ============================================================
+    # POST ACTIONS (UPLOAD, ADD, RESET, DELETE)
+    # ============================================================
+
     if request.method == "POST":
         action = request.form.get("action")
 
-        # ---- BULK UPLOAD ----
+        # ---------- BULK UPLOAD ----------
         if action == "bulk_upload":
-            file = request.files.get("file")
+            file = request.files["file"]
             df = pd.read_excel(file)
 
             for _, r in df.iterrows():
@@ -1972,36 +1975,52 @@ def admin_students():
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
 
                 execute(cur,"""
-                    INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
+                    INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password)
                     VALUES (?,?,?,?,?,?,1)
                 """, (usn, email, password_hash, name, dept, sec))
 
             con.commit()
             flash("Bulk upload completed ✅")
 
-        # ---- MANUAL ADD ----
+        # ---------- MANUAL ADD ----------
         elif action == "manual_add":
-            usn = request.form.get("usn").strip().upper()
-            email = request.form.get("email").strip().lower()
-            name = request.form.get("name", "").strip()
+            usn = request.form["usn"].strip().upper()
+            email = request.form["email"].strip().lower()
+            name = request.form.get("name","").strip()
             dept = dept_admin_department if is_dept_admin else request.form.get("department")
-            sec = request.form.get("section", "").strip()
+            sec = request.form.get("section","").strip()
 
             execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
             if list(cur.fetchone().values())[0] == 0:
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+
                 execute(cur,"""
-                    INSERT INTO students(usn, email, password_hash, name, department, section, must_reset_password)
+                    INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password)
                     VALUES (?,?,?,?,?,?,1)
                 """, (usn, email, password_hash, name, dept, sec))
                 con.commit()
                 flash("Student created successfully ✅")
 
-        # ---- DELETE STUDENT (FIXED) ----
-        elif action == "delete":
-            student_id = request.form.get("student_id")
+        # ---------- RESET PASSWORD ----------
+        elif action == "reset_password":
+            sid = request.form.get("sid")
 
-            execute(cur, "DELETE FROM students WHERE id=?", (student_id,))
+            password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+
+            execute(cur,"""
+                UPDATE students
+                SET password_hash=?, must_reset_password=1
+                WHERE id=?
+            """, (password_hash, sid))
+
+            con.commit()
+            flash("Password reset successfully 🔁")
+
+        # ---------- DELETE STUDENT (🔥 THIS WAS MISSING) ----------
+        elif action == "delete_student":
+            sid = request.form.get("sid")
+
+            execute(cur,"DELETE FROM students WHERE id=?", (sid,))
             con.commit()
 
             flash("Student deleted successfully 🗑️")
@@ -2013,13 +2032,16 @@ def admin_students():
 
         return redirect(url_for("admin_students"))
 
-    # ---------------- LIST VIEW ----------------
-    search = request.args.get("search", "").strip().lower()
-    dept_filter = request.args.get("dept", "").strip()
+    # ============================================================
+    # LIST + FILTER + PAGINATION
+    # ============================================================
 
-    page = int(request.args.get("page", 1))
+    search = request.args.get("search","").strip().lower()
+    dept_filter = request.args.get("dept","").strip()
+
+    page = int(request.args.get("page",1))
     per_page = 25
-    offset = (page - 1) * per_page
+    offset = (page-1)*per_page
 
     where = []
     params = []
@@ -2033,11 +2055,9 @@ def admin_students():
 
     if search:
         where.append("""
-            (
-              LOWER(usn) LIKE ?
-              OR LOWER(email) LIKE ?
-              OR LOWER(COALESCE(name,'')) LIKE ?
-            )
+            (LOWER(usn) LIKE ?
+             OR LOWER(email) LIKE ?
+             OR LOWER(COALESCE(name,'')) LIKE ?)
         """)
         params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
 
@@ -2045,10 +2065,10 @@ def admin_students():
 
     execute(cur,f"SELECT COUNT(*) FROM students {where_sql}", params)
     total_rows = list(cur.fetchone().values())[0]
-    total_pages = max(1, (total_rows + per_page - 1) // per_page)
+    total_pages = max(1,(total_rows+per_page-1)//per_page)
 
     execute(cur,f"""
-        SELECT id, usn, email, name, department, section, must_reset_password, created_at
+        SELECT id,usn,email,name,department,section,must_reset_password,created_at
         FROM students
         {where_sql}
         ORDER BY created_at DESC
@@ -2073,7 +2093,6 @@ def admin_students():
         total_rows=total_rows,
         active_page="students"
     )
-
 @app.route("/student/change-password", methods=["GET", "POST"])
 def student_change_password():
     if not session.get("student_usn"):
