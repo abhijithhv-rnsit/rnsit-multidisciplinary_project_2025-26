@@ -1950,7 +1950,7 @@ def admin_students():
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
     # ============================================================
-    # POST ACTIONS (UPLOAD, ADD, RESET, DELETE)
+    # POST ACTIONS
     # ============================================================
 
     if request.method == "POST":
@@ -1998,6 +1998,7 @@ def admin_students():
                     INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password)
                     VALUES (?,?,?,?,?,?,1)
                 """, (usn, email, password_hash, name, dept, sec))
+
                 con.commit()
                 flash("Student created successfully ✅")
 
@@ -2016,7 +2017,7 @@ def admin_students():
             con.commit()
             flash("Password reset successfully 🔁")
 
-        # ---------- DELETE STUDENT (🔥 THIS WAS MISSING) ----------
+        # ---------- SINGLE DELETE ----------
         elif action == "delete_student":
             sid = request.form.get("sid")
 
@@ -2025,26 +2026,28 @@ def admin_students():
 
             flash("Student deleted successfully 🗑️")
 
+        # ---------- BULK DELETE ----------
+        elif action == "bulk_delete":
+            student_ids = request.form.getlist("student_id")
+
+            if student_ids:
+                placeholders = ",".join(["%s"] * len(student_ids))
+                execute(cur,
+                    f"DELETE FROM students WHERE id IN ({placeholders})",
+                    student_ids
+                )
+                con.commit()
+                flash(f"{len(student_ids)} students deleted successfully 🗑️")
+            else:
+                flash("No students selected ❗")
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
 
         return redirect(url_for("admin_students"))
-        # ---------- BULK DELETE ----------
-        elif action == "bulk_delete":
-            student_ids = request.form.getlist("student_id")
 
-        if student_ids:
-            execute(cur, f"""
-                DELETE FROM students
-                WHERE id IN ({",".join(["%s"] * len(student_ids))})
-            """, student_ids)
-
-            con.commit()
-            flash(f"{len(student_ids)} students deleted successfully 🗑️")
-         else:
-            flash("No students selected ❗")
     # ============================================================
     # LIST + FILTER + PAGINATION
     # ============================================================
