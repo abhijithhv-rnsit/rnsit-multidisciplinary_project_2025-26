@@ -1945,91 +1945,10 @@ def admin_students():
     con = db()
     cur = con.cursor()
 
-    # 🔐 ROLE INFO
     is_dept_admin = session.get("admin_role") == "admin"
     dept_admin_department = session.get("admin_department")
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
-
-    # ---------------- TEMPLATE DOWNLOAD ----------------
-    if request.method == "GET" and request.args.get("download") == "template":
-        template_df = pd.DataFrame(columns=["USN", "Email", "Name", "Department", "Section"])
-        out = io.BytesIO()
-        with pd.ExcelWriter(out, engine="openpyxl") as writer:
-            template_df.to_excel(writer, index=False, sheet_name="Students")
-        out.seek(0)
-
-        return send_file(
-            out,
-            as_attachment=True,
-            download_name="student_upload_template.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    # ---------------- EXPORT EXCEL ----------------
-    if request.method == "GET" and request.args.get("export") == "excel":
-        search = request.args.get("search", "").strip().lower()
-        dept_filter = request.args.get("dept", "").strip()
-
-        where = []
-        params = []
-
-        # 🔐 DEPARTMENT ADMIN LOCK
-        if is_dept_admin:
-            where.append("department=?")
-            params.append(dept_admin_department)
-        elif dept_filter:
-            where.append("department=?")
-            params.append(dept_filter)
-
-        if search:
-            where.append("""
-                (
-                  LOWER(usn) LIKE ?
-                  OR LOWER(email) LIKE ?
-                  OR LOWER(COALESCE(name,'')) LIKE ?
-                )
-            """)
-            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
-
-        where_sql = " WHERE " + " AND ".join(where) if where else ""
-
-        execute(cur,f"""
-            SELECT usn, email, name, department, section, must_reset_password, created_at
-            FROM students
-            {where_sql}
-            ORDER BY created_at DESC
-        """, params)
-        rows = cur.fetchall()
-
-        export_data = []
-        for r in rows:
-            export_data.append({
-                "USN": r["usn"],
-                "Email": r["email"],
-                "Name": r["name"] or "",
-                "Department": r["department"] or "",
-                "Section": r["section"] or "",
-                "Must Reset Password": "YES" if r["must_reset_password"] == 1 else "NO",
-                "Created At": r["created_at"]
-            })
-
-        df = pd.DataFrame(export_data)
-        out = io.BytesIO()
-        with pd.ExcelWriter(out, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Students")
-        out.seek(0)
-        con.commit() 
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-        return send_file(
-            out,
-            as_attachment=True,
-            download_name="students_export.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
 
     # ---------------- POST ACTIONS ----------------
     if request.method == "POST":
@@ -2079,10 +1998,20 @@ def admin_students():
                 con.commit()
                 flash("Student created successfully ✅")
 
+        # ---- DELETE STUDENT (FIXED) ----
+        elif action == "delete":
+            student_id = request.form.get("student_id")
+
+            execute(cur, "DELETE FROM students WHERE id=?", (student_id,))
+            con.commit()
+
+            flash("Student deleted successfully 🗑️")
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
+
         return redirect(url_for("admin_students"))
 
     # ---------------- LIST VIEW ----------------
@@ -2096,7 +2025,6 @@ def admin_students():
     where = []
     params = []
 
-    # 🔐 DEPARTMENT ADMIN LOCK
     if is_dept_admin:
         where.append("department=?")
         params.append(dept_admin_department)
@@ -2129,6 +2057,7 @@ def admin_students():
     """, params + [per_page, offset])
 
     students = cur.fetchall()
+
     if pg_pool:
         pg_pool.putconn(con)
     else:
@@ -2145,8 +2074,6 @@ def admin_students():
         total_rows=total_rows,
         active_page="students"
     )
-
-
 
 @app.route("/student/change-password", methods=["GET", "POST"])
 def student_change_password():
