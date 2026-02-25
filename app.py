@@ -2031,7 +2031,20 @@ def admin_students():
             con.close()
 
         return redirect(url_for("admin_students"))
+        # ---------- BULK DELETE ----------
+        elif action == "bulk_delete":
+            student_ids = request.form.getlist("student_id")
 
+        if student_ids:
+            execute(cur, f"""
+                DELETE FROM students
+                WHERE id IN ({",".join(["%s"] * len(student_ids))})
+            """, student_ids)
+
+            con.commit()
+            flash(f"{len(student_ids)} students deleted successfully 🗑️")
+         else:
+            flash("No students selected ❗")
     # ============================================================
     # LIST + FILTER + PAGINATION
     # ============================================================
