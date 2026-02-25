@@ -1647,9 +1647,8 @@ def admin_faculty_management():
     con = db()
     cur = con.cursor()
 
-    # ---------------- ROLE INFO ----------------
-    admin_role = session.get("admin_role")          # super_admin / admin
-    admin_dept = session.get("admin_department")    # department for admin
+    admin_role = session.get("admin_role")
+    admin_dept = session.get("admin_department")
 
     search = request.args.get("search", "").strip().lower()
     dept_filter = request.args.get("dept", "").strip()
@@ -1660,31 +1659,29 @@ def admin_faculty_management():
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
-    # ============================================================
-    # 🔐 DEPARTMENT ADMIN LOCK
-    # ============================================================
     if admin_role == "admin":
-        dept_filter = admin_dept   # FORCE department
+        dept_filter = admin_dept
 
-    # ============================================================
+    # ================================
     # 📥 DOWNLOAD TEMPLATE
-    # ============================================================
+    # ================================
     if request.args.get("download") == "template":
-        template_df = pd.DataFrame(columns=["Name", "Email", "Department"])
-        file_path = "faculty_upload_template.xlsx"
-        template_df.to_excel(file_path, index=False)
+        df = pd.DataFrame(columns=["Name", "Email", "Department"])
+        path = "faculty_template.xlsx"
+        df.to_excel(path, index=False)
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
-        return send_file(file_path, as_attachment=True)
 
-    # ============================================================
-    # 📤 EXPORT FACULTY
-    # ============================================================
+        return send_file(path, as_attachment=True)
+
+    # ================================
+    # 📤 EXPORT
+    # ================================
     if request.args.get("export") == "excel":
-        where = []
-        params = []
+        where, params = [], []
 
         if dept_filter:
             where.append("department=?")
@@ -1697,62 +1694,102 @@ def admin_faculty_management():
         where_sql = " WHERE " + " AND ".join(where) if where else ""
 
         execute(cur,f"""
-            SELECT name, email, department
+            SELECT name,email,department
             FROM faculty
             {where_sql}
             ORDER BY name
         """, params)
 
-        rows = cur.fetchall()
-        df = pd.DataFrame(rows, columns=["Name", "Email", "Department"])
-
-        file_path = "faculty_export.xlsx"
-        df.to_excel(file_path, index=False)
+        df = pd.DataFrame(cur.fetchall())
+        path = "faculty_export.xlsx"
+        df.to_excel(path, index=False)
 
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
-        return send_file(file_path, as_attachment=True)
 
-    # ============================================================
+        return send_file(path, as_attachment=True)
+
+    # ================================
     # 📝 POST ACTIONS
-    # ============================================================
+    # ================================
     if request.method == "POST":
         action = request.form.get("action")
 
+        # ---------- BULK UPLOAD ----------
+        if action == "bulk_upload":
+
+            file = request.files.get("file")
+
+            if not file:
+                flash("No file selected ❗")
+                return redirect(url_for("admin_faculty_management"))
+
+            df = pd.read_excel(file)
+
+            REQUIRED = ["Name", "Email", "Department"]
+            for c in REQUIRED:
+                if c not in df.columns:
+                    flash(f"Missing column: {c}")
+                    return redirect(url_for("admin_faculty_management"))
+
+            created = 0
+
+            for _, r in df.iterrows():
+                name = str(r["Name"]).strip()
+                email = str(r["Email"]).strip().lower()
+                dept = admin_dept if admin_role == "admin" else str(r["Department"]).strip()
+
+                if not name or not email:
+                    continue
+
+                execute(cur,"SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
+                if list(cur.fetchone().values())[0] > 0:
+                    continue
+
+                password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+
+                execute(cur,"""
+                    INSERT INTO faculty(name,email,password_hash,department,must_reset_password)
+                    VALUES (?,?,?,?,1)
+                """, (name, email, password_hash, dept))
+
+                created += 1
+
+            con.commit()
+            flash(f"{created} faculty added successfully ✅")
+
         # ---------- MANUAL ADD ----------
-        if action == "manual_add":
+        elif action == "manual_add":
+
             name = request.form.get("name").strip()
             email = request.form.get("email").strip().lower()
-            department = request.form.get("department").strip()
-
-            if admin_role == "admin":
-                department = admin_dept  # FORCE dept
+            department = admin_dept if admin_role == "admin" else request.form.get("department")
 
             password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
 
             try:
                 execute(cur,"""
-                    INSERT INTO faculty(name, email, password_hash, department, must_reset_password)
+                    INSERT INTO faculty(name,email,password_hash,department,must_reset_password)
                     VALUES (?,?,?,?,1)
                 """, (name, email, password_hash, department))
                 con.commit()
                 flash("Faculty created successfully ✅")
             except:
-                flash("Faculty email already exists ❌")
+                flash("Faculty already exists ❌")
 
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            return redirect(url_for("admin_faculty_management"))
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
 
-    # ============================================================
-    # 📋 FACULTY LIST
-    # ============================================================
-    where = []
-    params = []
+        return redirect(url_for("admin_faculty_management"))
+
+    # ================================
+    # 📋 LIST VIEW
+    # ================================
+    where, params = [], []
 
     if dept_filter:
         where.append("department=?")
@@ -1769,7 +1806,7 @@ def admin_faculty_management():
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     execute(cur,f"""
-        SELECT id, name, email, department
+        SELECT id,name,email,department
         FROM faculty
         {where_sql}
         ORDER BY name
@@ -1777,6 +1814,7 @@ def admin_faculty_management():
     """, params + [per_page, offset])
 
     faculty = cur.fetchall()
+
     if pg_pool:
         pg_pool.putconn(con)
     else:
@@ -1793,7 +1831,6 @@ def admin_faculty_management():
         total_rows=total_rows,
         active_page="faculty"
     )
-
 @app.route("/admin/faculty/bulk-upload", methods=["GET", "POST"])
 def admin_faculty_bulk_upload():
     if not session.get("admin_logged_in"):
