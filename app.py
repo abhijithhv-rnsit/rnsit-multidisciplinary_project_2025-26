@@ -1987,7 +1987,7 @@ def admin_students():
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
     # ============================================================
-    # POST ACTIONS
+    # POST ACTIONS (UNCHANGED)
     # ============================================================
 
     if request.method == "POST":
@@ -2019,7 +2019,6 @@ def admin_students():
             con.commit()
             flash("Bulk upload completed ✅")
 
-        # ---------- MANUAL ADD ----------
         elif action == "manual_add":
             usn = request.form["usn"].strip().upper()
             email = request.form["email"].strip().lower()
@@ -2030,16 +2029,13 @@ def admin_students():
             execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
             if list(cur.fetchone().values())[0] == 0:
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
-
                 execute(cur,"""
                     INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password)
                     VALUES (?,?,?,?,?,?,1)
                 """, (usn, email, password_hash, name, dept, sec))
-
                 con.commit()
                 flash("Student created successfully ✅")
 
-        # ---------- EDIT STUDENT ----------
         elif action == "edit_student":
             sid = request.form.get("sid")
             usn = request.form.get("usn").strip().upper()
@@ -2048,11 +2044,9 @@ def admin_students():
             department = request.form.get("department").strip()
             section = request.form.get("section").strip()
 
-            # 🔐 Department admin restriction
             if is_dept_admin:
                 department = dept_admin_department
 
-            # Prevent duplicate USN/email
             execute(cur,"SELECT COUNT(*) FROM students WHERE (usn=? OR email=?) AND id<>?",
                     (usn, email, sid))
 
@@ -2064,38 +2058,28 @@ def admin_students():
                     SET usn=?, email=?, name=?, department=?, section=?
                     WHERE id=?
                 """, (usn, email, name, department, section, sid))
-
                 con.commit()
                 flash("Student updated successfully ✅")
 
-        # ---------- RESET PASSWORD ----------
         elif action == "reset_password":
             sid = request.form.get("sid")
-
             password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
-
             execute(cur,"""
                 UPDATE students
                 SET password_hash=?, must_reset_password=1
                 WHERE id=?
             """, (password_hash, sid))
-
             con.commit()
             flash("Password reset successfully 🔁")
 
-        # ---------- SINGLE DELETE ----------
         elif action == "delete_student":
             sid = request.form.get("sid")
-
             execute(cur,"DELETE FROM students WHERE id=?", (sid,))
             con.commit()
-
             flash("Student deleted successfully 🗑️")
 
-        # ---------- BULK DELETE ----------
         elif action == "bulk_delete":
             student_ids = request.form.getlist("student_id")
-
             if student_ids:
                 placeholders = ",".join(["%s"] * len(student_ids))
                 execute(cur,
@@ -2115,14 +2099,19 @@ def admin_students():
         return redirect(url_for("admin_students"))
 
     # ============================================================
-    # LIST + FILTER + PAGINATION
+    # LIST + FILTER + PAGINATION (UPDATED)
     # ============================================================
 
     search = request.args.get("search","").strip().lower()
     dept_filter = request.args.get("dept","").strip()
 
     page = int(request.args.get("page",1))
-    per_page = 25
+
+    # ✅ NEW: rows per page selector
+    per_page = int(request.args.get("per_page", 25))
+    if per_page not in [25, 50, 100]:
+        per_page = 25
+
     offset = (page-1)*per_page
 
     where = []
@@ -2173,6 +2162,7 @@ def admin_students():
         page=page,
         total_pages=total_pages,
         total_rows=total_rows,
+        per_page=per_page,   # ✅ PASS TO TEMPLATE
         active_page="students"
     )
 @app.route("/student/change-password", methods=["GET", "POST"])
