@@ -34,7 +34,7 @@
         ⬇ Download Template
       </a>
 
-      <a href="/admin/students?export=excel&search={{ search }}&dept={{ dept_filter }}"
+      <a href="/admin/students?export=excel&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}"
          class="btn btn-outline-primary btn-sm">
         ⬇ Export Excel
       </a>
@@ -141,7 +141,7 @@
     {% endif %}
 
     <div class="row g-2 align-items-end">
-      <div class="col-md-6">
+      <div class="col-md-4">
         <label class="form-label fw-semibold">Search</label>
         <input class="form-control" name="search" value="{{ search }}">
       </div>
@@ -157,6 +157,16 @@
         </select>
       </div>
       {% endif %}
+
+      <!-- VIEW SELECTOR ADDED -->
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">View</label>
+        <select name="per_page" class="form-select">
+          <option value="25" {% if per_page==25 %}selected{% endif %}>25</option>
+          <option value="50" {% if per_page==50 %}selected{% endif %}>50</option>
+          <option value="100" {% if per_page==100 %}selected{% endif %}>100</option>
+        </select>
+      </div>
 
       <div class="col-md-3 d-flex gap-2">
         <button class="btn btn-primary w-100">Apply</button>
@@ -177,19 +187,19 @@
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
          <div class="d-flex gap-2">
 
-    <button type="submit"
-            class="btn btn-warning btn-sm"
-            onclick="document.getElementById('bulkAction').value='bulk_reset_password'">
-        🔁 Reset Password (Selected)
-    </button>
+            <button type="submit"
+                    class="btn btn-warning btn-sm"
+                    onclick="document.getElementById('bulkAction').value='bulk_reset_password'">
+                🔁 Reset Password (Selected)
+            </button>
 
-    <button type="submit"
-            class="btn btn-danger btn-sm"
-            onclick="document.getElementById('bulkAction').value='bulk_delete'">
-        🗑️ Delete Selected
-    </button>
+            <button type="submit"
+                    class="btn btn-danger btn-sm"
+                    onclick="document.getElementById('bulkAction').value='bulk_delete'">
+                🗑️ Delete Selected
+            </button>
 
-</div>
+         </div>
 
           <button type="button" class="btn btn-outline-dark btn-sm" onclick="selectAllVisible()">
             Select All Visible
@@ -235,7 +245,6 @@
                 </td>
                 <td class="d-flex gap-2 flex-wrap">
 
-                  <!-- EDIT BUTTON -->
                   <button type="button"
                           class="btn btn-sm btn-primary"
                           data-bs-toggle="modal"
@@ -249,7 +258,6 @@
                     Edit
                   </button>
 
-                  <!-- Reset password -->
                   <form method="post">
                     <input type="hidden" name="action" value="reset_password">
                     <input type="hidden" name="sid" value="{{ s.id }}">
@@ -258,7 +266,6 @@
                     </button>
                   </form>
 
-                  <!-- Delete -->
                   <button type="button"
                           class="btn btn-sm btn-danger"
                           data-bs-toggle="modal"
@@ -277,26 +284,35 @@
 
       </form>
 
-      <!-- Pagination -->
+      <!-- PAGINATION UPDATED -->
       <div class="d-flex justify-content-between align-items-center mt-3">
         <div class="small text-muted">
           Showing page {{ page }} of {{ total_pages }}
         </div>
 
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
+
           {% if page > 1 %}
             <a class="btn btn-outline-secondary btn-sm"
-               href="/admin/students?page={{ page-1 }}&search={{ search }}&dept={{ dept_filter }}">
+               href="/admin/students?page={{ page-1 }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}">
               ← Prev
             </a>
           {% endif %}
 
+          {% for p in range(1, total_pages + 1) %}
+            <a class="btn btn-outline-secondary btn-sm {% if p == page %}active{% endif %}"
+               href="/admin/students?page={{ p }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}">
+              {{ p }}
+            </a>
+          {% endfor %}
+
           {% if page < total_pages %}
             <a class="btn btn-outline-secondary btn-sm"
-               href="/admin/students?page={{ page+1 }}&search={{ search }}&dept={{ dept_filter }}">
+               href="/admin/students?page={{ page+1 }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}">
               Next →
             </a>
           {% endif %}
+
         </div>
       </div>
 
@@ -361,7 +377,7 @@
   </div>
 </div>
 
-<!-- DELETE MODAL (UNCHANGED) -->
+<!-- DELETE MODAL -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
