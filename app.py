@@ -2039,6 +2039,35 @@ def admin_students():
                 con.commit()
                 flash("Student created successfully ✅")
 
+        # ---------- EDIT STUDENT ----------
+        elif action == "edit_student":
+            sid = request.form.get("sid")
+            usn = request.form.get("usn").strip().upper()
+            email = request.form.get("email").strip().lower()
+            name = request.form.get("name").strip()
+            department = request.form.get("department").strip()
+            section = request.form.get("section").strip()
+
+            # 🔐 Department admin restriction
+            if is_dept_admin:
+                department = dept_admin_department
+
+            # Prevent duplicate USN/email
+            execute(cur,"SELECT COUNT(*) FROM students WHERE (usn=? OR email=?) AND id<>?",
+                    (usn, email, sid))
+
+            if list(cur.fetchone().values())[0] > 0:
+                flash("USN or Email already exists ❌")
+            else:
+                execute(cur,"""
+                    UPDATE students
+                    SET usn=?, email=?, name=?, department=?, section=?
+                    WHERE id=?
+                """, (usn, email, name, department, section, sid))
+
+                con.commit()
+                flash("Student updated successfully ✅")
+
         # ---------- RESET PASSWORD ----------
         elif action == "reset_password":
             sid = request.form.get("sid")
