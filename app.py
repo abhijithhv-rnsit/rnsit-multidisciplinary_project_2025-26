@@ -2997,6 +2997,7 @@ def admin_upload():
 
     if request.method == "POST":
         file = request.files.get("file")
+
         if not file:
             flash("Please upload an Excel file.")
             return redirect(request.url)
@@ -3007,7 +3008,6 @@ def admin_upload():
             flash("Invalid file. Please upload a valid Excel file.")
             return redirect(request.url)
 
-        # ✅ Required columns in your NEW excel
         required_cols = [
             "Year",
             "Problem Statement",
@@ -3026,20 +3026,28 @@ def admin_upload():
         con = db()
         cur = con.cursor()
 
-        # ⚠️ If you want to replace everything each time upload happens
-        execute(cur,"DELETE FROM problems")
+        added = 0
+        skipped = 0
 
         for _, r in df.iterrows():
             year = str(r["Year"]).strip()
             title = str(r["Problem Statement"]).strip()
             category = str(r["Type"]).strip()
             domain_theme = str(r["Domain/Theme"]).strip()
-
             problem_description = str(r["Problem Description"]).strip()
             problem_details = str(r["Problem Details"]).strip()
             expected_outcome = str(r["Expected Outcome"]).strip()
 
-            # Insert into DB
+            # ✅ Prevent duplicate (based on year + title)
+            execute(cur,
+                "SELECT COUNT(*) FROM problems WHERE year=? AND title=?",
+                (year, title)
+            )
+
+            if list(cur.fetchone().values())[0] > 0:
+                skipped += 1
+                continue
+
             execute(cur,"""
                 INSERT INTO problems(
                     year, title, category, domain_theme, max_teams,
@@ -3056,13 +3064,16 @@ def admin_upload():
                 expected_outcome
             ))
 
+            added += 1
+
         con.commit()
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
 
-        flash("Projects imported successfully ✅ (Domain/Theme included)")
+        flash(f"{added} new problems added ✅ | {skipped} skipped (duplicates)")
         return redirect(url_for("admin_upload"))
 
     return render_template("admin_upload.html", active_page="upload")
