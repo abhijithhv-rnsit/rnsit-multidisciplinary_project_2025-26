@@ -210,7 +210,7 @@
                 <th>Department</th>
                 <th>Section</th>
                 <th>Reset Status</th>
-                <th style="width:260px;">Actions</th>
+                <th style="width:320px;">Actions</th>
               </tr>
             </thead>
 
@@ -235,6 +235,20 @@
                 </td>
                 <td class="d-flex gap-2 flex-wrap">
 
+                  <!-- EDIT BUTTON -->
+                  <button type="button"
+                          class="btn btn-sm btn-primary"
+                          data-bs-toggle="modal"
+                          data-bs-target="#editModal"
+                          data-id="{{ s.id }}"
+                          data-usn="{{ s.usn }}"
+                          data-email="{{ s.email }}"
+                          data-name="{{ s.name }}"
+                          data-department="{{ s.department }}"
+                          data-section="{{ s.section }}">
+                    Edit
+                  </button>
+
                   <!-- Reset password -->
                   <form method="post">
                     <input type="hidden" name="action" value="reset_password">
@@ -244,7 +258,7 @@
                     </button>
                   </form>
 
-                  <!-- Delete (modal trigger) -->
+                  <!-- Delete -->
                   <button type="button"
                           class="btn btn-sm btn-danger"
                           data-bs-toggle="modal"
@@ -294,7 +308,60 @@
 
 </div>
 
-<!-- DELETE CONFIRM MODAL -->
+<!-- EDIT MODAL -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Student</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <input type="hidden" name="action" value="edit_student">
+          <input type="hidden" name="sid" id="editSid">
+
+          <div class="mb-2">
+            <label>USN</label>
+            <input type="text" name="usn" id="editUsn" class="form-control" required>
+          </div>
+
+          <div class="mb-2">
+            <label>Email</label>
+            <input type="email" name="email" id="editEmail" class="form-control" required>
+          </div>
+
+          <div class="mb-2">
+            <label>Name</label>
+            <input type="text" name="name" id="editName" class="form-control">
+          </div>
+
+          <div class="mb-2">
+            <label>Department</label>
+            <select name="department" id="editDepartment" class="form-select">
+              {% for d in departments_list %}
+                <option value="{{ d }}">{{ d }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-2">
+            <label>Section</label>
+            <input type="text" name="section" id="editSection" class="form-control">
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-success">Save Changes</button>
+        </div>
+
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE MODAL (UNCHANGED) -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -338,15 +405,22 @@
     document.getElementById("selectAllMaster").checked = true;
   }
 
-  // Delete modal dynamic values
   const deleteModal = document.getElementById('deleteModal');
   deleteModal.addEventListener('show.bs.modal', function (event) {
     const button = event.relatedTarget;
-    const sid = button.getAttribute('data-id');
-    const usn = button.getAttribute('data-usn');
+    document.getElementById("studentUSN").innerText = button.getAttribute('data-usn');
+    document.getElementById("deleteSid").value = button.getAttribute('data-id');
+  });
 
-    document.getElementById("studentUSN").innerText = usn;
-    document.getElementById("deleteSid").value = sid;
+  const editModal = document.getElementById('editModal');
+  editModal.addEventListener('show.bs.modal', function (event) {
+    const button = event.relatedTarget;
+    document.getElementById("editSid").value = button.getAttribute('data-id');
+    document.getElementById("editUsn").value = button.getAttribute('data-usn');
+    document.getElementById("editEmail").value = button.getAttribute('data-email');
+    document.getElementById("editName").value = button.getAttribute('data-name');
+    document.getElementById("editSection").value = button.getAttribute('data-section');
+    document.getElementById("editDepartment").value = button.getAttribute('data-department');
   });
 </script>
 
