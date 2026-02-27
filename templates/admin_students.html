@@ -10,6 +10,7 @@
     body { background:#f6f7fb; }
     .card { border-radius: 16px; }
     .table td, .table th { vertical-align: middle; }
+    th a { color: white; text-decoration: none; } /* ADDED */
   </style>
 </head>
 
@@ -34,7 +35,7 @@
         ⬇ Download Template
       </a>
 
-      <a href="/admin/students?export=excel&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}"
+      <a href="/admin/students?export=excel&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by={{ sort_by }}&order={{ order }}"
          class="btn btn-outline-primary btn-sm">
         ⬇ Export Excel
       </a>
@@ -140,6 +141,10 @@
       <input type="hidden" name="dept" value="{{ session.admin_department }}">
     {% endif %}
 
+    <!-- ADDED -->
+    <input type="hidden" name="sort_by" value="{{ sort_by }}">
+    <input type="hidden" name="order" value="{{ order }}">
+
     <div class="row g-2 align-items-end">
       <div class="col-md-4">
         <label class="form-label fw-semibold">Search</label>
@@ -158,7 +163,6 @@
       </div>
       {% endif %}
 
-      <!-- VIEW SELECTOR ADDED -->
       <div class="col-md-2">
         <label class="form-label fw-semibold">View</label>
         <select name="per_page" class="form-select">
@@ -174,8 +178,7 @@
       </div>
     </div>
   </form>
-
-  <!-- STUDENT LIST -->
+    <!-- STUDENT LIST -->
   <div class="card shadow-sm border-0">
     <div class="card-body p-4">
       <h5 class="fw-bold mb-3">📋 Student List</h5>
@@ -214,11 +217,38 @@
                   <input type="checkbox" id="selectAllMaster" onclick="toggleSelectAllMaster()">
                 </th>
                 <th>#</th>
-                <th>USN</th>
-                <th>Email</th>
-                <th>Name</th>
-                <th>Department</th>
-                <th>Section</th>
+
+                <!-- SORTABLE HEADERS ADDED -->
+                <th>
+                  <a href="/admin/students?page=1&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by=usn&order={% if sort_by=='usn' and order=='asc' %}desc{% else %}asc{% endif %}">
+                    USN {% if sort_by=='usn' %}{{ '↑' if order=='asc' else '↓' }}{% endif %}
+                  </a>
+                </th>
+
+                <th>
+                  <a href="/admin/students?page=1&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by=email&order={% if sort_by=='email' and order=='asc' %}desc{% else %}asc{% endif %}">
+                    Email {% if sort_by=='email' %}{{ '↑' if order=='asc' else '↓' }}{% endif %}
+                  </a>
+                </th>
+
+                <th>
+                  <a href="/admin/students?page=1&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by=name&order={% if sort_by=='name' and order=='asc' %}desc{% else %}asc{% endif %}">
+                    Name {% if sort_by=='name' %}{{ '↑' if order=='asc' else '↓' }}{% endif %}
+                  </a>
+                </th>
+
+                <th>
+                  <a href="/admin/students?page=1&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by=department&order={% if sort_by=='department' and order=='asc' %}desc{% else %}asc{% endif %}">
+                    Department {% if sort_by=='department' %}{{ '↑' if order=='asc' else '↓' }}{% endif %}
+                  </a>
+                </th>
+
+                <th>
+                  <a href="/admin/students?page=1&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by=section&order={% if sort_by=='section' and order=='asc' %}desc{% else %}asc{% endif %}">
+                    Section {% if sort_by=='section' %}{{ '↑' if order=='asc' else '↓' }}{% endif %}
+                  </a>
+                </th>
+
                 <th>Reset Status</th>
                 <th style="width:320px;">Actions</th>
               </tr>
@@ -284,7 +314,7 @@
 
       </form>
 
-      <!-- PAGINATION UPDATED -->
+      <!-- PAGINATION UPDATED WITH SORT -->
       <div class="d-flex justify-content-between align-items-center mt-3">
         <div class="small text-muted">
           Showing page {{ page }} of {{ total_pages }}
@@ -294,21 +324,21 @@
 
           {% if page > 1 %}
             <a class="btn btn-outline-secondary btn-sm"
-               href="/admin/students?page={{ page-1 }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}">
+               href="/admin/students?page={{ page-1 }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by={{ sort_by }}&order={{ order }}">
               ← Prev
             </a>
           {% endif %}
 
           {% for p in range(1, total_pages + 1) %}
             <a class="btn btn-outline-secondary btn-sm {% if p == page %}active{% endif %}"
-               href="/admin/students?page={{ p }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}">
+               href="/admin/students?page={{ p }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by={{ sort_by }}&order={{ order }}">
               {{ p }}
             </a>
           {% endfor %}
 
           {% if page < total_pages %}
             <a class="btn btn-outline-secondary btn-sm"
-               href="/admin/students?page={{ page+1 }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}">
+               href="/admin/students?page={{ page+1 }}&search={{ search }}&dept={{ dept_filter }}&per_page={{ per_page }}&sort_by={{ sort_by }}&order={{ order }}">
               Next →
             </a>
           {% endif %}
