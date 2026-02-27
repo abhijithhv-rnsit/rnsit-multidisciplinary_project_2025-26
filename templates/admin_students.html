@@ -260,7 +260,7 @@
                 <td class="text-center">
                   <input type="checkbox" class="rowCheck" name="student_id" value="{{ s.id }}">
                 </td>
-                <td>{{ ((page - 1) * per_page) + loop.index }}</td>
+                <td>{{ ((page|int - 1) * per_page|int) + loop.index }}</td>
                 <td class="fw-semibold">{{ s.usn }}</td>
                 <td>{{ s.email }}</td>
                 <td>{{ s.name or "-" }}</td>
