@@ -1993,7 +1993,6 @@ def admin_students():
     if request.method == "POST":
         action = request.form.get("action")
 
-        # ---------- BULK UPLOAD ----------
         if action == "bulk_upload":
             file = request.files["file"]
             df = pd.read_excel(file)
@@ -2099,18 +2098,37 @@ def admin_students():
         return redirect(url_for("admin_students"))
 
     # ============================================================
-    # LIST + FILTER + PAGINATION (UPDATED)
+    # LIST + FILTER + PAGINATION + SORTING
     # ============================================================
 
     search = request.args.get("search","").strip().lower()
     dept_filter = request.args.get("dept","").strip()
-
     page = int(request.args.get("page",1))
 
-    # ✅ NEW: rows per page selector
     per_page = int(request.args.get("per_page", 25))
     if per_page not in [25, 50, 100]:
         per_page = 25
+
+    # ✅ SORTING
+    sort_by = request.args.get("sort_by","created_at")
+    order = request.args.get("order","desc")
+
+    allowed_sort_columns = {
+        "usn": "usn",
+        "email": "email",
+        "name": "name",
+        "department": "department",
+        "section": "section",
+        "created_at": "created_at"
+    }
+
+    if sort_by not in allowed_sort_columns:
+        sort_by = "created_at"
+
+    if order not in ["asc","desc"]:
+        order = "desc"
+
+    order_sql = f"ORDER BY {allowed_sort_columns[sort_by]} {order.upper()}"
 
     offset = (page-1)*per_page
 
@@ -2142,7 +2160,7 @@ def admin_students():
         SELECT id,usn,email,name,department,section,must_reset_password,created_at
         FROM students
         {where_sql}
-        ORDER BY created_at DESC
+        {order_sql}
         LIMIT ? OFFSET ?
     """, params + [per_page, offset])
 
@@ -2162,7 +2180,9 @@ def admin_students():
         page=page,
         total_pages=total_pages,
         total_rows=total_rows,
-        per_page=per_page,   # ✅ PASS TO TEMPLATE
+        per_page=per_page,
+        sort_by=sort_by,
+        order=order,
         active_page="students"
     )
 @app.route("/student/change-password", methods=["GET", "POST"])
