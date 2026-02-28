@@ -2109,7 +2109,6 @@ def admin_students():
     if per_page not in [25, 50, 100]:
         per_page = 25
 
-    # ✅ SORTING
     sort_by = request.args.get("sort_by","created_at")
     order = request.args.get("order","desc")
 
@@ -2151,6 +2150,59 @@ def admin_students():
         params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    # ============================================================
+    # EXPORT EXCEL
+    # ============================================================
+
+    if request.args.get("export") == "excel":
+
+        execute(cur, f"""
+            SELECT usn,email,name,department,section,must_reset_password,created_at
+            FROM students
+            {where_sql}
+            {order_sql}
+        """, params)
+
+        rows = cur.fetchall()
+
+        import pandas as pd
+        import io
+        from flask import send_file
+
+        data = []
+        for r in rows:
+            data.append({
+                "USN": r["usn"],
+                "Email": r["email"],
+                "Name": r["name"],
+                "Department": r["department"],
+                "Section": r["section"],
+                "Reset Status": "Must Reset" if r["must_reset_password"] == 1 else "Reset Done",
+                "Created At": r["created_at"]
+            })
+
+        df = pd.DataFrame(data)
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Students")
+
+        output.seek(0)
+
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        return send_file(
+            output,
+            download_name="students.xlsx",
+            as_attachment=True,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # ============================================================
 
     execute(cur,f"SELECT COUNT(*) FROM students {where_sql}", params)
     total_rows = list(cur.fetchone().values())[0]
