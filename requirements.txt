@@ -5,3 +5,4 @@ pytz
 reportlab
 psycopg2-binary
 gunicorn
+xlsxwriter
