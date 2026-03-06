@@ -1654,7 +1654,28 @@ def admin_faculty_management():
     dept_filter = request.args.get("dept", "").strip()
 
     page = int(request.args.get("page", 1))
-    per_page = 20
+
+    per_page = int(request.args.get("per_page", 25))
+    if per_page not in [25, 50, 100]:
+        per_page = 25
+
+    sort_by = request.args.get("sort_by", "name")
+    order = request.args.get("order", "asc")
+
+    allowed_sort = {
+        "name": "name",
+        "email": "email",
+        "department": "department"
+    }
+
+    if sort_by not in allowed_sort:
+        sort_by = "name"
+
+    if order not in ["asc", "desc"]:
+        order = "asc"
+
+    order_sql = f"ORDER BY {allowed_sort[sort_by]} {order.upper()}"
+
     offset = (page - 1) * per_page
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
@@ -1663,9 +1684,10 @@ def admin_faculty_management():
         dept_filter = admin_dept
 
     # ================================
-    # 📥 DOWNLOAD TEMPLATE
+    # DOWNLOAD TEMPLATE
     # ================================
     if request.args.get("download") == "template":
+
         df = pd.DataFrame(columns=["Name", "Email", "Department"])
         path = "faculty_template.xlsx"
         df.to_excel(path, index=False)
@@ -1678,29 +1700,36 @@ def admin_faculty_management():
         return send_file(path, as_attachment=True)
 
     # ================================
-    # 📤 EXPORT
+    # FILTER CONDITIONS
+    # ================================
+    where, params = [], []
+
+    if dept_filter:
+        where.append("department=?")
+        params.append(dept_filter)
+
+    if search:
+        where.append("(LOWER(name) LIKE ? OR LOWER(email) LIKE ?)")
+        params.extend([f"%{search}%", f"%{search}%"])
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    # ================================
+    # EXPORT EXCEL
     # ================================
     if request.args.get("export") == "excel":
-        where, params = [], []
 
-        if dept_filter:
-            where.append("department=?")
-            params.append(dept_filter)
-
-        if search:
-            where.append("(LOWER(name) LIKE ? OR LOWER(email) LIKE ?)")
-            params.extend([f"%{search}%", f"%{search}%"])
-
-        where_sql = " WHERE " + " AND ".join(where) if where else ""
-
-        execute(cur,f"""
+        execute(cur, f"""
             SELECT name,email,department
             FROM faculty
             {where_sql}
-            ORDER BY name
+            {order_sql}
         """, params)
 
-        df = pd.DataFrame(cur.fetchall())
+        rows = cur.fetchall()
+
+        df = pd.DataFrame(rows)
+
         path = "faculty_export.xlsx"
         df.to_excel(path, index=False)
 
@@ -1712,13 +1741,32 @@ def admin_faculty_management():
         return send_file(path, as_attachment=True)
 
     # ================================
-    # 📝 POST ACTIONS
+    # POST ACTIONS
     # ================================
     if request.method == "POST":
+
         action = request.form.get("action")
 
+        # ---------- EDIT FACULTY ----------
+        if action == "edit_faculty":
+
+            fid = request.form.get("fid")
+            name = request.form.get("name").strip()
+            email = request.form.get("email").strip().lower()
+            department = admin_dept if admin_role == "admin" else request.form.get("department")
+
+            execute(cur, """
+                UPDATE faculty
+                SET name=?, email=?, department=?
+                WHERE id=?
+            """, (name, email, department, fid))
+
+            con.commit()
+
+            flash("Faculty updated successfully ✅")
+
         # ---------- BULK UPLOAD ----------
-        if action == "bulk_upload":
+        elif action == "bulk_upload":
 
             file = request.files.get("file")
 
@@ -1737,6 +1785,7 @@ def admin_faculty_management():
             created = 0
 
             for _, r in df.iterrows():
+
                 name = str(r["Name"]).strip()
                 email = str(r["Email"]).strip().lower()
                 dept = admin_dept if admin_role == "admin" else str(r["Department"]).strip()
@@ -1758,6 +1807,7 @@ def admin_faculty_management():
                 created += 1
 
             con.commit()
+
             flash(f"{created} faculty added successfully ✅")
 
         # ---------- MANUAL ADD ----------
@@ -1774,8 +1824,11 @@ def admin_faculty_management():
                     INSERT INTO faculty(name,email,password_hash,department,must_reset_password)
                     VALUES (?,?,?,?,1)
                 """, (name, email, password_hash, department))
+
                 con.commit()
+
                 flash("Faculty created successfully ✅")
+
             except:
                 flash("Faculty already exists ❌")
 
@@ -1787,29 +1840,20 @@ def admin_faculty_management():
         return redirect(url_for("admin_faculty_management"))
 
     # ================================
-    # 📋 LIST VIEW
+    # LIST VIEW
     # ================================
-    where, params = [], []
-
-    if dept_filter:
-        where.append("department=?")
-        params.append(dept_filter)
-
-    if search:
-        where.append("(LOWER(name) LIKE ? OR LOWER(email) LIKE ?)")
-        params.extend([f"%{search}%", f"%{search}%"])
-
-    where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     execute(cur,f"SELECT COUNT(*) FROM faculty {where_sql}", params)
+
     total_rows = list(cur.fetchone().values())[0]
+
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     execute(cur,f"""
         SELECT id,name,email,department
         FROM faculty
         {where_sql}
-        ORDER BY name
+        {order_sql}
         LIMIT ? OFFSET ?
     """, params + [per_page, offset])
 
@@ -1829,6 +1873,9 @@ def admin_faculty_management():
         page=page,
         total_pages=total_pages,
         total_rows=total_rows,
+        per_page=per_page,
+        sort_by=sort_by,
+        order=order,
         active_page="faculty"
     )
 @app.route("/admin/faculty/bulk-upload", methods=["GET", "POST"])
