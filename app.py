@@ -1762,8 +1762,54 @@ def admin_faculty_management():
             """, (name, email, department, fid))
 
             con.commit()
-
             flash("Faculty updated successfully ✅")
+
+        # ---------- DELETE FACULTY ----------
+        elif action == "delete_faculty":
+
+            fid = request.form.get("fid")
+
+            execute(cur,"DELETE FROM faculty WHERE id=?", (fid,))
+            con.commit()
+
+            flash("Faculty deleted successfully 🗑️")
+
+        # ---------- BULK RESET PASSWORD ----------
+        elif action == "bulk_reset_password":
+
+            faculty_ids = request.form.getlist("faculty_id")
+
+            for fid in faculty_ids:
+
+                password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+
+                execute(cur,"""
+                UPDATE faculty
+                SET password_hash=?, must_reset_password=1
+                WHERE id=?
+                """,(password_hash,fid))
+
+            con.commit()
+
+            flash("Passwords reset successfully 🔁")
+
+        # ---------- BULK DELETE ----------
+        elif action == "bulk_delete":
+
+            faculty_ids = request.form.getlist("faculty_id")
+
+            if faculty_ids:
+
+                placeholders = ",".join(["%s"] * len(faculty_ids))
+
+                execute(cur,
+                    f"DELETE FROM faculty WHERE id IN ({placeholders})",
+                    faculty_ids
+                )
+
+                con.commit()
+
+                flash(f"{len(faculty_ids)} faculty deleted successfully 🗑️")
 
         # ---------- BULK UPLOAD ----------
         elif action == "bulk_upload":
@@ -1777,6 +1823,7 @@ def admin_faculty_management():
             df = pd.read_excel(file)
 
             REQUIRED = ["Name", "Email", "Department"]
+
             for c in REQUIRED:
                 if c not in df.columns:
                     flash(f"Missing column: {c}")
@@ -1807,7 +1854,6 @@ def admin_faculty_management():
                 created += 1
 
             con.commit()
-
             flash(f"{created} faculty added successfully ✅")
 
         # ---------- MANUAL ADD ----------
@@ -1826,7 +1872,6 @@ def admin_faculty_management():
                 """, (name, email, password_hash, department))
 
                 con.commit()
-
                 flash("Faculty created successfully ✅")
 
             except:
@@ -1844,7 +1889,6 @@ def admin_faculty_management():
     # ================================
 
     execute(cur,f"SELECT COUNT(*) FROM faculty {where_sql}", params)
-
     total_rows = list(cur.fetchone().values())[0]
 
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
