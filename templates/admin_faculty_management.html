@@ -1,16 +1,17 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Faculty Management</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Faculty Management</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 
-  <style>
-    body { background:#f6f7fb; }
-    .card { border-radius: 16px; }
-    .table td, .table th { vertical-align: middle; }
-  </style>
+<style>
+body { background:#f6f7fb; }
+.card { border-radius:16px; }
+.table td,.table th { vertical-align:middle; }
+.sort-link{color:white;text-decoration:none;}
+</style>
 </head>
 
 <body class="bg-light">
@@ -19,382 +20,517 @@
 
 <div class="container mt-4">
 
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-    <div>
-      <h4 class="fw-bold mb-1">Faculty Management</h4>
-      <div class="text-muted small">
-        Total Faculty: <b>{{ total_rows }}</b> |
-        Page: <b>{{ page }}</b> / <b>{{ total_pages }}</b>
-      </div>
-    </div>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
 
-    <div class="d-flex gap-2 flex-wrap">
-      <a href="/admin/faculty-management?download=template" class="btn btn-success btn-sm">
-        ⬇ Download Template
-      </a>
+<div>
+<h4 class="fw-bold mb-1">Faculty Management</h4>
+<div class="text-muted small">
+Total Faculty: <b>{{ total_rows }}</b> |
+Page: <b>{{ page }}</b> / <b>{{ total_pages }}</b>
+</div>
+</div>
 
-      <a href="/admin/faculty-management?export=excel&search={{ search }}&dept={{ dept_filter }}"
-         class="btn btn-outline-primary btn-sm">
-        ⬇ Export Excel
-      </a>
-    </div>
-  </div>
+<div class="d-flex gap-2 flex-wrap">
 
-  {% with messages = get_flashed_messages() %}
-    {% if messages %}
-      <div class="alert alert-info">{{ messages[0] }}</div>
-    {% endif %}
-  {% endwith %}
+<a href="/admin/faculty-management?download=template"
+class="btn btn-success btn-sm">
+⬇ Download Template
+</a>
 
-  <!-- BULK UPLOAD -->
-  <div class="card shadow-sm mb-4 border-0">
-    <div class="card-body p-4">
-      <h5 class="fw-bold mb-3">📌 Bulk Upload Faculty (Excel)</h5>
+<a href="/admin/faculty-management?export=excel&search={{search}}&dept={{dept_filter}}&per_page={{per_page}}&sort_by={{sort_by}}&order={{order}}"
+class="btn btn-outline-primary btn-sm">
+⬇ Export Excel
+</a>
 
-      <form method="post" enctype="multipart/form-data">
-        <input type="hidden" name="action" value="bulk_upload">
+</div>
+</div>
 
-        {% if session.admin_role == "admin" %}
-          <input type="hidden" name="department" value="{{ session.admin_department }}">
-        {% endif %}
+{% with messages = get_flashed_messages() %}
+{% if messages %}
+<div class="alert alert-info">{{ messages[0] }}</div>
+{% endif %}
+{% endwith %}
 
-        <div class="row g-2 align-items-end">
-          <div class="col-md-8">
-            <label class="form-label fw-semibold">Upload Excel File</label>
-            <input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
-          </div>
+<!-- BULK UPLOAD -->
+<div class="card shadow-sm mb-4 border-0">
+<div class="card-body p-4">
 
-          <div class="col-md-4">
-            <button class="btn btn-primary w-100">
-              🚀 Upload & Create Faculty
-            </button>
-          </div>
-        </div>
+<h5 class="fw-bold mb-3">📌 Bulk Upload Faculty</h5>
 
-        <div class="text-muted small mt-2">
-          Required columns: <b>Name</b>, <b>Email</b>, <b>Department</b>
-        </div>
-      </form>
-    </div>
-  </div>
+<form method="post" enctype="multipart/form-data">
+<input type="hidden" name="action" value="bulk_upload">
 
-  <!-- MANUAL ADD -->
-  <div class="card shadow-sm mb-4 border-0">
-    <div class="card-body p-4">
-      <h5 class="fw-bold mb-3">➕ Add Faculty Manually</h5>
+<div class="row g-2 align-items-end">
 
-      <form method="post">
-        <input type="hidden" name="action" value="manual_add">
+<div class="col-md-8">
+<label class="form-label fw-semibold">Upload Excel</label>
+<input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
+</div>
 
-        <div class="row g-3">
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">Name</label>
-            <input type="text" name="name" class="form-control" placeholder="Faculty Name" required>
-          </div>
-
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">Email</label>
-            <input type="email" name="email" class="form-control" placeholder="faculty@rnsit.ac.in" required>
-          </div>
-
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">Department</label>
-
-            {% if session.admin_role == "super_admin" %}
-              <select name="department" class="form-select" required>
-                <option value="">Select</option>
-                {% for d in departments_list %}
-                  <option value="{{ d }}">{{ d }}</option>
-                {% endfor %}
-              </select>
-            {% else %}
-              <input type="hidden" name="department" value="{{ session.admin_department }}">
-              <input type="text" class="form-control" value="{{ session.admin_department }}" disabled>
-            {% endif %}
-
-          </div>
-
-          <div class="col-md-3">
-            <label class="form-label fw-semibold">Password (Optional)</label>
-            <input type="text" name="password" class="form-control" placeholder="Auto-generate if empty">
-          </div>
-        </div>
-
-        <div class="mt-3">
-          <button class="btn btn-success">
-            ✅ Create Faculty
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- FILTER BAR -->
-  <form method="get" action="/admin/faculty-management" class="card shadow-sm p-3 mb-3">
-
-    {% if session.admin_role == "admin" %}
-      <input type="hidden" name="dept" value="{{ session.admin_department }}">
-    {% endif %}
-
-    <div class="row g-2 align-items-end">
-      <div class="col-md-6">
-        <label class="form-label fw-semibold">Search</label>
-        <input class="form-control" name="search" value="{{ search }}"
-               placeholder="Name / Email / Department">
-      </div>
-
-      {% if session.admin_role == "super_admin" %}
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">Department</label>
-        <select class="form-select" name="dept">
-          <option value="">All</option>
-          {% for d in departments_list %}
-            <option value="{{ d }}" {% if dept_filter==d %}selected{% endif %}>{{ d }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
-
-      <div class="col-md-3 d-flex gap-2">
-        <button class="btn btn-primary w-100">Apply</button>
-        <a href="/admin/faculty-management" class="btn btn-outline-secondary w-100">Reset</a>
-      </div>
-    </div>
-  </form>
-
-  <!-- FACULTY LIST -->
-  <div class="card shadow-sm border-0">
-    <div class="card-body p-4">
-      <h5 class="fw-bold mb-3">📋 Faculty List</h5>
-
-      {% if faculty %}
-      <form method="post">
-        <input type="hidden" name="action" value="bulk_reset_password">
-
-        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-          <button class="btn btn-warning btn-sm">
-            🔁 Reset Password (Selected)
-          </button>
-
-          <button type="button" class="btn btn-outline-dark btn-sm" onclick="selectAllVisible()">
-            Select All Visible
-          </button>
-        </div>
-
-        <div class="table-responsive">
-          <table class="table table-bordered table-hover align-middle bg-white">
-            <thead class="table-dark">
-              <tr>
-                <th style="width:60px;" class="text-center">
-                  <input type="checkbox" id="selectAllMaster" onclick="toggleSelectAllMaster()">
-                </th>
-                <th>#</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Department</th>
-                <th style="width:320px;">Actions</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {% for f in faculty %}
-              <tr>
-                <td class="text-center">
-                  <input type="checkbox" class="rowCheck" name="faculty_id" value="{{ f.id }}">
-                </td>
-                <td>{{ loop.index }}</td>
-                <td class="fw-semibold">{{ f.name }}</td>
-                <td>{{ f.email }}</td>
-                <td>{{ f.department }}</td>
-
-                <td>
-                  <!-- EDIT (modal trigger) -->
-                  <button type="button"
-                          class="btn btn-sm btn-outline-primary"
-                          data-bs-toggle="modal"
-                          data-bs-target="#editModal"
-                          data-id="{{ f.id }}"
-                          data-name="{{ f.name }}"
-                          data-email="{{ f.email }}"
-                          data-department="{{ f.department }}">
-                    ✏️ Edit
-                  </button>
-
-                  <!-- Reset password -->
-                  <form method="post" style="display:inline;">
-                    <input type="hidden" name="action" value="reset_password">
-                    <input type="hidden" name="fid" value="{{ f.id }}">
-                    <button class="btn btn-sm btn-outline-warning ms-2">
-                      Reset Password
-                    </button>
-                  </form>
-
-                  <!-- Delete (modal trigger) -->
-                  <button type="button"
-                          class="btn btn-sm btn-danger ms-2"
-                          data-bs-toggle="modal"
-                          data-bs-target="#deleteModal"
-                          data-id="{{ f.id }}"
-                          data-name="{{ f.name }}">
-                    Delete
-                  </button>
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-
-      </form>
-
-      <!-- Pagination -->
-      <div class="d-flex justify-content-between align-items-center mt-3">
-        <div class="small text-muted">
-          Showing page {{ page }} of {{ total_pages }}
-        </div>
-
-        <div class="d-flex gap-2">
-          {% if page > 1 %}
-            <a class="btn btn-outline-secondary btn-sm"
-               href="/admin/faculty-management?page={{ page-1 }}&search={{ search }}&dept={{ dept_filter }}">
-              ← Prev
-            </a>
-          {% endif %}
-
-          {% if page < total_pages %}
-            <a class="btn btn-outline-secondary btn-sm"
-               href="/admin/faculty-management?page={{ page+1 }}&search={{ search }}&dept={{ dept_filter }}">
-              Next →
-            </a>
-          {% endif %}
-        </div>
-      </div>
-
-      {% else %}
-        <div class="alert alert-warning">No faculty found.</div>
-      {% endif %}
-    </div>
-  </div>
+<div class="col-md-4">
+<button class="btn btn-primary w-100">
+🚀 Upload Faculty
+</button>
+</div>
 
 </div>
 
-<!-- EDIT FACULTY MODAL -->
-<div class="modal fade" id="editModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-
-      <form method="post">
-        <input type="hidden" name="action" value="update_faculty">
-        <input type="hidden" name="fid" id="edit_fid">
-
-        <div class="modal-header">
-          <h5 class="modal-title">Edit Faculty</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-
-        <div class="modal-body">
-
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Name</label>
-            <input type="text" class="form-control" name="name" id="edit_name" required>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Email</label>
-            <input type="email" class="form-control" name="email" id="edit_email" required>
-            <div class="text-muted small mt-1">
-              Note: Email must be unique.
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Department</label>
-            <select class="form-select" name="department" id="edit_department" required>
-              <option value="">Select</option>
-              {% for d in departments_list %}
-                <option value="{{ d }}">{{ d }}</option>
-              {% endfor %}
-            </select>
-          </div>
-
-        </div>
-
-        <div class="modal-footer">
-          <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">Cancel</button>
-          <button class="btn btn-primary">💾 Save Changes</button>
-        </div>
-
-      </form>
-
-    </div>
-  </div>
+<div class="text-muted small mt-2">
+Columns required: <b>Name</b>, <b>Email</b>, <b>Department</b>
 </div>
 
-<!-- DELETE CONFIRM MODAL -->
-<div class="modal fade" id="deleteModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
+</form>
+</div>
+</div>
 
-      <div class="modal-header">
-        <h5 class="modal-title">Confirm Delete</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
+<!-- MANUAL ADD -->
+<div class="card shadow-sm mb-4 border-0">
+<div class="card-body p-4">
 
-      <div class="modal-body">
-        Are you sure you want to delete <b id="facultyName"></b> ?
-        <div class="text-danger small mt-2">
-          This will also remove all team assignments of this faculty.
-        </div>
-      </div>
+<h5 class="fw-bold mb-3">➕ Add Faculty</h5>
 
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <a id="deleteBtn" class="btn btn-danger">Delete</a>
-      </div>
+<form method="post">
+<input type="hidden" name="action" value="manual_add">
 
-    </div>
-  </div>
+<div class="row g-3">
+
+<div class="col-md-3">
+<label class="form-label fw-semibold">Name</label>
+<input type="text" name="name" class="form-control" required>
+</div>
+
+<div class="col-md-3">
+<label class="form-label fw-semibold">Email</label>
+<input type="email" name="email" class="form-control" required>
+</div>
+
+<div class="col-md-3">
+<label class="form-label fw-semibold">Department</label>
+
+{% if session.admin_role=="super_admin" %}
+
+<select name="department" class="form-select">
+
+<option value="">Select</option>
+
+{% for d in departments_list %}
+<option value="{{d}}">{{d}}</option>
+{% endfor %}
+
+</select>
+
+{% else %}
+
+<input type="hidden" name="department" value="{{session.admin_department}}">
+<input type="text" class="form-control" value="{{session.admin_department}}" disabled>
+
+{% endif %}
+
+</div>
+
+<div class="col-md-3">
+<label class="form-label fw-semibold">Password (Optional)</label>
+<input type="text" name="password" class="form-control">
+</div>
+
+</div>
+
+<div class="mt-3">
+<button class="btn btn-success">
+✅ Create Faculty
+</button>
+</div>
+
+</form>
+
+</div>
+</div>
+
+<!-- FILTER -->
+<form method="get" action="/admin/faculty-management"
+class="card shadow-sm p-3 mb-3">
+
+<div class="row g-2 align-items-end">
+
+<div class="col-md-4">
+<label class="form-label fw-semibold">Search</label>
+<input class="form-control" name="search" value="{{search}}">
+</div>
+
+<div class="col-md-3">
+
+<label class="form-label fw-semibold">Department</label>
+
+<select class="form-select" name="dept">
+
+<option value="">All</option>
+
+{% for d in departments_list %}
+<option value="{{d}}" {% if dept_filter==d %}selected{% endif %}>
+{{d}}
+</option>
+{% endfor %}
+
+</select>
+
+</div>
+
+<div class="col-md-2">
+<label class="form-label fw-semibold">View</label>
+
+<select name="per_page" class="form-select">
+
+<option value="25" {% if per_page==25 %}selected{% endif %}>25</option>
+<option value="50" {% if per_page==50 %}selected{% endif %}>50</option>
+<option value="100" {% if per_page==100 %}selected{% endif %}>100</option>
+
+</select>
+
+</div>
+
+<div class="col-md-3 d-flex gap-2">
+<button class="btn btn-primary w-100">Apply</button>
+<a href="/admin/faculty-management"
+class="btn btn-outline-secondary w-100">Reset</a>
+</div>
+
+</div>
+</form>
+
+<!-- FACULTY LIST -->
+<div class="card shadow-sm border-0">
+
+<div class="card-body p-4">
+
+<h5 class="fw-bold mb-3">📋 Faculty List</h5>
+
+{% if faculty %}
+
+<form method="post">
+
+<input type="hidden" name="action" id="bulkAction" value="">
+
+<div class="d-flex justify-content-between mb-2">
+
+<div class="d-flex gap-2">
+
+<button type="submit"
+class="btn btn-warning btn-sm"
+onclick="document.getElementById('bulkAction').value='bulk_reset_password'">
+🔁 Reset Password
+</button>
+
+<button type="submit"
+class="btn btn-danger btn-sm"
+onclick="document.getElementById('bulkAction').value='bulk_delete'">
+🗑 Delete Selected
+</button>
+
+</div>
+
+<button type="button"
+class="btn btn-outline-dark btn-sm"
+onclick="selectAllVisible()">
+Select All Visible
+</button>
+
+</div>
+
+<div class="table-responsive">
+
+<table class="table table-bordered table-hover align-middle bg-white">
+
+<thead class="table-dark">
+
+<tr>
+
+<th style="width:60px;">
+<input type="checkbox"
+id="selectAllMaster"
+onclick="toggleSelectAllMaster()">
+</th>
+
+<th>#</th>
+
+<th>
+<a class="sort-link"
+href="?page=1&search={{search}}&dept={{dept_filter}}&per_page={{per_page}}&sort_by=name&order={% if sort_by=='name' and order=='asc' %}desc{% else %}asc{% endif %}">
+Name
+</a>
+</th>
+
+<th>
+<a class="sort-link"
+href="?page=1&search={{search}}&dept={{dept_filter}}&per_page={{per_page}}&sort_by=email&order={% if sort_by=='email' and order=='asc' %}desc{% else %}asc{% endif %}">
+Email
+</a>
+</th>
+
+<th>
+<a class="sort-link"
+href="?page=1&search={{search}}&dept={{dept_filter}}&per_page={{per_page}}&sort_by=department&order={% if sort_by=='department' and order=='asc' %}desc{% else %}asc{% endif %}">
+Department
+</a>
+</th>
+
+<th>Actions</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{% for f in faculty %}
+
+<tr>
+
+<td>
+<input type="checkbox"
+class="rowCheck"
+name="faculty_id"
+value="{{f.id}}">
+</td>
+
+<td>{{ (page-1)*per_page + loop.index }}</td>
+
+<td class="fw-semibold">{{f.name}}</td>
+
+<td>{{f.email}}</td>
+
+<td>{{f.department}}</td>
+
+<td>
+
+<button type="button"
+class="btn btn-sm btn-primary"
+data-bs-toggle="modal"
+data-bs-target="#editModal"
+data-id="{{f.id}}"
+data-name="{{f.name}}"
+data-email="{{f.email}}"
+data-department="{{f.department}}">
+Edit
+</button>
+
+<button type="button"
+class="btn btn-sm btn-danger"
+data-bs-toggle="modal"
+data-bs-target="#deleteModal"
+data-id="{{f.id}}"
+data-name="{{f.name}}">
+Delete
+</button>
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+</div>
+
+</form>
+
+<!-- PAGINATION -->
+
+<div class="d-flex justify-content-between align-items-center mt-3">
+
+<div class="small text-muted">
+Showing page {{page}} of {{total_pages}}
+</div>
+
+<div class="d-flex gap-2 flex-wrap">
+
+{% if page>1 %}
+<a class="btn btn-outline-secondary btn-sm"
+href="?page={{page-1}}&search={{search}}&dept={{dept_filter}}&per_page={{per_page}}&sort_by={{sort_by}}&order={{order}}">
+← Prev
+</a>
+{% endif %}
+
+{% for p in range(1,total_pages+1) %}
+
+<a class="btn btn-outline-secondary btn-sm {% if p==page %}active{% endif %}"
+href="?page={{p}}&search={{search}}&dept={{dept_filter}}&per_page={{per_page}}&sort_by={{sort_by}}&order={{order}}">
+{{p}}
+</a>
+
+{% endfor %}
+
+{% if page<total_pages %}
+<a class="btn btn-outline-secondary btn-sm"
+href="?page={{page+1}}&search={{search}}&dept={{dept_filter}}&per_page={{per_page}}&sort_by={{sort_by}}&order={{order}}">
+Next →
+</a>
+{% endif %}
+
+</div>
+</div>
+
+{% else %}
+
+<div class="alert alert-warning">
+No faculty found.
+</div>
+
+{% endif %}
+
+</div>
+</div>
+
+</div>
+
+<!-- EDIT MODAL -->
+
+<div class="modal fade" id="editModal">
+
+<div class="modal-dialog">
+<div class="modal-content">
+
+<form method="post">
+
+<input type="hidden" name="action" value="edit_faculty">
+<input type="hidden" name="fid" id="edit_fid">
+
+<div class="modal-header">
+<h5 class="modal-title">Edit Faculty</h5>
+<button type="button" class="btn-close"
+data-bs-dismiss="modal"></button>
+</div>
+
+<div class="modal-body">
+
+<div class="mb-2">
+<label>Name</label>
+<input type="text"
+name="name"
+id="edit_name"
+class="form-control"
+required>
+</div>
+
+<div class="mb-2">
+<label>Email</label>
+<input type="email"
+name="email"
+id="edit_email"
+class="form-control"
+required>
+</div>
+
+<div class="mb-2">
+<label>Department</label>
+
+<select name="department"
+id="edit_department"
+class="form-select">
+
+{% for d in departments_list %}
+<option value="{{d}}">{{d}}</option>
+{% endfor %}
+
+</select>
+
+</div>
+
+</div>
+
+<div class="modal-footer">
+
+<button class="btn btn-success">
+Save Changes
+</button>
+
+</div>
+
+</form>
+
+</div>
+</div>
+</div>
+
+<!-- DELETE MODAL -->
+
+<div class="modal fade" id="deleteModal">
+
+<div class="modal-dialog">
+<div class="modal-content">
+
+<div class="modal-header">
+<h5 class="modal-title">Confirm Delete</h5>
+<button type="button" class="btn-close"
+data-bs-dismiss="modal"></button>
+</div>
+
+<div class="modal-body">
+Delete faculty <b id="facultyName"></b> ?
+</div>
+
+<div class="modal-footer">
+
+<form method="post">
+
+<input type="hidden" name="action" value="delete_faculty">
+<input type="hidden" name="fid" id="deleteFid">
+
+<button class="btn btn-danger">
+Delete
+</button>
+
+</form>
+
+</div>
+
+</div>
+</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-  function toggleSelectAllMaster() {
-    const master = document.getElementById("selectAllMaster");
-    document.querySelectorAll(".rowCheck").forEach(cb => cb.checked = master.checked);
-  }
 
-  function selectAllVisible() {
-    document.querySelectorAll(".rowCheck").forEach(cb => cb.checked = true);
-    document.getElementById("selectAllMaster").checked = true;
-  }
+function toggleSelectAllMaster(){
+const master=document.getElementById("selectAllMaster");
+document.querySelectorAll(".rowCheck").forEach(cb=>cb.checked=master.checked);
+}
 
-  // Delete modal dynamic values
-  const deleteModal = document.getElementById('deleteModal');
-  deleteModal.addEventListener('show.bs.modal', function (event) {
-    const button = event.relatedTarget;
-    const fid = button.getAttribute('data-id');
-    const name = button.getAttribute('data-name');
+function selectAllVisible(){
+document.querySelectorAll(".rowCheck").forEach(cb=>cb.checked=true);
+document.getElementById("selectAllMaster").checked=true;
+}
 
-    document.getElementById("facultyName").innerText = name;
-    document.getElementById("deleteBtn").href = "/admin/faculty/delete/" + fid;
-  });
+const deleteModal=document.getElementById('deleteModal');
 
-  // Edit modal dynamic values
-  const editModal = document.getElementById('editModal');
-  editModal.addEventListener('show.bs.modal', function (event) {
-    const button = event.relatedTarget;
+deleteModal.addEventListener('show.bs.modal',function(event){
 
-    const fid = button.getAttribute('data-id');
-    const name = button.getAttribute('data-name');
-    const email = button.getAttribute('data-email');
-    const dept = button.getAttribute('data-department');
+const button=event.relatedTarget;
 
-    document.getElementById("edit_fid").value = fid;
-    document.getElementById("edit_name").value = name;
-    document.getElementById("edit_email").value = email;
-    document.getElementById("edit_department").value = dept;
-  });
+document.getElementById("facultyName").innerText=button.getAttribute('data-name');
+
+document.getElementById("deleteFid").value=button.getAttribute('data-id');
+
+});
+
+const editModal=document.getElementById('editModal');
+
+editModal.addEventListener('show.bs.modal',function(event){
+
+const button=event.relatedTarget;
+
+document.getElementById("edit_fid").value=button.getAttribute('data-id');
+
+document.getElementById("edit_name").value=button.getAttribute('data-name');
+
+document.getElementById("edit_email").value=button.getAttribute('data-email');
+
+document.getElementById("edit_department").value=button.getAttribute('data-department');
+
+});
+
 </script>
 
 </body>
