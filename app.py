@@ -59,7 +59,7 @@ if DATABASE_URL:
 
     pg_pool = psycopg2.pool.SimpleConnectionPool(
         minconn=5,
-        maxconn=50,
+        maxconn=200,
         dbname=url.path[1:],
         user=url.username,
         password=url.password,
