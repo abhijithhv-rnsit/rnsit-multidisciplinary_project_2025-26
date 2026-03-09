@@ -69,10 +69,20 @@ if DATABASE_URL:
     )
 
 def db():
+    global pg_pool
+
     if pg_pool:
-        conn = pg_pool.getconn()
-        conn.autocommit = False
-        return conn
+        try:
+            conn = pg_pool.getconn()
+            conn.autocommit = False
+            return conn
+
+        except Exception as e:
+            print("⚠️ Pool exhausted, creating temporary connection:", e)
+
+            # fallback connection (prevents crash)
+            return psycopg2.connect(DATABASE_URL)
+
     else:
         conn = sqlite3.connect("database.db")
         conn.row_factory = sqlite3.Row
