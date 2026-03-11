@@ -2744,7 +2744,7 @@ def register(pid):
         # =====================================================
 
         team_size = 1 + len(members)
-        if team_size != 6:
+        if team_size < 4 or team_size > 6:
             if pg_pool:
                 pg_pool.putconn(con)
             else:
@@ -2764,21 +2764,21 @@ def register(pid):
         cse_count = sum(1 for d in all_departments if d in cse_branches)
         core_count = sum(1 for d in all_departments if d in core_branches)
 
-        if cse_count < 4:
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("At least 4 members must be from CSE / AIML / DS / CY branches.")
-            return redirect(request.url)
+        #if cse_count < 4:
+        #    if pg_pool:
+        #        pg_pool.putconn(con)
+        #    else:
+        #        con.close()
+        #   flash("At least 4 members must be from CSE / AIML / DS / CY branches.")
+        #   return redirect(request.url)
 
-        if core_count < 1:
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("At least 1 member must be from ECE / EEE / ME / Civil branch.")
-            return redirect(request.url)
+        #if core_count < 1:
+        #   if pg_pool:
+        #       pg_pool.putconn(con)
+        #   else:
+        #       con.close()
+        #   flash("At least 1 member must be from ECE / EEE / ME / Civil branch.")
+        #   return redirect(request.url)
 
         # ---------------- DUPLICATE CHECKS (UNCHANGED) ----------------
 
@@ -2841,10 +2841,11 @@ def register(pid):
                 leader_email,
                 leader_phone,
                 leader_department,
+                assigned_department,
                 leader_section,
                 problem_id,
                 created_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
         """, (
             team_name,
@@ -2852,6 +2853,7 @@ def register(pid):
             leader_usn,
             leader_email,
             leader_phone,
+            leader_department,
             leader_department,
             leader_section,
             pid,
