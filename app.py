@@ -2980,16 +2980,16 @@ def admin_edit_team(team_id):
             return redirect(request.url)
 
         # ---- CORE BRANCH RULE ----
-        core = ["ECE","EEE","ME","CV","CIVIL"]
-        depts = [team["leader_department"]] + [m[4] for m in members_new]
+        #core = ["ECE","EEE","ME","CV","CIVIL"]
+        #depts = [team["leader_department"]] + [m[4] for m in members_new]
 
-        if not any(d in core for d in depts):
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("At least one member must be from ECE/EEE/ME/CV.")
-            return redirect(request.url)
+        #if not any(d in core for d in depts):
+        #    if pg_pool:
+        #        pg_pool.putconn(con)
+         #   else:
+           #     con.close()
+          #  flash("At least one member must be from ECE/EEE/ME/CV.")
+          #  return redirect(request.url)
 
         # ---- INSERT UPDATED MEMBERS ----
         for m in members_new:
