@@ -3134,48 +3134,91 @@ def admin_management():
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "ME", "CV"]
 
-    # ---------------- CREATE ADMIN ----------------
+    # ---------------- POST ACTIONS ----------------
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        email = request.form.get("email", "").strip().lower()
-        department = request.form.get("department", "").strip()
-        role = request.form.get("role", "").strip()
 
-        if not name or not email or not role:
-            flash("All fields are required")
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            return redirect(request.url)
+        action = request.form.get("action")
 
-        if role == "admin" and not department:
-            flash("Department is required for Department Admin")
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            return redirect(request.url)
+        # ---------- CREATE ADMIN ----------
+        if action == "create_admin":
 
-        password = "RNSIT@2026"
-        password_hash = generate_password_hash(password)
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip().lower()
+            department = request.form.get("department", "").strip()
+            role = request.form.get("role", "").strip()
 
-        try:
+            if not name or not email or not role:
+                flash("All fields are required")
+                return redirect(request.url)
+
+            if role == "admin" and not department:
+                flash("Department is required for Department Admin")
+                return redirect(request.url)
+
+            password = "RNSIT@2026"
+            password_hash = generate_password_hash(password)
+
+            try:
+                execute(cur,"""
+                    INSERT INTO admins
+                    (name, email, password_hash, role, department, must_reset_password)
+                    VALUES (?,?,?,?,?,1)
+                """, (name, email, password_hash, role, department if role=="admin" else None))
+
+                con.commit()
+                flash(f"Admin created successfully ✅ Default password: {password}")
+
+            except:
+                flash("Email already exists ❌")
+
+        # ---------- EDIT ADMIN ----------
+        elif action == "edit_admin":
+
+            aid = request.form.get("aid")
+            name = request.form.get("name").strip()
+            email = request.form.get("email").strip().lower()
+            department = request.form.get("department").strip()
+
             execute(cur,"""
-                INSERT INTO admins
-                (name, email, password_hash, role, department, must_reset_password)
-                VALUES (?,?,?,?,?,1)
-            """, (name, email, password_hash, role, department if role=="admin" else None))
+                UPDATE admins
+                SET name=?, email=?, department=?
+                WHERE id=?
+            """,(name,email,department,aid))
 
             con.commit()
-            flash(f"Admin created successfully ✅ Default password: {password}")
-        except:
-            flash("Email already exists ❌")
+            flash("Admin updated successfully ✅")
+
+        # ---------- RESET PASSWORD ----------
+        elif action == "reset_password":
+
+            aid = request.form.get("aid")
+
+            password_hash = generate_password_hash("RNSIT@2026")
+
+            execute(cur,"""
+                UPDATE admins
+                SET password_hash=?, must_reset_password=1
+                WHERE id=?
+            """,(password_hash,aid))
+
+            con.commit()
+            flash("Password reset successfully 🔁")
+
+        # ---------- DELETE ADMIN ----------
+        elif action == "delete_admin":
+
+            aid = request.form.get("aid")
+
+            execute(cur,"DELETE FROM admins WHERE id=?", (aid,))
+            con.commit()
+
+            flash("Admin deleted successfully 🗑️")
 
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
+
         return redirect(request.url)
 
     # ---------------- LIST ADMINS ----------------
@@ -3197,7 +3240,6 @@ def admin_management():
         departments_list=departments_list,
         active_page="admins"
     )
-
 
 @app.route("/admin/upload", methods=["GET", "POST"])
 def admin_upload():
