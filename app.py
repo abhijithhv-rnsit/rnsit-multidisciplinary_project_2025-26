@@ -3337,29 +3337,43 @@ def admin_teams():
     con = db()
     cur = con.cursor()
 
-    # ================= UNLOCK / DELETE TEAM =================
+    # ================= ACTIONS =================
     if request.method == "POST":
+
+        action = request.form.get("action")
         team_id = request.form.get("team_id")
 
-        if team_id:
-            # Delete faculty mapping
-            execute(cur,"DELETE FROM team_faculty WHERE team_id=?", (team_id,))
+        # -------- TRANSFER TEAM --------
+        if action == "transfer_department":
 
-            # Delete members
-            execute(cur,"DELETE FROM team_members WHERE team_id=?", (team_id,))
+            new_department = request.form.get("department")
 
-            # Delete team itself
-            execute(cur,"DELETE FROM teams WHERE id=?", (team_id,))
+            execute(cur, """
+                UPDATE teams
+                SET assigned_department=?
+                WHERE id=?
+            """, (new_department, team_id))
 
             con.commit()
-            flash("Team unlocked and removed successfully ✅ Problem is now available again.")
+            flash("Team transferred successfully ✅")
+
+        # -------- DELETE TEAM --------
+        elif action == "delete_team":
+
+            if team_id:
+                execute(cur,"DELETE FROM team_faculty WHERE team_id=?", (team_id,))
+                execute(cur,"DELETE FROM team_members WHERE team_id=?", (team_id,))
+                execute(cur,"DELETE FROM teams WHERE id=?", (team_id,))
+
+                con.commit()
+                flash("Team unlocked and removed successfully ✅ Problem available again.")
 
     # ---------------- ROLE-BASED FILTER ----------------
     where = []
     params = []
 
     if session.get("admin_role") == "admin":
-        where.append("t.leader_department = ?")
+        where.append("t.assigned_department = ?")
         params.append(session.get("admin_department"))
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
@@ -3369,7 +3383,7 @@ def admin_teams():
         SELECT
             t.id AS team_id,
             t.team_name,
-            t.leader_department,
+            t.assigned_department,
             t.leader_section,
             p.title AS problem_title,
             t.leader_name,
@@ -3403,6 +3417,7 @@ def admin_teams():
     """, params)
 
     members_rows = cur.fetchall()
+
     if pg_pool:
         pg_pool.putconn(con)
     else:
@@ -3419,10 +3434,12 @@ def admin_teams():
 
     # ---------------- FINAL UI DATA ----------------
     rows = []
+
     for t in teams:
         tid = t["team_id"]
 
         member_list = members_map.get(tid, [])
+
         if member_list:
             members_text = " | ".join(
                 f"{m['member_name']} ({m['usn']}, {m['department']})"
@@ -3439,7 +3456,7 @@ def admin_teams():
         rows.append({
             "team_id": tid,
             "team_name": t["team_name"],
-            "leader_department": t["leader_department"],
+            "leader_department": t["assigned_department"],
             "leader_section": t["leader_section"],
             "problem_title": t["problem_title"],
             "leader_name": t["leader_name"],
@@ -3454,7 +3471,6 @@ def admin_teams():
         rows=rows,
         active_page="teams"
     )
-
 
 @app.route("/admin/export-teams")
 def admin_export_teams():
@@ -4404,7 +4420,14 @@ if __name__ == "__main__":
         VALUES ('project_start_date','2026-02-02')
         ON CONFLICT (key) DO NOTHING
     """)
-
+    try:
+    cur.execute("""
+        ALTER TABLE teams
+        ADD COLUMN assigned_department TEXT
+    """)
+    con.commit()
+    except:
+       pass
     # ---------------- DEFAULT SUPER ADMIN ----------------
 
     from werkzeug.security import generate_password_hash
