@@ -106,7 +106,7 @@
               <th>USN</th>
               <th>Phone</th>
               <th>Members</th>
-              <th>Faculty Guide / Unlock</th>
+              <th>Faculty Guide / Actions</th>
             </tr>
           </thead>
 
@@ -146,7 +146,29 @@
                   <div class="small mt-1 wrap-text">{{ r.faculty_text }}</div>
                 {% endif %}
 
-                <!-- 🔓 UNLOCK FEATURE (NEW – ONLY ADDITION) -->
+                <!-- MOVE TEAM TO OTHER DEPARTMENT -->
+                <form method="post" class="mt-2 d-flex gap-1">
+                  <input type="hidden" name="action" value="transfer_department">
+                  <input type="hidden" name="team_id" value="{{ r.team_id }}">
+
+                  <select name="department" class="form-select form-select-sm" required>
+                    <option value="">Move</option>
+                    <option value="CSE">CSE</option>
+                    <option value="CSE-AIML">CSE-AIML</option>
+                    <option value="CSE-DS">CSE-DS</option>
+                    <option value="CSE-CY">CSE-CY</option>
+                    <option value="ECE">ECE</option>
+                    <option value="EEE">EEE</option>
+                    <option value="ME">ME</option>
+                    <option value="CV">CV</option>
+                  </select>
+
+                  <button class="btn btn-sm btn-primary">
+                    Move
+                  </button>
+                </form>
+
+                <!-- UNLOCK TEAM -->
                 <form method="post"
                       class="mt-2"
                       onsubmit="return confirm('Unlock this team and allow new registration? This will permanently delete the team.');">
@@ -156,13 +178,13 @@
                   <button class="btn btn-sm btn-outline-danger w-100">
                     🔓 Unlock & Remove Team
                   </button>
-
                 </form>
+
+                <!-- EDIT TEAM -->
                 <a href="/admin/edit-team/{{ r.team_id }}"
-                   class="btn btn-sm btn-outline-primary mt-1">
+                   class="btn btn-sm btn-outline-primary mt-1 w-100">
                    ✏️ Edit Team
                 </a>
-
 
               </td>
 
