@@ -1333,8 +1333,26 @@ def faculty_login():
 
         con = db()
         cur = con.cursor()
+
+        # check faculty table
         execute(cur,"SELECT * FROM faculty WHERE email=?", (email,))
         faculty = cur.fetchone()
+
+        # if not found, check admins table
+        if not faculty:
+            execute(cur,"SELECT id,name,email,password_hash,department FROM admins WHERE email=?", (email,))
+            admin = cur.fetchone()
+
+            if admin:
+                faculty = {
+                    "id": admin["id"],
+                    "name": admin["name"],
+                    "email": admin["email"],
+                    "password_hash": admin["password_hash"],
+                    "department": admin["department"],
+                    "must_reset_password": 0
+                }
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
@@ -1351,12 +1369,11 @@ def faculty_login():
         session["faculty_id"] = faculty["id"]
         session["faculty_name"] = faculty["name"]
 
-        # ✅ Mandatory reset on first login
+        # mandatory password reset
         try:
-            if faculty["must_reset_password"] == 1:
+            if faculty.get("must_reset_password",0) == 1:
                 return redirect(url_for("faculty_change_password"))
         except:
-            # If column not present for some reason, allow dashboard
             pass
 
         return redirect(url_for("faculty_dashboard"))
