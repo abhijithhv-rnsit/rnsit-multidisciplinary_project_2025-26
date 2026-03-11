@@ -170,15 +170,17 @@
 
                 <!-- UNLOCK TEAM -->
                 <form method="post"
-                      class="mt-2"
-                      onsubmit="return confirm('Unlock this team and allow new registration? This will permanently delete the team.');">
+      class="mt-2"
+      onsubmit="return confirm('Unlock this team and allow new registration? This will permanently delete the team.');">
 
-                  <input type="hidden" name="team_id" value="{{ r.team_id }}">
+  <input type="hidden" name="action" value="delete_team">
+  <input type="hidden" name="team_id" value="{{ r.team_id }}">
 
-                  <button class="btn btn-sm btn-outline-danger w-100">
-                    🔓 Unlock & Remove Team
-                  </button>
-                </form>
+  <button class="btn btn-sm btn-outline-danger w-100">
+    🔓 Unlock & Remove Team
+  </button>
+
+</form>
 
                 <!-- EDIT TEAM -->
                 <a href="/admin/edit-team/{{ r.team_id }}"
