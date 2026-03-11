@@ -4421,13 +4421,13 @@ if __name__ == "__main__":
         ON CONFLICT (key) DO NOTHING
     """)
     try:
-    cur.execute("""
-        ALTER TABLE teams
-        ADD COLUMN assigned_department TEXT
-    """)
-    con.commit()
+        cur.execute("""
+            ALTER TABLE teams
+            ADD COLUMN assigned_department TEXT
+        """)
+        con.commit()
     except:
-       pass
+        pass
     # ---------------- DEFAULT SUPER ADMIN ----------------
 
     from werkzeug.security import generate_password_hash
