@@ -87,7 +87,31 @@ def db():
         conn = sqlite3.connect("database.db")
         conn.row_factory = sqlite3.Row
         return conn
+# -------- AUTO DB FIX (runs once on startup) --------
+con = db()
+cur = con.cursor()
 
+try:
+    cur.execute("ALTER TABLE teams ADD COLUMN assigned_department TEXT")
+    con.commit()
+except:
+    pass
+
+try:
+    cur.execute("""
+        UPDATE teams
+        SET assigned_department = leader_department
+        WHERE assigned_department IS NULL
+    """)
+    con.commit()
+except:
+    pass
+
+if pg_pool:
+    pg_pool.putconn(con)
+else:
+    con.close()
+# -------- END AUTO DB FIX --------
 
 def execute(cur, query, params=()):
     # SQLite → PostgreSQL compatibility fixes
