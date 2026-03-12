@@ -5,7 +5,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import pytz
 import psycopg2.extras
-
 import sqlite3, pandas as pd, os
 
 import os
