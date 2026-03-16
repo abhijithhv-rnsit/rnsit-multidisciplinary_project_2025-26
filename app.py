@@ -3356,6 +3356,7 @@ def admin_upload():
 
 @app.route("/admin/teams", methods=["GET", "POST"])
 def admin_teams():
+
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
@@ -3373,32 +3374,39 @@ def admin_teams():
 
             new_department = request.form.get("department")
 
-            execute(cur, """
-                UPDATE teams
-                SET assigned_department=?
-                WHERE id=?
-            """, (new_department, team_id))
+            if team_id and new_department:
 
-            con.commit()
-            flash("Team transferred successfully ✅")
+                execute(cur, """
+                    UPDATE teams
+                    SET assigned_department = ?
+                    WHERE id = ?
+                """, (new_department, team_id))
+
+                con.commit()
+
+                flash("Team transferred successfully ✅")
 
         # -------- DELETE TEAM --------
         elif action == "delete_team":
 
             if team_id:
+
                 execute(cur,"DELETE FROM team_faculty WHERE team_id=?", (team_id,))
                 execute(cur,"DELETE FROM team_members WHERE team_id=?", (team_id,))
                 execute(cur,"DELETE FROM teams WHERE id=?", (team_id,))
 
                 con.commit()
+
                 flash("Team unlocked and removed successfully ✅ Problem available again.")
 
-    # ---------------- ROLE-BASED FILTER ----------------
+        return redirect(url_for("admin_teams"))
+
+    # ---------------- ROLE FILTER ----------------
     where = []
     params = []
 
     if session.get("admin_role") == "admin":
-        where.append("t.assigned_department = ?")
+        where.append("COALESCE(t.assigned_department,t.leader_department)=?")
         params.append(session.get("admin_department"))
 
     where_sql = " WHERE " + " AND ".join(where) if where else ""
@@ -3408,7 +3416,7 @@ def admin_teams():
         SELECT
             t.id AS team_id,
             t.team_name,
-            t.assigned_department,
+            COALESCE(t.assigned_department,t.leader_department) AS assigned_department,
             t.leader_section,
             p.title AS problem_title,
             t.leader_name,
@@ -3418,11 +3426,14 @@ def admin_teams():
             f.name AS faculty_name,
             f.email AS faculty_email,
             f.department AS faculty_department
+
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
         LEFT JOIN faculty f ON tf.faculty_id = f.id
+
         {where_sql}
+
         ORDER BY p.title, t.team_name
     """, params)
 
@@ -3448,8 +3459,9 @@ def admin_teams():
     else:
         con.close()
 
-    # ---------------- BUILD MEMBERS MAP ----------------
+    # ---------------- BUILD MEMBER MAP ----------------
     members_map = {}
+
     for m in members_rows:
         members_map.setdefault(m["team_id"], []).append({
             "member_name": m["member_name"],
@@ -3457,10 +3469,11 @@ def admin_teams():
             "department": m["department"]
         })
 
-    # ---------------- FINAL UI DATA ----------------
+    # ---------------- FINAL ROWS ----------------
     rows = []
 
     for t in teams:
+
         tid = t["team_id"]
 
         member_list = members_map.get(tid, [])
@@ -3496,7 +3509,6 @@ def admin_teams():
         rows=rows,
         active_page="teams"
     )
-
 @app.route("/admin/export-teams")
 def admin_export_teams():
     if not session.get("admin_logged_in"):
