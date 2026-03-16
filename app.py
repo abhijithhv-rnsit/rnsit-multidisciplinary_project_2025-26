@@ -3378,9 +3378,10 @@ def admin_teams():
 
                 execute(cur, """
                     UPDATE teams
-                    SET assigned_department = ?
+                    SET assigned_department = ?,
+                        leader_department = ?
                     WHERE id = ?
-                """, (new_department, team_id))
+                """, (new_department, new_department, team_id))
 
                 con.commit()
 
