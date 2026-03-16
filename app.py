@@ -110,6 +110,29 @@ if pg_pool:
     pg_pool.putconn(con)
 else:
     con.close()
+
+# ONE TIME DATA FIX
+try:
+    con = db()
+    cur = con.cursor()
+
+    execute(cur, """
+        UPDATE teams
+        SET leader_department = assigned_department
+        WHERE assigned_department IS NOT NULL
+    """)
+
+    con.commit()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    print("Teams department sync completed")
+
+except Exception as e:
+    print("Department sync skipped:", e)
 # -------- END AUTO DB FIX --------
 
 def execute(cur, query, params=()):
