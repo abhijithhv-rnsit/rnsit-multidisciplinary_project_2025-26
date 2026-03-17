@@ -19,7 +19,6 @@ from psycopg2 import pool
 
 app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
-
 DEFAULT_STUDENT_PASSWORD = "RNSIT@2026"
 DEFAULT_FACULTY_PASSWORD = "RNSIT@2026"
 
