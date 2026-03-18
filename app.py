@@ -3791,6 +3791,7 @@ def admin_logout():
 
 @app.route("/admin/assignments", methods=["GET", "POST"])
 def admin_assignments():
+
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
@@ -3799,22 +3800,25 @@ def admin_assignments():
 
     # ---------------- SAVE ASSIGNMENTS ----------------
     if request.method == "POST":
+
         team_ids = request.form.getlist("team_id")
         updated = 0
         skipped = 0
 
         for team_id in team_ids:
+
             faculty_id = request.form.get(f"faculty_{team_id}")
             if not faculty_id:
                 continue
 
             # 🔒 CHECK CURRENT LOAD OF FACULTY
-            execute(cur,"""
+            execute(cur, """
                 SELECT COUNT(*)
                 FROM team_faculty
-                WHERE faculty_id = ?
-                  AND team_id != ?
+                WHERE faculty_id = %s
+                  AND team_id != %s
             """, (faculty_id, team_id))
+
             assigned_count = list(cur.fetchone().values())[0]
 
             # 🚫 LIMIT = 5 TEAMS PER FACULTY
@@ -3822,11 +3826,14 @@ def admin_assignments():
                 skipped += 1
                 continue
 
-            # ✅ ASSIGN / UPDATE
-            execute(cur,"""
-                INSERT OR REPLACE INTO team_faculty(team_id, faculty_id)
-                VALUES (?, ?)
+            # ✅ UPSERT (POSTGRESQL FIX)
+            execute(cur, """
+                INSERT INTO team_faculty (team_id, faculty_id)
+                VALUES (%s, %s)
+                ON CONFLICT (team_id)
+                DO UPDATE SET faculty_id = EXCLUDED.faculty_id
             """, (team_id, faculty_id))
+
             updated += 1
 
         con.commit()
@@ -3840,6 +3847,8 @@ def admin_assignments():
         else:
             flash(f"{updated} assignment(s) saved successfully ✅", "success")
 
+        return redirect(url_for("admin_assignments"))
+
     # ---------------- FILTER INPUTS ----------------
     search = request.args.get("search", "").strip().lower()
     dept_filter = request.args.get("dept", "").strip()
@@ -3850,56 +3859,58 @@ def admin_assignments():
     per_page = 25
     offset = (page - 1) * per_page
 
-    # ---------------- FACULTY LIST (ROLE AWARE) ----------------
+    # ---------------- FACULTY LIST ----------------
     if session.get("admin_role") == "admin":
-        execute(cur,"""
+        execute(cur, """
             SELECT id, name, email, department
             FROM faculty
-            WHERE department=?
+            WHERE department=%s
             ORDER BY name
         """, (session.get("admin_department"),))
     else:
-        execute(cur,"SELECT id, name, email, department FROM faculty ORDER BY name")
+        execute(cur, """
+            SELECT id, name, email, department
+            FROM faculty
+            ORDER BY name
+        """)
 
     faculty_list = cur.fetchall()
 
     # ---------------- PROBLEM LIST ----------------
-    execute(cur,"SELECT DISTINCT title FROM problems ORDER BY title")
+    execute(cur, "SELECT DISTINCT title FROM problems ORDER BY title")
     problems_list = [r["title"] for r in cur.fetchall()]
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
-    # ---------------- BUILD WHERE CLAUSE ----------------
+    # ---------------- WHERE CLAUSE ----------------
     where = []
     params = []
 
-    # 🔐 FORCE department for department admin
     if session.get("admin_role") == "admin":
-        where.append("t.leader_department = ?")
+        where.append("COALESCE(t.assigned_department, t.leader_department) = %s")
         params.append(session.get("admin_department"))
 
-    # Super admin department filter
     if session.get("admin_role") == "super_admin" and dept_filter:
-        where.append("t.leader_department = ?")
+        where.append("COALESCE(t.assigned_department, t.leader_department) = %s")
         params.append(dept_filter)
 
     if faculty_filter:
         if faculty_filter == "NOT_ASSIGNED":
             where.append("tf.faculty_id IS NULL")
         else:
-            where.append("tf.faculty_id = ?")
+            where.append("tf.faculty_id = %s")
             params.append(faculty_filter)
 
     if problem_filter:
-        where.append("p.title = ?")
+        where.append("p.title = %s")
         params.append(problem_filter)
 
     if search:
         where.append("""
             (
-              LOWER(t.team_name) LIKE ?
-              OR LOWER(t.leader_usn) LIKE ?
-              OR LOWER(p.title) LIKE ?
+              LOWER(t.team_name) LIKE %s
+              OR LOWER(t.leader_usn) LIKE %s
+              OR LOWER(p.title) LIKE %s
             )
         """)
         params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
@@ -3907,24 +3918,25 @@ def admin_assignments():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     # ---------------- TOTAL COUNT ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT COUNT(*)
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
         {where_sql}
     """, params)
+
     total_rows = list(cur.fetchone().values())[0]
     total_pages = max(1, (total_rows + per_page - 1) // per_page)
 
     # ---------------- FETCH DATA ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT
             t.id AS team_id,
             t.team_name,
             t.leader_usn,
             t.leader_name,
-            t.leader_department,
+            COALESCE(t.assigned_department, t.leader_department) AS leader_department,
             p.title AS problem_title,
             p.year AS problem_year,
             tf.faculty_id AS assigned_faculty_id
@@ -3933,10 +3945,11 @@ def admin_assignments():
         LEFT JOIN team_faculty tf ON t.id = tf.team_id
         {where_sql}
         ORDER BY p.title, t.team_name
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
     """, params + [per_page, offset])
 
     teams = cur.fetchall()
+
     if pg_pool:
         pg_pool.putconn(con)
     else:
@@ -3958,7 +3971,6 @@ def admin_assignments():
         total_pages=total_pages,
         total_rows=total_rows
     )
-
 @app.route("/admin/export-assignments")
 def export_assignments():
     if not session.get("admin_logged_in"):
