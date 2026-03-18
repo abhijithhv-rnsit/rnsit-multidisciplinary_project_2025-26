@@ -3351,10 +3351,12 @@ def admin_management():
 
 @app.route("/admin/upload", methods=["GET", "POST"])
 def admin_upload():
+
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
     if request.method == "POST":
+
         file = request.files.get("file")
 
         if not file:
@@ -3363,7 +3365,8 @@ def admin_upload():
 
         try:
             df = pd.read_excel(file)
-        except:
+        except Exception as e:
+            print("Excel Error:", e)
             flash("Invalid file. Please upload a valid Excel file.")
             return redirect(request.url)
 
@@ -3389,6 +3392,7 @@ def admin_upload():
         skipped = 0
 
         for _, r in df.iterrows():
+
             year = str(r["Year"]).strip()
             title = str(r["Problem Statement"]).strip()
             category = str(r["Type"]).strip()
@@ -3397,22 +3401,23 @@ def admin_upload():
             problem_details = str(r["Problem Details"]).strip()
             expected_outcome = str(r["Expected Outcome"]).strip()
 
-            # ✅ Prevent duplicate (based on year + title)
-            execute(cur,
-                "SELECT COUNT(*) FROM problems WHERE year=? AND title=?",
-                (year, title)
-            )
+            # ✅ FIXED: PostgreSQL placeholder
+            execute(cur, """
+                SELECT COUNT(*) FROM problems 
+                WHERE year=%s AND title=%s
+            """, (year, title))
 
             if list(cur.fetchone().values())[0] > 0:
                 skipped += 1
                 continue
 
-            execute(cur,"""
+            # ✅ FIXED: PostgreSQL placeholder
+            execute(cur, """
                 INSERT INTO problems(
                     year, title, category, domain_theme, max_teams,
                     problem_description, problem_details, expected_outcome
                 )
-                VALUES (?,?,?,?,1,?,?,?)
+                VALUES (%s,%s,%s,%s,1,%s,%s,%s)
             """, (
                 year,
                 title,
@@ -3433,6 +3438,7 @@ def admin_upload():
             con.close()
 
         flash(f"{added} new problems added ✅ | {skipped} skipped (duplicates)")
+
         return redirect(url_for("admin_upload"))
 
     return render_template("admin_upload.html", active_page="upload")
