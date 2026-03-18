@@ -3452,8 +3452,13 @@ def admin_teams():
         action = request.form.get("action")
         team_id = request.form.get("team_id")
 
-        # -------- TRANSFER TEAM --------
+        # -------- TRANSFER TEAM (SUPER ADMIN ONLY) --------
         if action == "transfer_department":
+
+            # 🔒 Block department admin
+            if session.get("admin_role") != "super_admin":
+                flash("Only Super Admin can move teams ❌")
+                return redirect(url_for("admin_teams"))
 
             new_department = request.form.get("department")
 
@@ -3475,9 +3480,9 @@ def admin_teams():
 
             if team_id:
 
-                execute(cur,"DELETE FROM team_faculty WHERE team_id=?", (team_id,))
-                execute(cur,"DELETE FROM team_members WHERE team_id=?", (team_id,))
-                execute(cur,"DELETE FROM teams WHERE id=?", (team_id,))
+                execute(cur, "DELETE FROM team_faculty WHERE team_id=?", (team_id,))
+                execute(cur, "DELETE FROM team_members WHERE team_id=?", (team_id,))
+                execute(cur, "DELETE FROM teams WHERE id=?", (team_id,))
 
                 con.commit()
 
@@ -3496,7 +3501,7 @@ def admin_teams():
     where_sql = " WHERE " + " AND ".join(where) if where else ""
 
     # ---------------- FETCH TEAMS ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT
             t.id AS team_id,
             t.team_name,
@@ -3507,6 +3512,7 @@ def admin_teams():
             t.leader_usn,
             t.leader_phone,
 
+            tf.faculty_id,
             f.name AS faculty_name,
             f.email AS faculty_email,
             f.department AS faculty_department
@@ -3524,7 +3530,7 @@ def admin_teams():
     teams = cur.fetchall()
 
     # ---------------- FETCH MEMBERS ----------------
-    execute(cur,f"""
+    execute(cur, f"""
         SELECT
             tm.team_id,
             tm.member_name,
@@ -3570,7 +3576,10 @@ def admin_teams():
         else:
             members_text = "-"
 
-        if t["faculty_name"]:
+        # ✅ FIX: show cross-department faculty properly
+        if t["faculty_id"] and not t["faculty_name"]:
+            faculty_text = "Assigned (External Department)"
+        elif t["faculty_name"]:
             faculty_text = f"{t['faculty_name']} ({t['faculty_department']}) - {t['faculty_email']}"
         else:
             faculty_text = "Not Assigned"
