@@ -158,7 +158,29 @@ try:
 
 except Exception as e:
     print("⚠ Department sync skipped:", e)
+# ---------- ONE TIME: SYNC ADMINS INTO FACULTY ----------
+try:
+    con = db()
+    cur = con.cursor()
 
+    cur.execute("""
+        INSERT INTO faculty (name, email, department)
+        SELECT name, email, department
+        FROM admins
+        WHERE email NOT IN (SELECT email FROM faculty)
+    """)
+
+    con.commit()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    print("✅ Admins synced into faculty table")
+
+except Exception as e:
+    print("⚠ Sync skipped:", e)
 @app.route("/__migrate_to_postgres_once")
 def migrate_once():
     import sqlite3
@@ -3170,6 +3192,7 @@ def admin_change_password():
 
 @app.route("/admin/admin-management", methods=["GET", "POST"])
 def admin_management():
+
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
@@ -3181,7 +3204,7 @@ def admin_management():
     con = db()
     cur = con.cursor()
 
-    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "ME", "CV"]
+    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "ME", "CV", "PHY", "CHE", "MAT"]
 
     # ---------------- POST ACTIONS ----------------
     if request.method == "POST":
@@ -3208,13 +3231,25 @@ def admin_management():
             password_hash = generate_password_hash(password)
 
             try:
-                execute(cur,"""
+                # INSERT INTO ADMINS
+                execute(cur, """
                     INSERT INTO admins
                     (name, email, password_hash, role, department, must_reset_password)
                     VALUES (?,?,?,?,?,1)
                 """, (name, email, password_hash, role, department if role=="admin" else None))
 
+                # ALSO INSERT INTO FACULTY (POSTGRESQL SAFE)
+                try:
+                    execute(cur, """
+                        INSERT INTO faculty (name, email, department)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (email) DO NOTHING
+                    """, (name, email, department if role=="admin" else None))
+                except:
+                    pass
+
                 con.commit()
+
                 flash(f"Admin created successfully ✅ Default password: {password}")
 
             except:
@@ -3228,13 +3263,21 @@ def admin_management():
             email = request.form.get("email").strip().lower()
             department = request.form.get("department").strip()
 
-            execute(cur,"""
+            execute(cur, """
                 UPDATE admins
                 SET name=?, email=?, department=?
                 WHERE id=?
-            """,(name,email,department,aid))
+            """, (name, email, department, aid))
+
+            # ALSO UPDATE FACULTY
+            execute(cur, """
+                UPDATE faculty
+                SET name=%s, department=%s
+                WHERE email=%s
+            """, (name, department, email))
 
             con.commit()
+
             flash("Admin updated successfully ✅")
 
         # ---------- RESET PASSWORD ----------
@@ -3244,13 +3287,14 @@ def admin_management():
 
             password_hash = generate_password_hash("RNSIT@2026")
 
-            execute(cur,"""
+            execute(cur, """
                 UPDATE admins
                 SET password_hash=?, must_reset_password=1
                 WHERE id=?
-            """,(password_hash,aid))
+            """, (password_hash, aid))
 
             con.commit()
+
             flash("Password reset successfully 🔁")
 
         # ---------- DELETE ADMIN ----------
@@ -3258,8 +3302,22 @@ def admin_management():
 
             aid = request.form.get("aid")
 
-            execute(cur,"DELETE FROM admins WHERE id=?", (aid,))
-            con.commit()
+            # get email first
+            execute(cur, "SELECT email FROM admins WHERE id=?", (aid,))
+            row = cur.fetchone()
+
+            if row:
+                email = row["email"]
+
+                # delete admin
+                execute(cur, "DELETE FROM admins WHERE id=?", (aid,))
+
+                # delete from faculty also
+                execute(cur, """
+                    DELETE FROM faculty WHERE email=%s
+                """, (email,))
+
+                con.commit()
 
             flash("Admin deleted successfully 🗑️")
 
@@ -3271,11 +3329,12 @@ def admin_management():
         return redirect(request.url)
 
     # ---------------- LIST ADMINS ----------------
-    execute(cur,"""
+    execute(cur, """
         SELECT id, name, email, role, department, created_at
         FROM admins
         ORDER BY role DESC, department, name
     """)
+
     admins = cur.fetchall()
 
     if pg_pool:
