@@ -146,27 +146,29 @@
                   <div class="small mt-1 wrap-text">{{ r.faculty_text }}</div>
                 {% endif %}
 
-                <!-- MOVE TEAM TO OTHER DEPARTMENT -->
-                <form method="post" class="mt-2 d-flex gap-1">
-                  <input type="hidden" name="action" value="transfer_department">
-                  <input type="hidden" name="team_id" value="{{ r.team_id }}">
+<!-- MOVE TEAM TO OTHER DEPARTMENT (SUPER ADMIN ONLY) -->
+{% if session.admin_role == "super_admin" %}
+<form method="post" class="mt-2 d-flex gap-1">
+  <input type="hidden" name="action" value="transfer_department">
+  <input type="hidden" name="team_id" value="{{ r.team_id }}">
 
-                  <select name="department" class="form-select form-select-sm" required>
-                    <option value="">Move</option>
-                    <option value="CSE">CSE</option>
-                    <option value="CSE-AIML">CSE-AIML</option>
-                    <option value="CSE-DS">CSE-DS</option>
-                    <option value="CSE-CY">CSE-CY</option>
-                    <option value="ECE">ECE</option>
-                    <option value="EEE">EEE</option>
-                    <option value="ME">ME</option>
-                    <option value="CV">CV</option>
-                  </select>
+  <select name="department" class="form-select form-select-sm" required>
+    <option value="">Move</option>
+    <option value="CSE">CSE</option>
+    <option value="CSE-AIML">CSE-AIML</option>
+    <option value="CSE-DS">CSE-DS</option>
+    <option value="CSE-CY">CSE-CY</option>
+    <option value="ECE">ECE</option>
+    <option value="EEE">EEE</option>
+    <option value="ME">ME</option>
+    <option value="CV">CV</option>
+  </select>
 
-                  <button class="btn btn-sm btn-primary">
-                    Move
-                  </button>
-                </form>
+  <button class="btn btn-sm btn-primary">
+    Move
+  </button>
+</form>
+{% endif %}
 
                 <!-- UNLOCK TEAM -->
                 <form method="post"
