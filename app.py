@@ -1396,20 +1396,26 @@ def student_edit_weekly_progress(progress_id):
 
 @app.route("/faculty/login", methods=["GET", "POST"])
 def faculty_login():
+
     if request.method == "POST":
+
         email = request.form["email"].strip().lower()
         password = request.form["password"]
 
         con = db()
         cur = con.cursor()
 
-        # check faculty table
-        execute(cur,"SELECT * FROM faculty WHERE email=?", (email,))
+        # ✅ PostgreSQL fix (%s instead of ?)
+        execute(cur,"SELECT * FROM faculty WHERE email=%s", (email,))
         faculty = cur.fetchone()
 
         # if not found, check admins table
         if not faculty:
-            execute(cur,"SELECT id,name,email,password_hash,department FROM admins WHERE email=?", (email,))
+            execute(cur,"""
+                SELECT id,name,email,password_hash,department 
+                FROM admins 
+                WHERE email=%s
+            """, (email,))
             admin = cur.fetchone()
 
             if admin:
@@ -1427,23 +1433,29 @@ def faculty_login():
         else:
             con.close()
 
+        # ❌ NOT FOUND
         if not faculty:
-            flash("Faculty not found")
+            flash("Faculty not found ❌")
             return redirect(request.url)
 
+        # 🚨 CRITICAL FIX (THIS WAS MISSING)
+        if not faculty.get("password_hash"):
+            flash("Password not set. Contact admin ❌")
+            return redirect(request.url)
+
+        # ❌ WRONG PASSWORD
         if not check_password_hash(faculty["password_hash"], password):
-            flash("Invalid password")
+            flash("Invalid password ❌")
             return redirect(request.url)
 
+        # ✅ LOGIN SUCCESS
         session["faculty_id"] = faculty["id"]
         session["faculty_name"] = faculty["name"]
+        session["faculty_department"] = faculty.get("department")
 
-        # mandatory password reset
-        try:
-            if faculty.get("must_reset_password",0) == 1:
-                return redirect(url_for("faculty_change_password"))
-        except:
-            pass
+        # 🔐 FORCE PASSWORD RESET
+        if faculty.get("must_reset_password", 0) == 1:
+            return redirect(url_for("faculty_change_password"))
 
         return redirect(url_for("faculty_dashboard"))
 
