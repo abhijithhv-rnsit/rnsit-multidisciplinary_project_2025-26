@@ -660,6 +660,7 @@ def fix_project_references():
     return "project_references column added successfully ✅"
 @app.route("/student/my-project")
 def student_my_project():
+
     if not session.get("student_usn"):
         return redirect(url_for("student_login"))
 
@@ -668,72 +669,79 @@ def student_my_project():
     con = db()
     cur = con.cursor()
 
-    # 1) First check if student is a leader
-    execute(cur,"""
+    # ---------------- 1) CHECK IF LEADER ----------------
+    execute(cur, """
         SELECT t.*, p.title AS problem_title, p.year AS problem_year
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
-        WHERE t.leader_usn=?
+        WHERE t.leader_usn = %s
     """, (usn,))
     team = cur.fetchone()
 
-    # 2) If not leader, check if student is a member
+    # ---------------- 2) CHECK IF MEMBER ----------------
     if not team:
-        execute(cur,"""
+        execute(cur, """
             SELECT t.*, p.title AS problem_title, p.year AS problem_year
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
             JOIN problems p ON t.problem_id = p.id
-            WHERE m.usn=?
+            WHERE m.usn = %s
         """, (usn,))
         team = cur.fetchone()
 
-    # 3) If still no team found
+    # ---------------- 3) NO TEAM ----------------
     if not team:
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
+
         flash("You are not registered under any project yet.")
         return redirect(url_for("student_home"))
 
     team_id = team["id"]
 
-    # 4) Fetch abstract/objectives from project_details table
-    execute(cur,"""
-        SELECT abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
+    # ---------------- 4) PROJECT DETAILS ----------------
+    execute(cur, """
+        SELECT abstract, objectives, tech_stack, methodology,
+               modules, expected_output, project_references
         FROM project_details
-        WHERE team_id=?
+        WHERE team_id = %s
     """, (team_id,))
     pd = cur.fetchone()
 
-    # 5) Fetch team members
-    execute(cur,"""
+    # ---------------- 5) TEAM MEMBERS ----------------
+    execute(cur, """
         SELECT member_name, usn, email, phone, department, section
         FROM team_members
-        WHERE team_id=?
+        WHERE team_id = %s
         ORDER BY id
     """, (team_id,))
     members = cur.fetchall()
 
-    # 6) Get faculty assigned
-    execute(cur,"""
+    # ---------------- 6) FACULTY (FIXED - ALWAYS LATEST) ----------------
+    execute(cur, """
         SELECT f.name, f.email, f.department
         FROM team_faculty tf
         JOIN faculty f ON tf.faculty_id = f.id
-        WHERE tf.team_id=?
+        WHERE tf.team_id = %s
+        LIMIT 1
     """, (team_id,))
     faculty_row = cur.fetchone()
 
-    # 7) Weekly progress count
-    execute(cur,"SELECT COUNT(*) FROM weekly_progress WHERE team_id=?", (team_id,))
+    # ---------------- 7) PROGRESS COUNT ----------------
+    execute(cur, """
+        SELECT COUNT(*) FROM weekly_progress WHERE team_id = %s
+    """, (team_id,))
     progress_count = list(cur.fetchone().values())[0]
 
+    # ---------------- CLOSE DB ----------------
     if pg_pool:
         pg_pool.putconn(con)
     else:
         con.close()
 
+    # ---------------- RENDER ----------------
     return render_template(
         "student_my_project.html",
         team=team,
@@ -742,7 +750,6 @@ def student_my_project():
         project_details=pd,
         members=members
     )
-
 
 @app.route("/student/project-details", methods=["GET", "POST"])
 def student_project_details():
