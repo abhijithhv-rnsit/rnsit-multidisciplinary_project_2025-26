@@ -2972,6 +2972,7 @@ def unlock_problem(pid):
     return redirect(request.referrer or url_for("admin_dashboard"))
 @app.route("/admin/edit-team/<int:team_id>", methods=["GET", "POST"])
 def admin_edit_team(team_id):
+
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
@@ -2979,8 +2980,9 @@ def admin_edit_team(team_id):
     cur = con.cursor()
 
     # ---------------- LOAD TEAM ----------------
-    execute(cur,"SELECT * FROM teams WHERE id=?", (team_id,))
+    execute(cur,"SELECT * FROM teams WHERE id=%s", (team_id,))
     team = cur.fetchone()
+
     if not team:
         if pg_pool:
             pg_pool.putconn(con)
@@ -2990,9 +2992,9 @@ def admin_edit_team(team_id):
         return redirect(url_for("admin_teams"))
 
     # ---------------- LOAD MEMBERS ----------------
-    execute(cur,"""
+    execute(cur, """
         SELECT id, member_name, usn, email, phone, department, section
-        FROM team_members WHERE team_id=?
+        FROM team_members WHERE team_id=%s
     """, (team_id,))
     members = cur.fetchall()
 
@@ -3000,21 +3002,45 @@ def admin_edit_team(team_id):
     if request.method == "POST":
 
         team_name = request.form.get("team_name").strip()
+
+        # ✅ FULL LEADER EDIT (NEW)
+        leader_name = request.form.get("leader_name").strip()
+        leader_usn = request.form.get("leader_usn").strip().upper()
+        leader_email = request.form.get("leader_email").strip().lower()
         leader_phone = request.form.get("leader_phone").strip()
-        leader_section = request.form.get("leader_section").strip()
+        leader_department = request.form.get("leader_department").strip().upper()
+        leader_section = request.form.get("leader_section").strip().upper()
 
-        # update team basic info
-        execute(cur,"""
+        # ✅ UPDATE TEAM (FULL FIX)
+        execute(cur, """
             UPDATE teams
-            SET team_name=?, leader_phone=?, leader_section=?
-            WHERE id=?
-        """, (team_name, leader_phone, leader_section, team_id))
+            SET team_name=%s,
+                leader_name=%s,
+                leader_usn=%s,
+                leader_email=%s,
+                leader_phone=%s,
+                leader_department=%s,
+                assigned_department=%s,
+                leader_section=%s
+            WHERE id=%s
+        """, (
+            team_name,
+            leader_name,
+            leader_usn,
+            leader_email,
+            leader_phone,
+            leader_department,
+            leader_department,  # 🔥 sync both
+            leader_section,
+            team_id
+        ))
 
-        # delete old members
-        execute(cur,"DELETE FROM team_members WHERE team_id=?", (team_id,))
+        # ---------------- DELETE OLD MEMBERS ----------------
+        execute(cur,"DELETE FROM team_members WHERE team_id=%s", (team_id,))
 
-        # collect new members
+        # ---------------- COLLECT NEW MEMBERS ----------------
         members_new = []
+
         for i in range(1, 7):
             name = request.form.get(f"member{i}_name", "").strip()
             usn = request.form.get(f"member{i}_usn", "").strip().upper()
@@ -3029,34 +3055,19 @@ def admin_edit_team(team_id):
         # ---- TEAM SIZE RULE ----
         team_size = 1 + len(members_new)
         if team_size < 4 or team_size > 6:
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
             flash("Team size must be between 4 and 6.")
             return redirect(request.url)
 
-        # ---- CORE BRANCH RULE ----
-        #core = ["ECE","EEE","ME","CV","CIVIL"]
-        #depts = [team["leader_department"]] + [m[4] for m in members_new]
-
-        #if not any(d in core for d in depts):
-        #    if pg_pool:
-        #        pg_pool.putconn(con)
-         #   else:
-           #     con.close()
-          #  flash("At least one member must be from ECE/EEE/ME/CV.")
-          #  return redirect(request.url)
-
-        # ---- INSERT UPDATED MEMBERS ----
+        # ---------------- INSERT MEMBERS ----------------
         for m in members_new:
-            execute(cur,"""
+            execute(cur, """
                 INSERT INTO team_members
                 (team_id, member_name, usn, email, phone, department, section)
-                VALUES (?,?,?,?,?,?,?)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
             """, (team_id, *m))
 
         con.commit()
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
@@ -3069,6 +3080,7 @@ def admin_edit_team(team_id):
         pg_pool.putconn(con)
     else:
         con.close()
+
     return render_template(
         "admin_edit_team.html",
         team=team,
