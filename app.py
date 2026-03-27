@@ -2718,12 +2718,13 @@ def register(pid):
     # ---------------- DEADLINE CHECK ----------------
     con = db()
     cur = con.cursor()
-    execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
+
+    execute(cur, "SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
 
-    if row and row[0]:
+    if row and row.get("value"):
         try:
-            deadline = datetime.fromisoformat(row[0])
+            deadline = datetime.fromisoformat(row["value"])
             if datetime.now() > deadline:
                 flash("Registration closed. Deadline has passed.")
                 return redirect(url_for("student_problems"))
@@ -2731,10 +2732,10 @@ def register(pid):
             pass
 
     # ---------------- GET PROBLEM DETAILS ----------------
-    execute(cur,"""
+    execute(cur, """
         SELECT title, max_teams, locked 
         FROM problems 
-        WHERE id=?
+        WHERE id=%s
     """, (pid,))
     prob = cur.fetchone()
 
@@ -2760,7 +2761,7 @@ def register(pid):
         return redirect(url_for("student_problems"))
 
     # ---------------- TEAM COUNT CHECK ----------------
-    execute(cur,"SELECT COUNT(*) FROM teams WHERE problem_id=?", (pid,))
+    execute(cur, "SELECT COUNT(*) FROM teams WHERE problem_id=%s", (pid,))
     already_registered = list(cur.fetchone().values())[0]
 
     if already_registered >= 1:
@@ -2791,6 +2792,7 @@ def register(pid):
             flash("Please fill all required Team Leader details.")
             return redirect(request.url)
 
+        # ---------------- MEMBERS ----------------
         members = []
         for i in range(1, 6):
             name = request.form.get(f"member{i}_name", "").strip()
@@ -2803,50 +2805,19 @@ def register(pid):
             if usn:
                 members.append((name, usn, email, phone, dept, sec))
 
-        # =====================================================
-        # ✅ NEW RULE 1: TEAM MUST BE EXACTLY 6 MEMBERS
-        # =====================================================
-
+        # ---------------- TEAM SIZE CHECK ----------------
         team_size = 1 + len(members)
+
         if team_size < 4 or team_size > 6:
             if pg_pool:
                 pg_pool.putconn(con)
             else:
                 con.close()
-            flash("Team must have exactly 6 members (1 Leader + 5 Members).")
+            flash("Team must have between 4 and 6 members (including leader).")
             return redirect(request.url)
 
-        # =====================================================
-        # ✅ NEW RULE 2: BRANCH COMPOSITION CHECK
-        # =====================================================
-
-        cse_branches = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY"]
-        core_branches = ["ECE", "EEE", "ME", "CV", "CIVIL"]
-
-        all_departments = [leader_department] + [m[4] for m in members]
-
-        cse_count = sum(1 for d in all_departments if d in cse_branches)
-        core_count = sum(1 for d in all_departments if d in core_branches)
-
-        #if cse_count < 4:
-        #    if pg_pool:
-        #        pg_pool.putconn(con)
-        #    else:
-        #        con.close()
-        #   flash("At least 4 members must be from CSE / AIML / DS / CY branches.")
-        #   return redirect(request.url)
-
-        #if core_count < 1:
-        #   if pg_pool:
-        #       pg_pool.putconn(con)
-        #   else:
-        #       con.close()
-        #   flash("At least 1 member must be from ECE / EEE / ME / Civil branch.")
-        #   return redirect(request.url)
-
-        # ---------------- DUPLICATE CHECKS (UNCHANGED) ----------------
-
-        execute(cur,"SELECT COUNT(*) FROM teams WHERE leader_usn=?", (leader_usn,))
+        # ---------------- DUPLICATE CHECKS ----------------
+        execute(cur, "SELECT COUNT(*) FROM teams WHERE leader_usn=%s", (leader_usn,))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
                 pg_pool.putconn(con)
@@ -2855,7 +2826,7 @@ def register(pid):
             flash("Team Leader USN already registered.")
             return redirect(request.url)
 
-        execute(cur,"SELECT COUNT(*) FROM team_members WHERE usn=?", (leader_usn,))
+        execute(cur, "SELECT COUNT(*) FROM team_members WHERE usn=%s", (leader_usn,))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
                 pg_pool.putconn(con)
@@ -2864,7 +2835,7 @@ def register(pid):
             flash("This USN already exists as team member.")
             return redirect(request.url)
 
-        execute(cur,"SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(?)", (leader_email,))
+        execute(cur, "SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(%s)", (leader_email,))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
                 pg_pool.putconn(con)
@@ -2896,8 +2867,7 @@ def register(pid):
             used_emails.add(email)
 
         # ---------------- INSERT TEAM ----------------
-
-        execute(cur,"""
+        execute(cur, """
             INSERT INTO teams(
                 team_name,
                 leader_name,
@@ -2918,7 +2888,7 @@ def register(pid):
             leader_email,
             leader_phone,
             leader_department,
-            leader_department,
+            leader_department,   # IMPORTANT SYNC
             leader_section,
             pid,
             datetime.now()
@@ -2926,8 +2896,9 @@ def register(pid):
 
         team_id = cur.fetchone()["id"]
 
+        # ---------------- INSERT MEMBERS ----------------
         for name, usn, email, phone, dept, sec in members:
-            execute(cur,"""
+            execute(cur, """
                 INSERT INTO team_members(
                     team_id,
                     member_name,
@@ -2936,10 +2907,11 @@ def register(pid):
                     phone,
                     department,
                     section
-                ) VALUES (?,?,?,?,?,?,?)
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s)
             """, (team_id, name, usn, email, phone, dept, sec))
 
         con.commit()
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
@@ -2952,6 +2924,7 @@ def register(pid):
         pg_pool.putconn(con)
     else:
         con.close()
+
     return render_template("register.html", title=problem_title)
 
 @app.route("/admin/unlock-problem/<int:pid>", methods=["POST"])
