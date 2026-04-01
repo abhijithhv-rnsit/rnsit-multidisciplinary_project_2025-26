@@ -79,6 +79,13 @@
         </li>
         {% endif %}
 
+        {% if session.get("admin_role") == "super_admin" %}
+<li class="nav-item">
+  <a class="nav-link {% if active_page=='reports' %}active fw-bold{% endif %}"
+     href="/admin/reports">Reports</a>
+</li>
+{% endif %}
+
       </ul>
 
       <div class="ms-auto">
