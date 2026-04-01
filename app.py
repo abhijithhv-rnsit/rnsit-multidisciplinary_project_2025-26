@@ -425,7 +425,216 @@ def add_cascade_once():
         con.close()
 
     return "✅ Cascade deletes enabled successfully"
+@app.route("/admin/reports")
+def admin_reports():
 
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    # ================= TEAM SIZE =================
+    execute(cur, """
+        SELECT 
+            t.id AS team_id,
+            t.team_name,
+            t.leader_name,
+            COUNT(tm.id) + 1 AS total_students
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        GROUP BY t.id, t.team_name, t.leader_name
+        ORDER BY total_students DESC
+    """)
+    team_sizes = cur.fetchall()
+
+    # ================= TOTAL STUDENTS =================
+    execute(cur, """
+        SELECT COUNT(DISTINCT usn) AS total_students
+        FROM (
+            SELECT leader_usn AS usn FROM teams
+            UNION
+            SELECT usn FROM team_members
+        ) x
+    """)
+    total_students = cur.fetchone()["total_students"]
+
+    # ================= STUDENT MAPPING =================
+    execute(cur, """
+        SELECT 
+            s.usn,
+            s.name,
+            s.department,
+            p.title AS problem_title,
+            t.team_name,
+            'Leader' AS role
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        JOIN students s ON s.usn = t.leader_usn
+
+        UNION
+
+        SELECT 
+            m.usn,
+            m.member_name AS name,
+            m.department,
+            p.title AS problem_title,
+            t.team_name,
+            'Member' AS role
+        FROM team_members m
+        JOIN teams t ON m.team_id = t.id
+        JOIN problems p ON t.problem_id = p.id
+
+        ORDER BY usn
+    """)
+    student_projects = cur.fetchall()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    return render_template(
+        "admin_reports.html",
+        team_sizes=team_sizes,
+        total_students=total_students,
+        student_projects=student_projects,
+        active_page="reports"
+    )
+
+@app.route("/admin/export/team-size")
+def export_team_size():
+
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    import pandas as pd
+    import io
+    from flask import send_file
+
+    con = db()
+    cur = con.cursor()
+
+    execute(cur, """
+        SELECT 
+            t.team_name,
+            t.leader_name,
+            COUNT(tm.id) + 1 AS total_students
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        GROUP BY t.team_name, t.leader_name
+        ORDER BY total_students DESC
+    """)
+
+    rows = cur.fetchall()
+
+    data = [{
+        "Team Name": r["team_name"],
+        "Leader": r["leader_name"],
+        "Total Students": r["total_students"]
+    } for r in rows]
+
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
+
+    return send_file(output, download_name="team_size.xlsx", as_attachment=True)
+
+@app.route("/admin/export/total-students")
+def export_total_students():
+
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    import pandas as pd
+    import io
+    from flask import send_file
+
+    con = db()
+    cur = con.cursor()
+
+    execute(cur, """
+        SELECT COUNT(DISTINCT usn) AS total_students
+        FROM (
+            SELECT leader_usn AS usn FROM teams
+            UNION
+            SELECT usn FROM team_members
+        ) x
+    """)
+
+    total = cur.fetchone()["total_students"]
+
+    df = pd.DataFrame([{
+        "Total Registered Students": total
+    }])
+
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
+
+    return send_file(output, download_name="total_students.xlsx", as_attachment=True)
+
+@app.route("/admin/export/student-mapping")
+def export_student_mapping():
+
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    import pandas as pd
+    import io
+    from flask import send_file
+
+    con = db()
+    cur = con.cursor()
+
+    execute(cur, """
+        SELECT 
+            s.usn,
+            s.name,
+            s.department,
+            p.title AS problem_title,
+            t.team_name,
+            'Leader' AS role
+        FROM teams t
+        JOIN problems p ON t.problem_id = p.id
+        JOIN students s ON s.usn = t.leader_usn
+
+        UNION
+
+        SELECT 
+            m.usn,
+            m.member_name AS name,
+            m.department,
+            p.title AS problem_title,
+            t.team_name,
+            'Member' AS role
+        FROM team_members m
+        JOIN teams t ON m.team_id = t.id
+        JOIN problems p ON t.problem_id = p.id
+
+        ORDER BY usn
+    """)
+
+    rows = cur.fetchall()
+
+    data = [{
+        "USN": r["usn"],
+        "Name": r["name"],
+        "Department": r["department"],
+        "Team": r["team_name"],
+        "Problem": r["problem_title"],
+        "Role": r["role"]
+    } for r in rows]
+
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
+
+    return send_file(output, download_name="student_mapping.xlsx", as_attachment=True)
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
     ensure_students_table()
