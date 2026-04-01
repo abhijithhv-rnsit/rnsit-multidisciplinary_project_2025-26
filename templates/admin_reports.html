@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Reports</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body class="bg-light">
+
+{% include "admin_nav.html" %}
+
+<div class="container mt-4">
+
+<h4 class="fw-bold mb-3">📊 Reports Dashboard</h4>
+
+<!-- TOTAL STUDENTS -->
+<div class="card p-3 mb-3">
+  <h5>Total Registered Students</h5>
+  <h3 class="text-primary">{{ total_students }}</h3>
+  <a href="/admin/export/total-students" class="btn btn-sm btn-success mt-2">Download Excel</a>
+</div>
+
+<!-- TEAM SIZE -->
+<div class="card p-3 mb-3">
+  <h5>Team Sizes</h5>
+  <a href="/admin/export/team-size" class="btn btn-sm btn-success mb-2">Download Excel</a>
+
+  <table class="table table-bordered">
+    <tr>
+      <th>Team</th>
+      <th>Leader</th>
+      <th>Total Students</th>
+    </tr>
+    {% for t in team_sizes %}
+    <tr>
+      <td>{{ t.team_name }}</td>
+      <td>{{ t.leader_name }}</td>
+      <td>{{ t.total_students }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<!-- STUDENT MAPPING -->
+<div class="card p-3 mb-3">
+  <h5>Student Project Mapping</h5>
+  <a href="/admin/export/student-mapping" class="btn btn-sm btn-success mb-2">Download Excel</a>
+
+  <table class="table table-bordered">
+    <tr>
+      <th>USN</th>
+      <th>Name</th>
+      <th>Dept</th>
+      <th>Team</th>
+      <th>Problem</th>
+      <th>Role</th>
+    </tr>
+
+    {% for s in student_projects %}
+    <tr>
+      <td>{{ s.usn }}</td>
+      <td>{{ s.name }}</td>
+      <td>{{ s.department }}</td>
+      <td>{{ s.team_name }}</td>
+      <td>{{ s.problem_title }}</td>
+      <td>{{ s.role }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+</div>
+</body>
+</html>
