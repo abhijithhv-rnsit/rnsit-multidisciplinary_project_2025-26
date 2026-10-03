@@ -89,6 +89,36 @@
         </li>
         {% endif %}
 
+        {% if session.get("admin_role") == "super_admin" %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle {% if active_page=='evaluation' %}active fw-bold{% endif %}"
+             href="#"
+             id="evaluationDropdown"
+             role="button"
+             data-bs-toggle="dropdown"
+             aria-expanded="false">
+            Evaluation
+          </a>
+          <ul class="dropdown-menu">
+            <li>
+              <a class="dropdown-item" href="/admin/evaluation-settings">
+                Evaluation Settings
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="/admin/evaluation-assignments">
+                Evaluator Assignments
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="/admin/evaluation-dashboard">
+                Evaluation Dashboard
+              </a>
+            </li>
+          </ul>
+        </li>
+        {% endif %}
+
       </ul>
 
       <div class="ms-auto d-flex align-items-center gap-2 flex-wrap">
