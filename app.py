@@ -22,6 +22,15 @@ app.config["SESSION_PERMANENT"] = False
 DEFAULT_STUDENT_PASSWORD = "RNSIT@2026"
 DEFAULT_FACULTY_PASSWORD = "RNSIT@2026"
 
+# Central department master for Batch 2 and future batches.
+# Keep all department validation, filters, uploads and reports aligned with this list.
+DEPARTMENTS = [
+    "CSE", "CSE-AIML", "CSE-DS", "CSE-CY",
+    "VLSI", "CSBS",
+    "ECE", "EEE", "CV", "ME"
+]
+ACADEMIC_SUPPORT_DEPARTMENTS = DEPARTMENTS + ["PHY", "CHE", "MAT"]
+
 #app.secret_key = "rnsit_admin_secret_2025"
 
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
@@ -3848,7 +3857,7 @@ def admin_faculty_management():
     if order not in ["asc","desc"]: order="asc"
     order_sql=f"ORDER BY {allowed_sort[sort_by]} {order.upper()}"
     offset=(page-1)*per_page
-    departments_list=["CSE","CSE-AIML","CSE-DS","CSE-CY","ECE","EEE","CV","ME"]
+    departments_list=DEPARTMENTS
     if admin_role=="admin": dept_filter=admin_dept
 
     if request.args.get("download")=="template":
@@ -4127,7 +4136,7 @@ def admin_students():
 
     is_dept_admin = session.get("admin_role") == "admin"
     dept_admin_department = session.get("admin_department")
-    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
+    departments_list = DEPARTMENTS
 
     if request.method == "POST":
         action = request.form.get("action")
@@ -5299,7 +5308,7 @@ def admin_management():
     con = db()
     cur = con.cursor()
 
-    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "ME", "CV", "PHY", "CHE", "MAT"]
+    departments_list = ACADEMIC_SUPPORT_DEPARTMENTS
 
     # Resolve the currently selected admin batch. If the session does not yet
     # have one, fall back to the active batch.
@@ -6553,7 +6562,7 @@ def admin_assignments():
     )
     problems_list = [r["title"] for r in cur.fetchall()]
 
-    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
+    departments_list = DEPARTMENTS
 
     # ---------------- WHERE CLAUSE ----------------
     where = ["t.batch_id=%s"]
