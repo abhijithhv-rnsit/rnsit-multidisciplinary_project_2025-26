@@ -422,6 +422,104 @@ def is_admin_batch_read_only(batch):
 # END ADMIN BATCH VIEW HELPER
 # ============================================================
 
+# ============================================================
+# BATCH MEMBERSHIP MIGRATION - STUDENTS / FACULTY
+# ============================================================
+
+def ensure_batch_membership_system():
+    """
+    Adds batch membership to students and faculty without changing
+    existing Batch 1 records. Existing students/faculty are attached
+    to Batch 1; Batch 2 uploads are attached to Batch 2.
+    """
+
+    if not pg_pool:
+        return
+
+    con = None
+    try:
+        con = db()
+        cur = con.cursor()
+
+        # Students belong to one academic batch.
+        cur.execute("""
+            ALTER TABLE students
+            ADD COLUMN IF NOT EXISTS batch_id INTEGER
+        """)
+
+        # Faculty can guide more than one batch, so use a mapping table.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS faculty_batches (
+                faculty_id INTEGER NOT NULL REFERENCES faculty(id) ON DELETE CASCADE,
+                batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (faculty_id, batch_id)
+            )
+        """)
+
+        cur.execute("""
+            SELECT id FROM batches
+            WHERE academic_year='2025-26'
+            LIMIT 1
+        """)
+        batch1 = cur.fetchone()
+
+        if batch1:
+            batch1_id = batch1["id"]
+
+            cur.execute("""
+                UPDATE students
+                SET batch_id=%s
+                WHERE batch_id IS NULL
+            """, (batch1_id,))
+
+            cur.execute("""
+                INSERT INTO faculty_batches(faculty_id, batch_id)
+                SELECT f.id, %s
+                FROM faculty f
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM faculty_batches fb
+                    WHERE fb.faculty_id=f.id AND fb.batch_id=%s
+                )
+            """, (batch1_id, batch1_id))
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_students_batch_id
+            ON students(batch_id)
+        """)
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_faculty_batches_batch_id
+            ON faculty_batches(batch_id)
+        """)
+
+        con.commit()
+        print("==============================================")
+        print("✅ Student/faculty batch membership initialized")
+        print("✅ Existing students assigned to Batch 1")
+        print("✅ Existing faculty linked to Batch 1")
+        print("==============================================")
+
+    except Exception as e:
+        if con:
+            con.rollback()
+        print("⚠️ Student/faculty batch membership migration failed:", e)
+
+    finally:
+        if con:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+
+ensure_batch_membership_system()
+
+# ============================================================
+# END BATCH MEMBERSHIP MIGRATION
+# ============================================================
+
+
 # ============================================================     
 # ONE TIME DEPARTMENT SYNC FIX
 try:
@@ -565,7 +663,8 @@ def ensure_students_table():
             usn TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            batch_id INTEGER
         )
     """)
     con.commit()
@@ -1001,9 +1100,18 @@ def student_signup():
         cur = con.cursor()
 
         try:
+            active_batch_id = get_active_batch_id(cur)
+            if not active_batch_id:
+                if pg_pool:
+                    pg_pool.putconn(con)
+                else:
+                    con.close()
+                flash("No active batch is configured")
+                return redirect(request.url)
+
             execute(
-                cur,"INSERT INTO students (usn, email, password_hash) VALUES (?,?,?)",
-                (usn, email, password_hash)
+                cur,"INSERT INTO students (usn, email, password_hash, batch_id, must_reset_password) VALUES (?,?,?,?,1)",
+                (usn, email, password_hash, active_batch_id)
             )
             con.commit()
             if pg_pool:
@@ -1029,7 +1137,16 @@ def student_login():
         con = db()
         cur = con.cursor()
 
-        execute(cur, "SELECT * FROM students WHERE usn=?", (usn,))
+        active_batch_id = get_active_batch_id(cur)
+        if not active_batch_id:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("No active batch is configured")
+            return redirect(request.url)
+
+        execute(cur, "SELECT * FROM students WHERE usn=? AND batch_id=?", (usn, active_batch_id))
         student = cur.fetchone()
         if pg_pool:
             pg_pool.putconn(con)
@@ -2081,7 +2198,21 @@ def faculty_login():
         cur = con.cursor()
 
         # ✅ PostgreSQL fix (%s instead of ?)
-        execute(cur,"SELECT * FROM faculty WHERE email=%s", (email,))
+        active_batch_id = get_active_batch_id(cur)
+        if not active_batch_id:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("No active batch is configured.")
+            return redirect(request.url)
+
+        execute(cur,"""
+            SELECT f.*
+            FROM faculty f
+            JOIN faculty_batches fb ON fb.faculty_id=f.id
+            WHERE f.email=%s AND fb.batch_id=%s
+        """, (email, active_batch_id))
         faculty = cur.fetchone()
 
         # if not found, check admins table
@@ -2438,7 +2569,13 @@ def admin_assign_faculty():
     teams = cur.fetchall()
 
     # Fetch faculty
-    execute(cur,"SELECT id, name, department FROM faculty")
+    execute(cur,"""
+        SELECT f.id, f.name, f.department
+        FROM faculty f
+        JOIN faculty_batches fb ON fb.faculty_id=f.id
+        WHERE fb.batch_id=?
+        ORDER BY f.name
+    """, (active_batch_id,))
     faculty = cur.fetchall()
 
     if request.method == "POST":
@@ -2509,358 +2646,207 @@ def admin_faculty_management():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
-    con = db()
-    cur = con.cursor()
+    con=db(); cur=con.cursor()
+    view_batch=get_admin_view_batch(cur)
+    if not view_batch:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin"))
+    batch_id=view_batch["id"]
+    read_only=is_admin_batch_read_only(view_batch)
 
-    admin_role = session.get("admin_role")
-    admin_dept = session.get("admin_department")
+    admin_role=session.get("admin_role"); admin_dept=session.get("admin_department")
+    search=request.args.get("search","").strip().lower(); dept_filter=request.args.get("dept","").strip()
+    page=int(request.args.get("page",1)); per_page=int(request.args.get("per_page",25))
+    if per_page not in [25,50,100]: per_page=25
+    sort_by=request.args.get("sort_by","name"); order=request.args.get("order","asc")
+    allowed_sort={"name":"f.name","email":"f.email","department":"f.department"}
+    if sort_by not in allowed_sort: sort_by="name"
+    if order not in ["asc","desc"]: order="asc"
+    order_sql=f"ORDER BY {allowed_sort[sort_by]} {order.upper()}"
+    offset=(page-1)*per_page
+    departments_list=["CSE","CSE-AIML","CSE-DS","CSE-CY","ECE","EEE","CV","ME"]
+    if admin_role=="admin": dept_filter=admin_dept
 
-    search = request.args.get("search", "").strip().lower()
-    dept_filter = request.args.get("dept", "").strip()
+    if request.args.get("download")=="template":
+        df=pd.DataFrame(columns=["Name","Email","Department"])
+        path="faculty_template.xlsx"; df.to_excel(path,index=False)
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        return send_file(path,as_attachment=True)
 
-    page = int(request.args.get("page", 1))
-
-    per_page = int(request.args.get("per_page", 25))
-    if per_page not in [25, 50, 100]:
-        per_page = 25
-
-    sort_by = request.args.get("sort_by", "name")
-    order = request.args.get("order", "asc")
-
-    allowed_sort = {
-        "name": "name",
-        "email": "email",
-        "department": "department"
-    }
-
-    if sort_by not in allowed_sort:
-        sort_by = "name"
-
-    if order not in ["asc", "desc"]:
-        order = "asc"
-
-    order_sql = f"ORDER BY {allowed_sort[sort_by]} {order.upper()}"
-
-    offset = (page - 1) * per_page
-
-    departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
-
-    if admin_role == "admin":
-        dept_filter = admin_dept
-
-    # ================================
-    # DOWNLOAD TEMPLATE
-    # ================================
-    if request.args.get("download") == "template":
-
-        df = pd.DataFrame(columns=["Name", "Email", "Department"])
-        path = "faculty_template.xlsx"
-        df.to_excel(path, index=False)
-
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-
-        return send_file(path, as_attachment=True)
-
-    # ================================
-    # FILTER CONDITIONS
-    # ================================
-    where, params = [], []
-
-    if dept_filter:
-        where.append("department=?")
-        params.append(dept_filter)
-
+    where=["fb.batch_id=?"]; params=[batch_id]
+    if dept_filter: where.append("f.department=?"); params.append(dept_filter)
     if search:
-        where.append("(LOWER(name) LIKE ? OR LOWER(email) LIKE ?)")
-        params.extend([f"%{search}%", f"%{search}%"])
+        where.append("(LOWER(f.name) LIKE ? OR LOWER(f.email) LIKE ?)"); params.extend([f"%{search}%",f"%{search}%"])
+    where_sql=" WHERE "+" AND ".join(where)
 
-    where_sql = " WHERE " + " AND ".join(where) if where else ""
+    if request.args.get("export")=="excel":
+        execute(cur,f"""
+            SELECT f.name,f.email,f.department
+            FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id
+            {where_sql} {order_sql}
+        """,params)
+        rows=cur.fetchall(); df=pd.DataFrame(rows)
+        path=f"faculty_{view_batch['academic_year']}.xlsx"; df.to_excel(path,index=False)
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        return send_file(path,as_attachment=True)
 
-    # ================================
-    # EXPORT EXCEL
-    # ================================
-    if request.args.get("export") == "excel":
+    if request.method=="POST":
+        action=request.form.get("action")
+        if read_only:
+            if pg_pool: pg_pool.putconn(con)
+            else: con.close()
+            flash("Historical batch is read-only. Select the active batch to make changes.")
+            return redirect(url_for("admin_faculty_management"))
 
-        execute(cur, f"""
-            SELECT name,email,department
-            FROM faculty
-            {where_sql}
-            {order_sql}
-        """, params)
+        if action=="edit_faculty":
+            fid=request.form.get("fid"); name=request.form.get("name").strip(); email=request.form.get("email").strip().lower(); department=admin_dept if admin_role=="admin" else request.form.get("department")
+            execute(cur,"SELECT id FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
+            if not cur.fetchone(): flash("Faculty does not belong to selected batch.")
+            else:
+                execute(cur,"UPDATE faculty SET name=?,email=?,department=? WHERE id=?",(name,email,department,fid)); con.commit(); flash("Faculty updated successfully ✅")
 
-        rows = cur.fetchall()
+        elif action=="delete_faculty":
+            fid=request.form.get("fid")
+            execute(cur,"SELECT COUNT(*) FROM team_faculty tf JOIN teams t ON tf.team_id=t.id WHERE tf.faculty_id=? AND t.batch_id=?",(fid,batch_id))
+            assigned=list(cur.fetchone().values())[0]
+            if assigned:
+                flash("Faculty is assigned to teams in this batch and cannot be deleted.")
+            else:
+                execute(cur,"DELETE FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id)); con.commit(); flash("Faculty removed from selected batch ✅")
 
-        df = pd.DataFrame(rows)
-
-        path = "faculty_export.xlsx"
-        df.to_excel(path, index=False)
-
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-
-        return send_file(path, as_attachment=True)
-
-    # ================================
-    # POST ACTIONS
-    # ================================
-    if request.method == "POST":
-
-        action = request.form.get("action")
-
-        # ---------- EDIT FACULTY ----------
-        if action == "edit_faculty":
-
-            fid = request.form.get("fid")
-            name = request.form.get("name").strip()
-            email = request.form.get("email").strip().lower()
-            department = admin_dept if admin_role == "admin" else request.form.get("department")
-
-            execute(cur, """
-                UPDATE faculty
-                SET name=?, email=?, department=?
-                WHERE id=?
-            """, (name, email, department, fid))
-
-            con.commit()
-            flash("Faculty updated successfully ✅")
-
-        # ---------- DELETE FACULTY ----------
-        elif action == "delete_faculty":
-
-            fid = request.form.get("fid")
-
-            execute(cur,"DELETE FROM faculty WHERE id=?", (fid,))
-            con.commit()
-
-            flash("Faculty deleted successfully 🗑️")
-
-        # ---------- BULK RESET PASSWORD ----------
-        elif action == "bulk_reset_password":
-
-            faculty_ids = request.form.getlist("faculty_id")
-
-            for fid in faculty_ids:
-
-                password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
-
-                execute(cur,"""
-                UPDATE faculty
-                SET password_hash=?, must_reset_password=1
-                WHERE id=?
-                """,(password_hash,fid))
-
-            con.commit()
-
-            flash("Passwords reset successfully 🔁")
-
-        # ---------- BULK DELETE ----------
-        elif action == "bulk_delete":
-
-            faculty_ids = request.form.getlist("faculty_id")
-
+        elif action=="bulk_reset_password":
+            faculty_ids=request.form.getlist("faculty_id")
             if faculty_ids:
+                placeholders=",".join(["%s"]*len(faculty_ids)); password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+                execute(cur,f"""UPDATE faculty SET password_hash=%s,must_reset_password=1 WHERE id IN ({placeholders}) AND id IN (SELECT faculty_id FROM faculty_batches WHERE batch_id=%s)""",[password_hash]+faculty_ids+[batch_id]); con.commit(); flash("Passwords reset successfully 🔁")
 
-                placeholders = ",".join(["%s"] * len(faculty_ids))
+        elif action=="bulk_delete":
+            faculty_ids=request.form.getlist("faculty_id")
+            if faculty_ids:
+                placeholders=",".join(["%s"]*len(faculty_ids))
+                execute(cur,f"DELETE FROM faculty_batches WHERE batch_id=%s AND faculty_id IN ({placeholders})",[batch_id]+faculty_ids); con.commit(); flash(f"{len(faculty_ids)} faculty removed from selected batch 🗑️")
 
-                execute(cur,
-                    f"DELETE FROM faculty WHERE id IN ({placeholders})",
-                    faculty_ids
-                )
+        elif action=="bulk_upload":
+            file=request.files.get("file")
+            if not file: flash("No file selected ❗")
+            else:
+                try: df=pd.read_excel(file)
+                except Exception: df=None
+                if df is None: flash("Invalid Excel file ❗")
+                else:
+                    missing=[c for c in ["Name","Email","Department"] if c not in df.columns]
+                    if missing: flash("Missing column(s): "+", ".join(missing))
+                    else:
+                        created=associated=skipped=0
+                        for _,r in df.iterrows():
+                            name=str(r["Name"]).strip(); email=str(r["Email"]).strip().lower(); dept=admin_dept if admin_role=="admin" else str(r["Department"]).strip()
+                            if not name or not email or not dept: skipped+=1; continue
+                            execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
+                            if f:
+                                fid=f["id"]
+                                execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
+                                if cur.fetchone(): skipped+=1; continue
+                                execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); associated+=1
+                            else:
+                                password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+                                execute(cur,"""INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)""",(name,email,password_hash,dept))
+                                execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
+                                execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created+=1
+                        con.commit(); flash(f"Batch {view_batch['academic_year']} faculty upload completed. New: {created}, Existing faculty linked: {associated}, Skipped: {skipped}")
 
-                con.commit()
+        elif action=="manual_add":
+            name=request.form.get("name").strip(); email=request.form.get("email").strip().lower(); department=admin_dept if admin_role=="admin" else request.form.get("department")
+            password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+            execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
+            if f:
+                fid=f["id"]
+                execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
+                if cur.fetchone(): flash("Faculty already belongs to this batch ❌")
+                else: execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); con.commit(); flash("Faculty added to selected batch ✅")
+            else:
+                execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,department)); execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]; execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); con.commit(); flash("Faculty created successfully ✅")
 
-                flash(f"{len(faculty_ids)} faculty deleted successfully 🗑️")
-
-        # ---------- BULK UPLOAD ----------
-        elif action == "bulk_upload":
-
-            file = request.files.get("file")
-
-            if not file:
-                flash("No file selected ❗")
-                return redirect(url_for("admin_faculty_management"))
-
-            df = pd.read_excel(file)
-
-            REQUIRED = ["Name", "Email", "Department"]
-
-            for c in REQUIRED:
-                if c not in df.columns:
-                    flash(f"Missing column: {c}")
-                    return redirect(url_for("admin_faculty_management"))
-
-            created = 0
-
-            for _, r in df.iterrows():
-
-                name = str(r["Name"]).strip()
-                email = str(r["Email"]).strip().lower()
-                dept = admin_dept if admin_role == "admin" else str(r["Department"]).strip()
-
-                if not name or not email:
-                    continue
-
-                execute(cur,"SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
-                if list(cur.fetchone().values())[0] > 0:
-                    continue
-
-                password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
-
-                execute(cur,"""
-                    INSERT INTO faculty(name,email,password_hash,department,must_reset_password)
-                    VALUES (?,?,?,?,1)
-                """, (name, email, password_hash, dept))
-
-                created += 1
-
-            con.commit()
-            flash(f"{created} faculty added successfully ✅")
-
-        # ---------- MANUAL ADD ----------
-        elif action == "manual_add":
-
-            name = request.form.get("name").strip()
-            email = request.form.get("email").strip().lower()
-            department = admin_dept if admin_role == "admin" else request.form.get("department")
-
-            password_hash = generate_password_hash(DEFAULT_FACULTY_PASSWORD)
-
-            try:
-                execute(cur,"""
-                    INSERT INTO faculty(name,email,password_hash,department,must_reset_password)
-                    VALUES (?,?,?,?,1)
-                """, (name, email, password_hash, department))
-
-                con.commit()
-                flash("Faculty created successfully ✅")
-
-            except:
-                flash("Faculty already exists ❌")
-
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
         return redirect(url_for("admin_faculty_management"))
 
-    # ================================
-    # LIST VIEW
-    # ================================
+    execute(cur,f"SELECT COUNT(*) FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id {where_sql}",params)
+    total_rows=list(cur.fetchone().values())[0]; total_pages=max(1,(total_rows+per_page-1)//per_page)
+    execute(cur,f"""SELECT f.id,f.name,f.email,f.department FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id {where_sql} {order_sql} LIMIT ? OFFSET ?""",params+[per_page,offset])
+    faculty=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template("admin_faculty_management.html",faculty=faculty,departments_list=departments_list,search=search,dept_filter=dept_filter,page=page,total_pages=total_pages,total_rows=total_rows,per_page=per_page,sort_by=sort_by,order=order,active_page="faculty",view_batch=view_batch,read_only=read_only)
 
-    execute(cur,f"SELECT COUNT(*) FROM faculty {where_sql}", params)
-    total_rows = list(cur.fetchone().values())[0]
-
-    total_pages = max(1, (total_rows + per_page - 1) // per_page)
-
-    execute(cur,f"""
-        SELECT id,name,email,department
-        FROM faculty
-        {where_sql}
-        {order_sql}
-        LIMIT ? OFFSET ?
-    """, params + [per_page, offset])
-
-    faculty = cur.fetchall()
-
-    if pg_pool:
-        pg_pool.putconn(con)
-    else:
-        con.close()
-
-    return render_template(
-        "admin_faculty_management.html",
-        faculty=faculty,
-        departments_list=departments_list,
-        search=search,
-        dept_filter=dept_filter,
-        page=page,
-        total_pages=total_pages,
-        total_rows=total_rows,
-        per_page=per_page,
-        sort_by=sort_by,
-        order=order,
-        active_page="faculty"
-    )
 @app.route("/admin/faculty/bulk-upload", methods=["GET", "POST"])
 def admin_faculty_bulk_upload():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
-    if request.method == "POST":
-        file = request.files.get("file")
+    con=db(); cur=con.cursor()
+    view_batch=get_admin_view_batch(cur)
+    if not view_batch:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin"))
+    if is_admin_batch_read_only(view_batch):
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Historical batch is read-only. Select the active batch to upload faculty.")
+        return redirect(url_for("admin_faculty_management"))
+    batch_id=view_batch["id"]
+
+    if request.method=="POST":
+        file=request.files.get("file")
         if not file:
+            if pg_pool: pg_pool.putconn(con)
+            else: con.close()
             flash("Please upload an Excel file.")
             return redirect(request.url)
-
-        try:
-            df = pd.read_excel(file)
-        except:
+        try: df=pd.read_excel(file)
+        except Exception:
+            if pg_pool: pg_pool.putconn(con)
+            else: con.close()
             flash("Invalid file. Please upload a valid Excel file.")
             return redirect(request.url)
-
-        required_cols = ["Name", "Email", "Department"]
-        for col in required_cols:
-            if col not in df.columns:
-                flash(f"Missing column: {col}")
-                return redirect(request.url)
-
-        con = db()
-        cur = con.cursor()
-
-        created = []
-        skipped = []
-
-        for _, r in df.iterrows():
-            name = str(r["Name"]).strip()
-            email = str(r["Email"]).strip().lower()
-            dept = str(r["Department"]).strip()
-
-            if not name or not email or not dept:
-                skipped.append((name, email, dept, "Missing data"))
-                continue
-
-            # check duplicate
-            execute(cur,"SELECT COUNT(*) FROM faculty WHERE email=?", (email,))
-            if list(cur.fetchone().values())[0] > 0:
-                skipped.append((name, email, dept, "Already exists"))
-                continue
-
-            # generate password
-            raw_password = generate_random_password(10)
-            password_hash = generate_password_hash(raw_password)
-
-            execute(cur,"""
-                INSERT INTO faculty(name, email, password_hash, department)
-                VALUES (?,?,?,?)
-            """, (name, email, password_hash, dept))
-
-            created.append((name, email, dept, raw_password))
-
+        required_cols=["Name","Email","Department"]
+        missing=[c for c in required_cols if c not in df.columns]
+        if missing:
+            if pg_pool: pg_pool.putconn(con)
+            else: con.close()
+            flash("Missing column(s): "+", ".join(missing)); return redirect(request.url)
+        created=[]; associated=[]; skipped=[]
+        for _,r in df.iterrows():
+            name=str(r["Name"]).strip(); email=str(r["Email"]).strip().lower(); dept=str(r["Department"]).strip()
+            if not name or not email or not dept: skipped.append((name,email,dept,"Missing data")); continue
+            execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
+            if f:
+                fid=f["id"]; execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
+                if cur.fetchone(): skipped.append((name,email,dept,"Already in selected batch")); continue
+                execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); associated.append((name,email,dept,"Existing faculty linked")); continue
+            raw_password=generate_random_password(10); password_hash=generate_password_hash(raw_password)
+            execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,dept))
+            execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
+            execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created.append((name,email,dept,raw_password))
         con.commit()
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-
-        # Save generated passwords to Excel for admin download
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
         if created:
-            out_df = pd.DataFrame(created, columns=["Name", "Email", "Department", "Generated Password"])
-            out_file = "faculty_generated_passwords.xlsx"
-            out_df.to_excel(out_file, index=False)
+            out_df=pd.DataFrame(created,columns=["Name","Email","Department","Generated Password"])
+            out_file=f"faculty_generated_passwords_{view_batch['academic_year']}.xlsx"; out_df.to_excel(out_file,index=False)
+            flash(f"Faculty upload completed. New: {len(created)}, Existing linked: {len(associated)}, Skipped: {len(skipped)}")
+            return send_file(out_file,as_attachment=True)
+        flash(f"Faculty upload completed. New: 0, Existing linked: {len(associated)}, Skipped: {len(skipped)}")
+        return redirect(url_for("admin_faculty_bulk_upload"))
 
-            flash(f"Bulk upload completed ✅ Created: {len(created)}, Skipped: {len(skipped)}")
-            return send_file(out_file, as_attachment=True)
-
-        flash("No new faculty created. All were skipped.")
-        return redirect(request.url)
-
-    return render_template("admin_faculty_bulk_upload.html", active_page="faculty")
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template("admin_faculty_bulk_upload.html",active_page="faculty",view_batch=view_batch,read_only=False)
 
 @app.route("/admin/add-faculty", methods=["GET", "POST"])
 def admin_add_faculty():
@@ -2900,7 +2886,15 @@ def admin_faculty_list():
 
     con = db()
     cur = con.cursor()
-    execute(cur,"SELECT id, name, email, department FROM faculty ORDER BY name")
+    view_batch=get_admin_view_batch(cur)
+    batch_id=view_batch["id"] if view_batch else None
+    execute(cur,"""
+        SELECT f.id, f.name, f.email, f.department
+        FROM faculty f
+        JOIN faculty_batches fb ON fb.faculty_id=f.id
+        WHERE fb.batch_id=?
+        ORDER BY f.name
+    """, (batch_id,))
     faculty = cur.fetchall()
     if pg_pool:
         pg_pool.putconn(con)
@@ -2937,21 +2931,54 @@ def admin_students():
     con = db()
     cur = con.cursor()
 
+    view_batch = get_admin_view_batch(cur)
+    if not view_batch:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin"))
+
+    batch_id = view_batch["id"]
+    read_only = is_admin_batch_read_only(view_batch)
+
     is_dept_admin = session.get("admin_role") == "admin"
     dept_admin_department = session.get("admin_department")
-
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
-
-    # ============================================================
-    # POST ACTIONS (UNCHANGED)
-    # ============================================================
 
     if request.method == "POST":
         action = request.form.get("action")
 
+        if read_only:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Historical batch is read-only. Select the active batch to make changes.")
+            return redirect(url_for("admin_students"))
+
         if action == "bulk_upload":
-            file = request.files["file"]
-            df = pd.read_excel(file)
+            file = request.files.get("file")
+            if not file:
+                flash("Please select an Excel file.")
+                return redirect(url_for("admin_students"))
+
+            try:
+                df = pd.read_excel(file)
+            except Exception:
+                flash("Invalid Excel file.")
+                return redirect(url_for("admin_students"))
+
+            required = ["USN", "Email", "Name", "Department", "Section"]
+            missing = [c for c in required if c not in df.columns]
+            if missing:
+                flash("Missing column(s): " + ", ".join(missing))
+                return redirect(url_for("admin_students"))
+
+            created = 0
+            skipped = []
+            password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
 
             for _, r in df.iterrows():
                 usn = str(r["USN"]).strip().upper()
@@ -2960,19 +2987,27 @@ def admin_students():
                 dept = dept_admin_department if is_dept_admin else str(r["Department"]).strip()
                 sec = str(r["Section"]).strip()
 
-                execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
-                if list(cur.fetchone().values())[0] > 0:
+                if not usn or not email or not name or not dept:
+                    skipped.append((usn, email, "Missing data"))
                     continue
 
-                password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+                execute(cur,"SELECT id FROM students WHERE usn=? OR email=?", (usn, email))
+                existing = cur.fetchone()
+                if existing:
+                    skipped.append((usn, email, "USN or email already exists"))
+                    continue
 
                 execute(cur,"""
-                    INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password)
-                    VALUES (?,?,?,?,?,?,1)
-                """, (usn, email, password_hash, name, dept, sec))
+                    INSERT INTO students(
+                        usn,email,password_hash,name,department,section,
+                        must_reset_password,batch_id
+                    )
+                    VALUES (?,?,?,?,?,?,1,?)
+                """, (usn, email, password_hash, name, dept, sec, batch_id))
+                created += 1
 
             con.commit()
-            flash("Bulk upload completed ✅")
+            flash(f"Batch {view_batch['academic_year']} upload completed. Created: {created}, Skipped: {len(skipped)}")
 
         elif action == "manual_add":
             usn = request.form["usn"].strip().upper()
@@ -2985,11 +3020,13 @@ def admin_students():
             if list(cur.fetchone().values())[0] == 0:
                 password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
                 execute(cur,"""
-                    INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password)
-                    VALUES (?,?,?,?,?,?,1)
-                """, (usn, email, password_hash, name, dept, sec))
+                    INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password,batch_id)
+                    VALUES (?,?,?,?,?,?,1,?)
+                """, (usn,email,password_hash,name,dept,sec,batch_id))
                 con.commit()
                 flash("Student created successfully ✅")
+            else:
+                flash("USN or Email already exists ❌")
 
         elif action == "edit_student":
             sid = request.form.get("sid")
@@ -2998,23 +3035,24 @@ def admin_students():
             name = request.form.get("name").strip()
             department = request.form.get("department").strip()
             section = request.form.get("section").strip()
-
             if is_dept_admin:
                 department = dept_admin_department
 
-            execute(cur,"SELECT COUNT(*) FROM students WHERE (usn=? OR email=?) AND id<>?",
-                    (usn, email, sid))
-
-            if list(cur.fetchone().values())[0] > 0:
-                flash("USN or Email already exists ❌")
+            execute(cur,"SELECT id FROM students WHERE id=? AND batch_id=?", (sid,batch_id))
+            if not cur.fetchone():
+                flash("Student does not belong to the selected batch.")
             else:
-                execute(cur,"""
-                    UPDATE students
-                    SET usn=?, email=?, name=?, department=?, section=?
-                    WHERE id=?
-                """, (usn, email, name, department, section, sid))
-                con.commit()
-                flash("Student updated successfully ✅")
+                execute(cur,"SELECT COUNT(*) FROM students WHERE (usn=? OR email=?) AND id<>?", (usn,email,sid))
+                if list(cur.fetchone().values())[0] > 0:
+                    flash("USN or Email already exists ❌")
+                else:
+                    execute(cur,"""
+                        UPDATE students
+                        SET usn=?, email=?, name=?, department=?, section=?
+                        WHERE id=? AND batch_id=?
+                    """, (usn,email,name,department,section,sid,batch_id))
+                    con.commit()
+                    flash("Student updated successfully ✅")
 
         elif action == "reset_password":
             sid = request.form.get("sid")
@@ -3022,25 +3060,35 @@ def admin_students():
             execute(cur,"""
                 UPDATE students
                 SET password_hash=?, must_reset_password=1
-                WHERE id=?
-            """, (password_hash, sid))
+                WHERE id=? AND batch_id=?
+            """, (password_hash,sid,batch_id))
             con.commit()
             flash("Password reset successfully 🔁")
 
         elif action == "delete_student":
             sid = request.form.get("sid")
-            execute(cur,"DELETE FROM students WHERE id=?", (sid,))
+            execute(cur,"DELETE FROM students WHERE id=? AND batch_id=?", (sid,batch_id))
             con.commit()
             flash("Student deleted successfully 🗑️")
+
+        elif action == "bulk_reset_password":
+            student_ids = request.form.getlist("student_id")
+            if student_ids:
+                placeholders = ",".join(["%s"] * len(student_ids))
+                password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
+                execute(cur,f"""
+                    UPDATE students
+                    SET password_hash=%s, must_reset_password=1
+                    WHERE batch_id=%s AND id IN ({placeholders})
+                """, [password_hash,batch_id] + student_ids)
+                con.commit()
+                flash(f"{len(student_ids)} student password(s) reset 🔁")
 
         elif action == "bulk_delete":
             student_ids = request.form.getlist("student_id")
             if student_ids:
                 placeholders = ",".join(["%s"] * len(student_ids))
-                execute(cur,
-                    f"DELETE FROM students WHERE id IN ({placeholders})",
-                    student_ids
-                )
+                execute(cur,f"DELETE FROM students WHERE batch_id=%s AND id IN ({placeholders})", [batch_id] + student_ids)
                 con.commit()
                 flash(f"{len(student_ids)} students deleted successfully 🗑️")
             else:
@@ -3050,149 +3098,59 @@ def admin_students():
             pg_pool.putconn(con)
         else:
             con.close()
-
         return redirect(url_for("admin_students"))
-
-    # ============================================================
-    # LIST + FILTER + PAGINATION + SORTING
-    # ============================================================
 
     search = request.args.get("search","").strip().lower()
     dept_filter = request.args.get("dept","").strip()
     page = int(request.args.get("page",1))
-
-    per_page = int(request.args.get("per_page", 25))
-    if per_page not in [25, 50, 100]:
-        per_page = 25
-
+    per_page = int(request.args.get("per_page",25))
+    if per_page not in [25,50,100]: per_page=25
     sort_by = request.args.get("sort_by","created_at")
     order = request.args.get("order","desc")
+    allowed_sort_columns = {"usn":"usn","email":"email","name":"name","department":"department","section":"section","created_at":"created_at"}
+    if sort_by not in allowed_sort_columns: sort_by="created_at"
+    if order not in ["asc","desc"]: order="desc"
+    order_sql=f"ORDER BY {allowed_sort_columns[sort_by]} {order.upper()}"
+    offset=(page-1)*per_page
 
-    allowed_sort_columns = {
-        "usn": "usn",
-        "email": "email",
-        "name": "name",
-        "department": "department",
-        "section": "section",
-        "created_at": "created_at"
-    }
-
-    if sort_by not in allowed_sort_columns:
-        sort_by = "created_at"
-
-    if order not in ["asc","desc"]:
-        order = "desc"
-
-    order_sql = f"ORDER BY {allowed_sort_columns[sort_by]} {order.upper()}"
-
-    offset = (page-1)*per_page
-
-    where = []
-    params = []
-
+    where=["batch_id=?"]
+    params=[batch_id]
     if is_dept_admin:
-        where.append("department=?")
-        params.append(dept_admin_department)
+        where.append("department=?"); params.append(dept_admin_department)
     elif dept_filter:
-        where.append("department=?")
-        params.append(dept_filter)
-
+        where.append("department=?"); params.append(dept_filter)
     if search:
-        where.append("""
-            (LOWER(usn) LIKE ?
-             OR LOWER(email) LIKE ?
-             OR LOWER(COALESCE(name,'')) LIKE ?)
-        """)
-        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+        where.append("(LOWER(usn) LIKE ? OR LOWER(email) LIKE ? OR LOWER(COALESCE(name,'')) LIKE ?)")
+        params.extend([f"%{search}%",f"%{search}%",f"%{search}%"])
+    where_sql=" WHERE "+" AND ".join(where)
 
-    where_sql = " WHERE " + " AND ".join(where) if where else ""
-
-    # ============================================================
-    # EXPORT EXCEL
-    # ============================================================
-
-    if request.args.get("export") == "excel":
-
-        execute(cur, f"""
+    if request.args.get("export")=="excel":
+        execute(cur,f"""
             SELECT usn,email,name,department,section,must_reset_password,created_at
-            FROM students
-            {where_sql}
-            {order_sql}
-        """, params)
-
-        rows = cur.fetchall()
-
-        import pandas as pd
-        import io
-        from flask import send_file
-
-        data = []
-        for r in rows:
-            data.append({
-                "USN": r["usn"],
-                "Email": r["email"],
-                "Name": r["name"],
-                "Department": r["department"],
-                "Section": r["section"],
-                "Reset Status": "Must Reset" if r["must_reset_password"] == 1 else "Reset Done",
-                "Created At": r["created_at"]
-            })
-
-        df = pd.DataFrame(data)
-
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="Students")
-
+            FROM students {where_sql} {order_sql}
+        """,params)
+        rows=cur.fetchall()
+        data=[{"USN":r["usn"],"Email":r["email"],"Name":r["name"],"Department":r["department"],"Section":r["section"],"Reset Status":"Must Reset" if r["must_reset_password"]==1 else "Reset Done","Created At":r["created_at"]} for r in rows]
+        output=io.BytesIO()
+        with pd.ExcelWriter(output,engine="xlsxwriter") as writer:
+            pd.DataFrame(data).to_excel(writer,index=False,sheet_name="Students")
+            pd.DataFrame([{"Batch":view_batch["batch_name"],"Academic Year":view_batch["academic_year"],"Status":view_batch["status"],"Total Students":len(data)}]).to_excel(writer,index=False,sheet_name="Batch Info")
         output.seek(0)
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        return send_file(output,download_name=f"students_{view_batch['academic_year']}.xlsx",as_attachment=True,mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-
-        return send_file(
-            output,
-            download_name="students.xlsx",
-            as_attachment=True,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    # ============================================================
-
-    execute(cur,f"SELECT COUNT(*) FROM students {where_sql}", params)
-    total_rows = list(cur.fetchone().values())[0]
-    total_pages = max(1,(total_rows+per_page-1)//per_page)
-
+    execute(cur,f"SELECT COUNT(*) FROM students {where_sql}",params)
+    total_rows=list(cur.fetchone().values())[0]
+    total_pages=max(1,(total_rows+per_page-1)//per_page)
     execute(cur,f"""
         SELECT id,usn,email,name,department,section,must_reset_password,created_at
-        FROM students
-        {where_sql}
-        {order_sql}
-        LIMIT ? OFFSET ?
-    """, params + [per_page, offset])
-
-    students = cur.fetchall()
-
-    if pg_pool:
-        pg_pool.putconn(con)
-    else:
-        con.close()
-
-    return render_template(
-        "admin_students.html",
-        students=students,
-        departments_list=departments_list,
-        search=search,
-        dept_filter=dept_filter,
-        page=page,
-        total_pages=total_pages,
-        total_rows=total_rows,
-        per_page=per_page,
-        sort_by=sort_by,
-        order=order,
-        active_page="students"
-    )
+        FROM students {where_sql} {order_sql} LIMIT ? OFFSET ?
+    """,params+[per_page,offset])
+    students=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template("admin_students.html",students=students,departments_list=departments_list,search=search,dept_filter=dept_filter,page=page,total_pages=total_pages,total_rows=total_rows,per_page=per_page,sort_by=sort_by,order=order,active_page="students",view_batch=view_batch,read_only=read_only)
 @app.route("/student/change-password", methods=["GET", "POST"])
 def student_change_password():
     if not session.get("student_usn"):
@@ -3216,7 +3174,16 @@ def student_change_password():
         con = db()
         cur = con.cursor()
 
-        execute(cur,"SELECT * FROM students WHERE usn=?", (usn,))
+        active_batch_id = get_active_batch_id(cur)
+        if not active_batch_id:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("No active batch is configured.")
+            return redirect(url_for("student_login"))
+
+        execute(cur,"SELECT * FROM students WHERE usn=? AND batch_id=?", (usn, active_batch_id))
         student = cur.fetchone()
 
         if not student:
