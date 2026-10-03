@@ -2000,14 +2000,21 @@ def faculty_change_password():
     return render_template("faculty_change_password.html")
 
 def get_faculty_team_count(cur, faculty_id):
+
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        return 0
+
     execute(cur,"""
-        SELECT COUNT(*) 
-        FROM teams 
-        WHERE assigned_faculty_id = ?
-    """, (faculty_id,))
+        SELECT COUNT(*)
+        FROM team_faculty tf
+        JOIN teams t ON tf.team_id = t.id
+        WHERE tf.faculty_id = ?
+          AND t.batch_id = ?
+    """, (faculty_id, active_batch_id))
+
     return list(cur.fetchone().values())[0]
-
-
 @app.route("/faculty/dashboard")
 def faculty_dashboard():
     if not session.get("faculty_id"):
@@ -2021,6 +2028,19 @@ def faculty_dashboard():
     con = db()
     cur = con.cursor()
 
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash("No active batch is configured.")
+        return redirect(url_for("faculty_login"))
+
+    # ---------------- ASSIGNED TEAMS ----------------
     execute(cur,"""
         SELECT
             t.id AS team_id,
@@ -2033,8 +2053,9 @@ def faculty_dashboard():
         JOIN teams t ON tf.team_id = t.id
         JOIN problems p ON t.problem_id = p.id
         WHERE tf.faculty_id = ?
+          AND t.batch_id = ?
         ORDER BY p.title
-    """, (faculty_id,))
+    """, (faculty_id, active_batch_id))
     assigned_teams = cur.fetchall()
 
     # Pending review count
@@ -2042,8 +2063,11 @@ def faculty_dashboard():
         SELECT COUNT(*)
         FROM weekly_progress wp
         JOIN team_faculty tf ON wp.team_id = tf.team_id
-        WHERE tf.faculty_id=? AND wp.status='Pending'
-    """, (faculty_id,))
+        JOIN teams t ON tf.team_id = t.id
+        WHERE tf.faculty_id=?
+          AND t.batch_id=?
+          AND wp.status='Pending'
+    """, (faculty_id, active_batch_id))
     pending_count = list(cur.fetchone().values())[0]
 
     if pg_pool:
@@ -2077,13 +2101,26 @@ def faculty_team_details(team_id):
 
     con = db()
     cur = con.cursor()
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
 
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash("No active batch is configured.")
+        return redirect(url_for("faculty_login"))
     # 🔐 Security check: faculty can only access assigned team
     execute(cur,"""
         SELECT COUNT(*)
-        FROM team_faculty
-        WHERE team_id=? AND faculty_id=?
-    """, (team_id, faculty_id))
+        FROM team_faculty tf
+        JOIN teams t ON tf.team_id = t.id
+        WHERE tf.team_id=?
+          AND tf.faculty_id=?
+          AND t.batch_id=?
+    """, (team_id, faculty_id, active_batch_id))
 
     if list(cur.fetchone().values())[0] == 0:
         if pg_pool:
@@ -2112,7 +2149,8 @@ def faculty_team_details(team_id):
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         WHERE t.id=?
-    """, (team_id,))
+          AND t.batch_id=?
+    """, (team_id,active_batch_id))
     team = cur.fetchone()
 
     # ---------------- TEAM MEMBERS ----------------
@@ -2171,8 +2209,26 @@ def admin_assign_faculty():
     con = db()
     cur = con.cursor()
 
-    # Fetch teams
-    execute(cur,"SELECT id, team_name, leader_usn FROM teams")
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
+    # ---------------- FETCH ACTIVE BATCH TEAMS ----------------
+    execute(cur,"""
+        SELECT id, team_name, leader_usn
+        FROM teams
+        WHERE batch_id=?
+        ORDER BY team_name
+    """, (active_batch_id,))
+
     teams = cur.fetchall()
 
     # Fetch faculty
@@ -2180,18 +2236,35 @@ def admin_assign_faculty():
     faculty = cur.fetchall()
 
     if request.method == "POST":
+
         team_id = request.form["team_id"]
         faculty_id = request.form["faculty_id"]
 
-        # Insert or update mapping
+        # ---------------- VERIFY ACTIVE BATCH TEAM ----------------
         execute(cur,"""
-            INSERT INTO team_faculty(team_id, faculty_id)
-            VALUES (?, ?)
-            ON CONFLICT(team_id) DO UPDATE SET faculty_id=excluded.faculty_id
-        """, (team_id, faculty_id))
+            SELECT id
+            FROM teams
+            WHERE id=?
+              AND batch_id=?
+        """, (team_id, active_batch_id))
 
-        con.commit()
-        flash("Faculty assigned successfully")
+        active_team = cur.fetchone()
+
+        if not active_team:
+            flash("Invalid team or team does not belong to the active batch.")
+        else:
+
+            # ---------------- ASSIGN FACULTY ----------------
+            execute(cur,"""
+                INSERT INTO team_faculty(team_id, faculty_id)
+                VALUES (?, ?)
+                ON CONFLICT(team_id)
+                DO UPDATE SET faculty_id=excluded.faculty_id
+            """, (team_id, faculty_id))
+
+            con.commit()
+
+            flash("Faculty assigned successfully")
 
     if pg_pool:
         pg_pool.putconn(con)
