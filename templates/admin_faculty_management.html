@@ -24,6 +24,7 @@ body { background:#f6f7fb; }
 
 <div>
 <h4 class="fw-bold mb-1">Faculty Management</h4>
+<div class="mb-1"><span class="badge bg-primary">{{ view_batch.batch_name }} — {{ view_batch.academic_year }}</span>{% if read_only %} <span class="badge bg-warning text-dark">READ-ONLY</span>{% else %} <span class="badge bg-success">ACTIVE</span>{% endif %}</div>
 <div class="text-muted small">
 Total Faculty: <b>{{ total_rows }}</b> |
 Page: <b>{{ page }}</b> / <b>{{ total_pages }}</b>
@@ -52,6 +53,7 @@ class="btn btn-outline-primary btn-sm">
 {% endwith %}
 
 <!-- BULK UPLOAD -->
+{% if not read_only %}
 <div class="card shadow-sm mb-4 border-0">
 <div class="card-body p-4">
 
@@ -82,8 +84,12 @@ Columns required: <b>Name</b>, <b>Email</b>, <b>Department</b>
 </form>
 </div>
 </div>
+{% else %}
+<div class="alert alert-warning">This historical batch is read-only. Faculty upload/edit/delete actions are disabled.</div>
+{% endif %}
 
 <!-- MANUAL ADD -->
+{% if not read_only %}
 <div class="card shadow-sm mb-4 border-0">
 <div class="card-body p-4">
 
@@ -145,6 +151,7 @@ Columns required: <b>Name</b>, <b>Email</b>, <b>Department</b>
 
 </div>
 </div>
+{% endif %}
 
 <!-- FILTER -->
 <form method="get" action="/admin/faculty-management"
