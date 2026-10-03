@@ -731,6 +731,15 @@ def ensure_evaluation_system():
                 UNIQUE(scheme_id, phase_id, presentation_id, team_id, evaluator_id, student_usn)
             )
         """)
+        # Additional configurable evaluation fields (safe/idempotent migrations).
+        for sql in [
+            "ALTER TABLE evaluation_presentations ADD COLUMN IF NOT EXISTS start_at TIMESTAMP NULL",
+            "ALTER TABLE evaluation_presentations ADD COLUMN IF NOT EXISTS end_at TIMESTAMP NULL",
+            "ALTER TABLE evaluation_presentations ADD COLUMN IF NOT EXISTS remarks_required BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS weight NUMERIC(10,4) DEFAULT 1",
+        ]:
+            cur.execute(sql)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS evaluation_criterion_scores (
                 id SERIAL PRIMARY KEY,
@@ -842,10 +851,100 @@ def admin_evaluation_settings():
                         start_at=NULLIF(%s,'')::timestamp,end_at=NULLIF(%s,'')::timestamp,sort_order=%s WHERE id=%s""",
                         (request.form["name"].strip(),request.form.get("description",""),_float(request.form.get("max_marks")),request.form.get("evaluation_mode","presentation"),request.form.get("start_at",""),request.form.get("end_at",""),int(request.form.get("sort_order",1)),pid))
                     con.commit(); flash("Phase updated.")
+                elif action=="reopen_phase":
+                    pid=int(request.form["phase_id"])
+                    execute(cur,"""UPDATE evaluation_phases
+                        SET locked=FALSE
+                        WHERE id=%s
+                          AND scheme_id IN (SELECT id FROM evaluation_schemes WHERE batch_id=%s)""",
+                        (pid,batch_id))
+                    con.commit(); flash("Phase reopened for evaluation.")
+                elif action=="update_presentation":
+                    prid=int(request.form["presentation_id"])
+                    execute(cur,"""UPDATE evaluation_presentations
+                        SET name=%s,description=%s,max_marks=%s,sort_order=%s,
+                            evaluation_date=NULLIF(%s,'')::date,
+                            start_at=NULLIF(%s,'')::timestamp,
+                            end_at=NULLIF(%s,'')::timestamp,
+                            remarks_required=%s
+                        WHERE id=%s
+                          AND phase_id IN (
+                              SELECT p.id FROM evaluation_phases p
+                              JOIN evaluation_schemes s ON s.id=p.scheme_id
+                              WHERE s.batch_id=%s
+                          )""",
+                        (request.form["name"].strip(),request.form.get("description",""),
+                         _float(request.form.get("max_marks")),int(request.form.get("sort_order",1)),
+                         request.form.get("evaluation_date",""),request.form.get("start_at",""),
+                         request.form.get("end_at",""),request.form.get("remarks_required")=='1',
+                         prid,batch_id))
+                    con.commit(); flash("Presentation updated.")
+                elif action=="update_criterion":
+                    cid=int(request.form["criterion_id"])
+                    execute(cur,"""UPDATE evaluation_criteria
+                        SET name=%s,description=%s,max_marks=%s,sort_order=%s,rubric_enabled=%s
+                        WHERE id=%s
+                          AND presentation_id IN (
+                              SELECT p.id FROM evaluation_presentations p
+                              JOIN evaluation_phases ph ON ph.id=p.phase_id
+                              JOIN evaluation_schemes s ON s.id=ph.scheme_id
+                              WHERE s.batch_id=%s
+                          )""",
+                        (request.form["name"].strip(),request.form.get("description",""),
+                         _float(request.form.get("max_marks")),int(request.form.get("sort_order",1)),
+                         request.form.get("rubric_enabled")=='1',cid,batch_id))
+                    con.commit(); flash("Criterion updated.")
+                elif action=="update_rubric":
+                    rid=int(request.form["rubric_id"])
+                    execute(cur,"""UPDATE evaluation_rubrics
+                        SET level_name=%s,min_marks=%s,max_marks=%s,description=%s,sort_order=%s
+                        WHERE id=%s
+                          AND criterion_id IN (
+                              SELECT c.id FROM evaluation_criteria c
+                              JOIN evaluation_presentations p ON p.id=c.presentation_id
+                              JOIN evaluation_phases ph ON ph.id=p.phase_id
+                              JOIN evaluation_schemes s ON s.id=ph.scheme_id
+                              WHERE s.batch_id=%s
+                          )""",
+                        (request.form["level_name"].strip(),_float(request.form.get("min_marks")),
+                         _float(request.form.get("max_marks")),request.form.get("description",""),
+                         int(request.form.get("sort_order",1)),rid,batch_id))
+                    con.commit(); flash("Rubric updated.")
+                elif action=="validate_scheme":
+                    sid=int(request.form["scheme_id"])
+                    execute(cur,"SELECT id,name,max_marks,evaluation_mode FROM evaluation_phases WHERE scheme_id=%s ORDER BY sort_order,id",(sid,))
+                    warnings=[]; total=0
+                    for vph in cur.fetchall():
+                        total += float(vph["max_marks"] or 0)
+                        if vph["evaluation_mode"]=="presentation":
+                            execute(cur,"SELECT COALESCE(SUM(max_marks),0) AS total,COUNT(*) AS cnt FROM evaluation_presentations WHERE phase_id=%s",(vph["id"],))
+                            vp=cur.fetchone()
+                            if abs(float(vp["total"] or 0)-float(vph["max_marks"] or 0)) > 0.01:
+                                warnings.append(f"Phase '{vph['name']}': presentation total {float(vp['total'] or 0):g} does not equal phase total {float(vph['max_marks'] or 0):g}.")
+                            if int(vp["cnt"] or 0)==0:
+                                warnings.append(f"Phase '{vph['name']}' is presentation-based but has no presentations.")
+                            execute(cur,"""SELECT p.id,p.name,p.max_marks,COALESCE(SUM(c.max_marks),0) AS criteria_total,COUNT(c.id) AS criterion_count
+                                FROM evaluation_presentations p
+                                LEFT JOIN evaluation_criteria c ON c.presentation_id=p.id
+                                WHERE p.phase_id=%s
+                                GROUP BY p.id,p.name,p.max_marks
+                                ORDER BY p.sort_order,p.id""",(vph["id"],))
+                            for vp2 in cur.fetchall():
+                                if int(vp2["criterion_count"] or 0)>0 and abs(float(vp2["criteria_total"] or 0)-float(vp2["max_marks"] or 0))>0.01:
+                                    warnings.append(f"Presentation '{vp2['name']}': criteria total {float(vp2['criteria_total'] or 0):g} does not equal presentation total {float(vp2['max_marks'] or 0):g}.")
+                    if warnings:
+                        flash("Validation found: " + " | ".join(warnings))
+                    else:
+                        flash(f"Evaluation scheme is consistent. Total phase marks: {total:g}.")
                 elif action=="add_presentation":
                     pid=int(request.form["phase_id"])
-                    execute(cur,"INSERT INTO evaluation_presentations(phase_id,name,description,max_marks,sort_order,evaluation_date) VALUES(%s,%s,%s,%s,%s,NULLIF(%s,'')::date)",
-                        (pid,request.form["name"].strip(),request.form.get("description",""),_float(request.form.get("max_marks")),int(request.form.get("sort_order",1)),request.form.get("evaluation_date","")))
+                    execute(cur,"""INSERT INTO evaluation_presentations(
+                            phase_id,name,description,max_marks,sort_order,evaluation_date,start_at,end_at,remarks_required
+                        ) VALUES(%s,%s,%s,%s,%s,NULLIF(%s,'')::date,NULLIF(%s,'')::timestamp,NULLIF(%s,'')::timestamp,%s)""",
+                        (pid,request.form["name"].strip(),request.form.get("description",""),
+                         _float(request.form.get("max_marks")),int(request.form.get("sort_order",1)),
+                         request.form.get("evaluation_date",""),request.form.get("start_at",""),
+                         request.form.get("end_at",""),request.form.get("remarks_required")=='1'))
                     con.commit(); flash("Presentation added.")
                 elif action=="add_criterion":
                     prid=int(request.form["presentation_id"])
