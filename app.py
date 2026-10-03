@@ -323,6 +323,97 @@ def ensure_batch_system():
 ensure_batch_system()
 
 # ============================================================
+# BATCH LIFECYCLE / REGISTRATION SETTINGS MIGRATION
+# ============================================================
+
+def ensure_batch_lifecycle_system():
+    """
+    Add batch-specific lifecycle settings.
+
+    This migration is additive and idempotent:
+    - Existing Batch 1/Batch 2 records are preserved.
+    - Registration is CLOSED by default.
+    - Project settings are stored against each batch, not globally.
+    """
+    if not pg_pool:
+        return
+
+    con = None
+    try:
+        con = db()
+        cur = con.cursor()
+
+        cur.execute("""
+            ALTER TABLE batches
+            ADD COLUMN IF NOT EXISTS registration_open BOOLEAN DEFAULT FALSE
+        """)
+
+        cur.execute("""
+            ALTER TABLE batches
+            ADD COLUMN IF NOT EXISTS registration_start TIMESTAMP NULL
+        """)
+
+        cur.execute("""
+            ALTER TABLE batches
+            ADD COLUMN IF NOT EXISTS registration_deadline TIMESTAMP NULL
+        """)
+
+        cur.execute("""
+            ALTER TABLE batches
+            ADD COLUMN IF NOT EXISTS project_start_date DATE NULL
+        """)
+
+        cur.execute("""
+            ALTER TABLE batches
+            ADD COLUMN IF NOT EXISTS total_weeks INTEGER DEFAULT 16
+        """)
+
+        # Never open registration automatically during migration.
+        cur.execute("""
+            UPDATE batches
+            SET registration_open = FALSE
+            WHERE registration_open IS NULL
+        """)
+
+        cur.execute("""
+            UPDATE batches
+            SET total_weeks = 16
+            WHERE total_weeks IS NULL OR total_weeks < 1
+        """)
+
+        # Batch 1 is historical/read-only. Batch 2 is the current active batch.
+        cur.execute("""
+            UPDATE batches
+            SET registration_open = FALSE
+            WHERE academic_year = '2025-26'
+        """)
+
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batches_status
+            ON batches(status)
+        """)
+
+        con.commit()
+
+        print("==============================================")
+        print("Batch lifecycle settings initialized")
+        print("Registration remains CLOSED until explicitly opened")
+        print("==============================================")
+
+    except Exception as e:
+        if con:
+            con.rollback()
+        print("⚠️ Batch lifecycle migration failed:", e)
+
+    finally:
+        if con:
+            pg_pool.putconn(con)
+
+
+ensure_batch_lifecycle_system()
+
+# ============================================================
 # ADMIN BATCH ACCESS MIGRATION
 # ============================================================
 
@@ -422,6 +513,70 @@ def get_active_batch_id(cur):
         return batch["id"]
 
     return None
+
+
+def get_batch_settings(cur, batch_id):
+    """
+    Return lifecycle/project settings for a specific batch.
+    Registration/project settings are batch-specific.
+    """
+    if not batch_id:
+        return None
+
+    execute(cur, """
+        SELECT
+            id,
+            batch_name,
+            academic_year,
+            status,
+            COALESCE(registration_open, FALSE) AS registration_open,
+            registration_start,
+            registration_deadline,
+            project_start_date,
+            COALESCE(total_weeks, 16) AS total_weeks
+        FROM batches
+        WHERE id=%s
+    """, (batch_id,))
+
+    return cur.fetchone()
+
+
+def get_registration_state(batch):
+    """
+    Return (closed, message) using IST and the selected batch settings.
+    """
+    if not batch:
+        return True, "No active batch is configured."
+
+    IST = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(IST).replace(tzinfo=None)
+
+    if not batch["registration_open"]:
+        return True, "Registration is currently closed."
+
+    registration_start = batch.get("registration_start")
+    if registration_start:
+        if isinstance(registration_start, str):
+            try:
+                registration_start = datetime.fromisoformat(registration_start)
+            except Exception:
+                registration_start = None
+
+        if registration_start and now_ist < registration_start:
+            return True, "Registration has not started yet."
+
+    registration_deadline = batch.get("registration_deadline")
+    if registration_deadline:
+        if isinstance(registration_deadline, str):
+            try:
+                registration_deadline = datetime.fromisoformat(registration_deadline)
+            except Exception:
+                registration_deadline = None
+
+        if registration_deadline and now_ist > registration_deadline:
+            return True, "Registration deadline has passed."
+
+    return False, "Registration is open."
 
 
 # ============================================================
@@ -1294,19 +1449,6 @@ def student_problems():
     con = db()
     cur = con.cursor()
 
-    # ---------------- DEADLINE CHECK ----------------
-    registration_closed = False
-    execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
-    row = cur.fetchone()
-
-    if row and row["value"]:
-        try:
-            deadline = datetime.fromisoformat(row["value"])
-            if datetime.now() > deadline:
-                registration_closed = True
-        except:
-            registration_closed = False
-
     # ---------------- ACTIVE BATCH ----------------
     active_batch_id = get_active_batch_id(cur)
 
@@ -1318,14 +1460,22 @@ def student_problems():
         flash("No active batch is configured.")
         return redirect(url_for("student_login"))
 
+    # ---------------- BATCH-SPECIFIC REGISTRATION STATE ----------------
+    batch_settings = get_batch_settings(cur, active_batch_id)
+    registration_closed, registration_message = get_registration_state(batch_settings)
+
     # ---------------- CHECK IF STUDENT ALREADY IN ANY TEAM ----------------
     already_in_team = False
 
-    execute(cur,"SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=? AND batch_id=?", (student_usn, active_batch_id))
+    execute(
+        cur,
+        "SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=? AND batch_id=?",
+        (student_usn, active_batch_id)
+    )
     if cur.fetchone()["cnt"] > 0:
         already_in_team = True
     else:
-        execute(cur,"""
+        execute(cur, """
             SELECT COUNT(*) AS cnt
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
@@ -1334,18 +1484,8 @@ def student_problems():
         if cur.fetchone()["cnt"] > 0:
             already_in_team = True
 
-    if not active_batch_id:
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-        flash("No active batch is configured.")
-        return redirect(url_for("student_login"))
-   
-    # ---------------- FETCH PROBLEMS (WITH LOCK STATUS) ----------------
-
-
-    execute(cur,"""
+    # ---------------- FETCH PROBLEMS ----------------
+    execute(cur, """
          SELECT id, year, title, category, domain_theme, max_teams,
                problem_description, problem_details, expected_outcome,
                COALESCE(is_locked,0) AS is_locked
@@ -1376,8 +1516,10 @@ def student_problems():
         "student_problems.html",
         data=data,
         registration_closed=registration_closed,
+        registration_message=registration_message,
         already_in_team=already_in_team
     )
+
 
 @app.route("/student/my-registration")
 def student_my_registration():
@@ -1999,30 +2141,44 @@ def student_weekly_progress():
     IST = pytz.timezone("Asia/Kolkata")
     now_ist = datetime.now(IST)
 
-    # ---------------- GET PROJECT START DATE FROM DB ----------------
-    execute(cur,"SELECT value FROM settings WHERE key='project_start_date'")
-    row = cur.fetchone()
+    # ---------------- GET BATCH-SPECIFIC PROJECT SETTINGS ----------------
+    batch_settings = get_batch_settings(cur, active_batch_id)
 
-    if row and row["value"]:
+    if not batch_settings:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Batch project settings are not configured.")
+        return redirect(url_for("student_home"))
+
+    if batch_settings.get("project_start_date"):
         try:
-            # expected format: YYYY-MM-DD
-            start_date = datetime.strptime(row["value"], "%Y-%m-%d")
-            PROJECT_START_DATE = IST.localize(datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0))
-        except:
-            # fallback if format wrong
-            PROJECT_START_DATE = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+            start_date = batch_settings["project_start_date"]
+            if isinstance(start_date, str):
+                start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+            PROJECT_START_DATE = IST.localize(
+                datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0)
+            )
+        except Exception:
+            PROJECT_START_DATE = now_ist.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
     else:
-        # fallback if admin didn't set
-        PROJECT_START_DATE = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+        # If the admin has not configured a project start date yet,
+        # use today only as a safe fallback.
+        PROJECT_START_DATE = now_ist.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
-    # ---------------- AUTO WEEK CALCULATION (Week 1..16) ----------------
+    # ---------------- AUTO WEEK CALCULATION ----------------
     days_since_start = (now_ist.date() - PROJECT_START_DATE.date()).days
     auto_week_no = (days_since_start // 7) + 1
 
     if auto_week_no < 1:
         auto_week_no = 1
 
-    TOTAL_WEEKS = 16
+    TOTAL_WEEKS = int(batch_settings.get("total_weeks") or 16)
     if auto_week_no > TOTAL_WEEKS:
         auto_week_no = TOTAL_WEEKS
 
@@ -3284,38 +3440,18 @@ def student_change_password():
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
+    """
+    Legacy deadline route.
+
+    Registration settings are now managed from the batch-specific
+    Project Settings page. Redirect here so the old menu/link cannot
+    accidentally modify the obsolete global settings table.
+    """
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
-    con = db()
-    cur = con.cursor()
 
-    if request.method == "POST":
-        deadline = request.form["deadline"]
-        execute(cur,
-            "REPLACE INTO settings(key,value) VALUES (?,?)",
-            ("registration_deadline", deadline)
-        )
-        con.commit()
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-        flash("Registration deadline updated successfully")
-        return redirect(url_for("admin_deadline"))
+    return redirect(url_for("admin_project_settings"))
 
-    execute(cur,
-        "SELECT value FROM settings WHERE key='registration_deadline'"
-    )
-    row = cur.fetchone()
-    if pg_pool:
-        pg_pool.putconn(con)
-    else:
-        con.close()
-
-    return render_template(
-        "admin_deadline.html",active_page="deadline",
-        deadline=row[0] if row else ""
-    )
 
 @app.route("/admin/project-settings", methods=["GET", "POST"])
 def admin_project_settings():
@@ -3325,57 +3461,169 @@ def admin_project_settings():
     con = db()
     cur = con.cursor()
 
+    view_batch = get_admin_view_batch(cur)
+
+    if not view_batch:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin_home"))
+
+    batch_id = view_batch["id"]
+    batch_settings = get_batch_settings(cur, batch_id)
+
     if request.method == "POST":
-        project_start_date = request.form.get("project_start_date", "").strip()
+        # Historical batches are strictly read-only.
+        if is_admin_batch_read_only(view_batch):
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Batch 1 is historical and read-only. Settings cannot be changed.")
+            return redirect(url_for("admin_project_settings"))
+
+        registration_open = request.form.get("registration_open") == "1"
+        registration_start = request.form.get("registration_start", "").strip()
         registration_deadline = request.form.get("registration_deadline", "").strip()
-        total_weeks = request.form.get("total_weeks", "16").strip()
+        project_start_date = request.form.get("project_start_date", "").strip()
+        total_weeks_raw = request.form.get("total_weeks", "16").strip()
 
-        # ✅ PostgreSQL UPSERT instead of INSERT OR REPLACE
+        # Validate total weeks.
+        try:
+            total_weeks = int(total_weeks_raw)
+            if total_weeks < 1 or total_weeks > 52:
+                raise ValueError
+        except Exception:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Total weeks must be between 1 and 52.")
+            return redirect(url_for("admin_project_settings"))
 
-        if project_start_date:
-            execute(cur, """
-                INSERT INTO settings(key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value
-            """, ("project_start_date", project_start_date))
+        # Validate dates/times before saving.
+        parsed_start = None
+        parsed_deadline = None
+        parsed_project_start = None
 
-        if registration_deadline:
-            execute(cur, """
-                INSERT INTO settings(key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value
-            """, ("registration_deadline", registration_deadline))
+        try:
+            if registration_start:
+                parsed_start = datetime.fromisoformat(registration_start)
+        except Exception:
+            flash("Invalid registration start date/time.")
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            return redirect(url_for("admin_project_settings"))
 
-        if total_weeks:
-            execute(cur, """
-                INSERT INTO settings(key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value
-            """, ("total_weeks", total_weeks))
+        try:
+            if registration_deadline:
+                parsed_deadline = datetime.fromisoformat(registration_deadline)
+        except Exception:
+            flash("Invalid registration deadline.")
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            return redirect(url_for("admin_project_settings"))
+
+        try:
+            if project_start_date:
+                parsed_project_start = datetime.strptime(
+                    project_start_date, "%Y-%m-%d"
+                ).date()
+        except Exception:
+            flash("Invalid project start date.")
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            return redirect(url_for("admin_project_settings"))
+
+        if parsed_start and parsed_deadline and parsed_deadline <= parsed_start:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Registration deadline must be after registration start.")
+            return redirect(url_for("admin_project_settings"))
+
+        # Do not allow an already-past deadline to be saved as OPEN.
+        IST = pytz.timezone("Asia/Kolkata")
+        now_ist = datetime.now(IST).replace(tzinfo=None)
+
+        if registration_open and parsed_deadline and parsed_deadline <= now_ist:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Registration cannot be opened with a deadline that has already passed.")
+            return redirect(url_for("admin_project_settings"))
+
+        execute(cur, """
+            UPDATE batches
+            SET registration_open=%s,
+                registration_start=%s,
+                registration_deadline=%s,
+                project_start_date=%s,
+                total_weeks=%s
+            WHERE id=%s
+        """, (
+            registration_open,
+            parsed_start,
+            parsed_deadline,
+            parsed_project_start,
+            total_weeks,
+            batch_id
+        ))
 
         con.commit()
-        flash("Project settings saved successfully ✅")
 
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
 
+        flash("Project settings saved successfully ✅")
         return redirect(url_for("admin_project_settings"))
 
-    # -------- Fetch existing values --------
+    registration_closed, registration_message = get_registration_state(batch_settings)
 
-    def get_setting(key, default=""):
-        execute(cur, "SELECT value FROM settings WHERE key=%s", (key,))
-        row = cur.fetchone()
-        return row["value"] if row and row["value"] else default
+    # Convert DB timestamps to the format required by datetime-local inputs.
+    registration_start_value = ""
+    registration_deadline_value = ""
 
-    project_start_date = get_setting("project_start_date", "")
-    registration_deadline = get_setting("registration_deadline", "")
-    total_weeks = get_setting("total_weeks", "16")
+    if batch_settings:
+        if batch_settings.get("registration_start"):
+            value = batch_settings["registration_start"]
+            if hasattr(value, "strftime"):
+                registration_start_value = value.strftime("%Y-%m-%dT%H:%M")
+            else:
+                registration_start_value = str(value).replace(" ", "T")[:16]
+
+        if batch_settings.get("registration_deadline"):
+            value = batch_settings["registration_deadline"]
+            if hasattr(value, "strftime"):
+                registration_deadline_value = value.strftime("%Y-%m-%dT%H:%M")
+            else:
+                registration_deadline_value = str(value).replace(" ", "T")[:16]
+
+    project_start_date = ""
+    total_weeks = 16
+
+    if batch_settings:
+        project_start_date = (
+            batch_settings["project_start_date"].strftime("%Y-%m-%d")
+            if batch_settings.get("project_start_date")
+            and hasattr(batch_settings["project_start_date"], "strftime")
+            else str(batch_settings.get("project_start_date") or "")
+        )
+        total_weeks = batch_settings.get("total_weeks") or 16
+
+    read_only = is_admin_batch_read_only(view_batch)
 
     if pg_pool:
         pg_pool.putconn(con)
@@ -3385,10 +3633,18 @@ def admin_project_settings():
     return render_template(
         "admin_project_settings.html",
         active_page="project_settings",
+        view_batch=view_batch,
+        batch_settings=batch_settings,
+        registration_open=bool(batch_settings and batch_settings["registration_open"]),
+        registration_start=registration_start_value,
+        registration_deadline=registration_deadline_value,
         project_start_date=project_start_date,
-        registration_deadline=registration_deadline,
-        total_weeks=total_weeks
+        total_weeks=total_weeks,
+        registration_closed=registration_closed,
+        registration_message=registration_message,
+        read_only=read_only
     )
+
 
 @app.route("/faculty/review-progress/<int:progress_id>", methods=["POST"])
 def faculty_review_progress(progress_id):
@@ -3503,11 +3759,10 @@ def register(pid):
         flash("Please login as student to register a team.")
         return redirect(url_for("student_login"))
 
-    # ---------------- DEADLINE CHECK ----------------
     con = db()
     cur = con.cursor()
 
-     # ---------------- ACTIVE BATCH ----------------
+    # ---------------- ACTIVE BATCH ----------------
     active_batch_id = get_active_batch_id(cur)
 
     if not active_batch_id:
@@ -3519,17 +3774,18 @@ def register(pid):
         flash("No active batch is configured.")
         return redirect(url_for("student_problems"))
 
-    execute(cur, "SELECT value FROM settings WHERE key='registration_deadline'")
-    row = cur.fetchone()
+    # ---------------- BATCH-SPECIFIC REGISTRATION CHECK ----------------
+    batch_settings = get_batch_settings(cur, active_batch_id)
+    registration_closed, registration_message = get_registration_state(batch_settings)
 
-    if row and row.get("value"):
-        try:
-            deadline = datetime.fromisoformat(row["value"])
-            if datetime.now() > deadline:
-                flash("Registration closed. Deadline has passed.")
-                return redirect(url_for("student_problems"))
-        except:
-            pass
+    if registration_closed:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash(registration_message)
+        return redirect(url_for("student_problems"))
 
     # ---------------- GET PROBLEM DETAILS ----------------
     execute(cur, """
@@ -3565,12 +3821,12 @@ def register(pid):
     execute(cur, "SELECT COUNT(*) FROM teams WHERE problem_id=%s AND batch_id=%s", (pid, active_batch_id))
     already_registered = list(cur.fetchone().values())[0]
 
-    if already_registered >= 1:
+    if already_registered >= max_teams:
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
-        flash("Registration closed for this project (1 team already registered).")
+        flash(f"Registration closed for this project ({max_teams} team(s) already registered).")
         return redirect(url_for("student_problems"))
 
     # ---------------- POST SUBMIT ----------------
