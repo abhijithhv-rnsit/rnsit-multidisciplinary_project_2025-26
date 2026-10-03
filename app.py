@@ -3877,7 +3877,17 @@ def admin_upload():
 
         con = db()
         cur = con.cursor()
+        # ---------------- ACTIVE BATCH ----------------
+        active_batch_id = get_active_batch_id(cur)
 
+        if not active_batch_id:
+            if pg_pool:
+                 pg_pool.putconn(con)
+             else:
+                 con.close()
+
+             flash("No active batch is configured.")
+             return redirect(request.url)
         added = 0
         skipped = 0
 
@@ -3894,8 +3904,8 @@ def admin_upload():
             # ✅ FIXED: PostgreSQL placeholder
             execute(cur, """
                 SELECT COUNT(*) FROM problems 
-                WHERE year=%s AND title=%s
-            """, (year, title))
+                WHERE year=%s AND title=%s AND batch_id=%s
+            """, (year, title, active_batch_id))
 
             if list(cur.fetchone().values())[0] > 0:
                 skipped += 1
@@ -3905,9 +3915,9 @@ def admin_upload():
             execute(cur, """
                 INSERT INTO problems(
                     year, title, category, domain_theme, max_teams,
-                    problem_description, problem_details, expected_outcome
+                    problem_description, problem_details, expected_outcome, batch_id
                 )
-                VALUES (%s,%s,%s,%s,1,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,1,%s,%s,%s,%s)
             """, (
                 year,
                 title,
@@ -3916,6 +3926,7 @@ def admin_upload():
                 problem_description,
                 problem_details,
                 expected_outcome
+                active_batch_id
             ))
 
             added += 1
