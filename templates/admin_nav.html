@@ -91,6 +91,19 @@
 
         {% if session.get("admin_role") == "super_admin" %}
         <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle {% if active_page in ['submissions','project_status'] %}active fw-bold{% endif %}"
+             href="#" id="submissionDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            Submissions
+          </a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="/admin/submission-settings">Submission Settings</a></li>
+            <li><a class="dropdown-item" href="/admin/project-status">Project Status Dashboard</a></li>
+          </ul>
+        </li>
+        {% endif %}
+
+        {% if session.get("admin_role") == "super_admin" %}
+        <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle {% if active_page=='evaluation' %}active fw-bold{% endif %}"
              href="#"
              id="evaluationDropdown"
