@@ -1,2 +1,145 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Evaluation Assignments</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"></head><body class="bg-light">
-{% include "admin_nav.html" %}<div class="container py-4"><div class="d-flex justify-content-between"><div><h2>Evaluation Assignments</h2><p>{{batch.batch_name}} · {{scheme.name}}</p></div><a href="{{url_for('admin_evaluation_settings')}}" class="btn btn-outline-primary">Settings</a></div><div class="card p-4 mb-4"><form method="post" class="row g-2"><input type="hidden" name="action" value="add"><div class="col-md-5"><select name="team_id" class="form-select" required><option value="">Select Team</option>{% for t in teams %}<option value="{{t.id}}">{{t.team_name}} — {{t.leader_department}} / {{t.leader_section}}</option>{% endfor %}</select></div><div class="col-md-5"><select name="faculty_id" class="form-select" required><option value="">Select Evaluator</option>{% for f in faculty %}<option value="{{f.id}}">{{f.name}}{% if f.department %} — {{f.department}}{% endif %}</option>{% endfor %}</select></div><div class="col-md-2"><button class="btn btn-primary w-100">Assign</button></div></form></div><table class="table table-bordered bg-white"><thead><tr><th>Team</th><th>Evaluator</th><th>Action</th></tr></thead><tbody>{% for a in assignments %}<tr><td>{{a.team_name}}</td><td>{{a.faculty_name}}</td><td><form method="post"><input type="hidden" name="action" value="remove"><input type="hidden" name="team_id" value="{{a.team_id}}"><input type="hidden" name="faculty_id" value="{{a.faculty_id}}"><button class="btn btn-sm btn-danger">Remove</button></form></td></tr>{% else %}<tr><td colspan="3">No additional evaluator assignments.</td></tr>{% endfor %}</tbody></table></div></body></html>
+{% extends "admin_base.html" %}
+{% block title %}Evaluator Assignments{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h2>Evaluator Assignments</h2>
+      <div class="text-muted">{{ batch.batch_name }} · {{ batch.academic_year }} · <strong>{{ scheme.name }}</strong></div>
+    </div>
+    <div>
+      <a class="btn btn-outline-primary" href="/admin/evaluation-settings">Settings</a>
+      <a class="btn btn-outline-secondary" href="/admin/evaluation-dashboard">Dashboard</a>
+    </div>
+  </div>
+
+  <div class="alert alert-info">
+    Assign one or more faculty evaluators to selected teams. Assignments can apply to the entire scheme, a specific phase, or a specific presentation. Existing assignments are replaced only for the same team, evaluator and scope.
+  </div>
+
+  {% with messages=get_flashed_messages() %}{% if messages %}
+    {% for message in messages %}<div class="alert alert-warning">{{ message }}</div>{% endfor %}
+  {% endif %}{% endwith %}
+
+  <form method="post" class="card shadow-sm mb-4">
+    <div class="card-header"><strong>Assign Evaluators</strong></div>
+    <div class="card-body">
+      <div class="row g-3 mb-3">
+        <div class="col-md-3">
+          <label class="form-label">Assignment Scope</label>
+          <select class="form-select" name="scope" id="scope" onchange="toggleScope()">
+            <option value="scheme">Entire Scheme</option>
+            <option value="phase">Specific Phase</option>
+            <option value="presentation">Specific Presentation</option>
+          </select>
+        </div>
+        <div class="col-md-3" id="phaseBox" style="display:none">
+          <label class="form-label">Phase</label>
+          <select class="form-select" name="phase_id" id="phase_id" onchange="filterPresentations()">
+            <option value="">Select Phase</option>
+            {% for p in phases %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4" id="presentationBox" style="display:none">
+          <label class="form-label">Presentation</label>
+          <select class="form-select" name="presentation_id" id="presentation_id">
+            <option value="">Select Presentation</option>
+            {% for p in presentations %}<option value="{{ p.id }}" data-phase="{{ p.phase_id }}">{{ p.phase_name }} — {{ p.name }} ({{ p.max_marks }})</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Evaluator Weight</label>
+          <input class="form-control" type="number" name="weight" min="0" step="0.01" value="1">
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div class="border rounded p-3 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <strong>Faculty Evaluators</strong>
+              <div>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="setAll('faculty_ids',true)">Select All</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setAll('faculty_ids',false)">Clear</button>
+              </div>
+            </div>
+            <div style="max-height:260px;overflow:auto">
+              {% for f in faculty %}
+              <div class="form-check">
+                <input class="form-check-input faculty-check" type="checkbox" name="faculty_ids" value="{{ f.id }}" id="f{{ f.id }}">
+                <label class="form-check-label" for="f{{ f.id }}">{{ f.name }}{% if f.department %} — {{ f.department }}{% endif %}</label>
+              </div>
+              {% else %}<div class="text-muted">No faculty mapped to this batch.</div>{% endfor %}
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="border rounded p-3 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <strong>Teams</strong>
+              <div>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="setAll('team_ids',true)">Select All</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setAll('team_ids',false)">Clear</button>
+              </div>
+            </div>
+            <div style="max-height:260px;overflow:auto">
+              {% for t in teams %}
+              <div class="form-check">
+                <input class="form-check-input team-check" type="checkbox" name="team_ids" value="{{ t.id }}" id="t{{ t.id }}">
+                <label class="form-check-label" for="t{{ t.id }}">{{ t.team_name }} — {{ t.leader_department }} / {{ t.leader_section }}</label>
+              </div>
+              {% else %}<div class="text-muted">No teams are registered in this batch.</div>{% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-primary" name="action" value="assign" type="submit">Save Assignment(s)</button>
+      </div>
+    </div>
+  </form>
+
+  <div class="card shadow-sm">
+    <div class="card-header"><strong>Current Assignments ({{ assignments|length }})</strong></div>
+    <div class="table-responsive">
+      <table class="table table-bordered table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr><th>Team</th><th>Branch</th><th>Section</th><th>Evaluator</th><th>Scope</th><th>Weight</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+        {% for a in assignments %}
+          <tr>
+            <td>{{ a.team_name }}</td><td>{{ a.leader_department }}</td><td>{{ a.leader_section }}</td><td>{{ a.faculty_name }}</td>
+            <td>{% if a.presentation_name %}Presentation: {{ a.phase_name }} — {{ a.presentation_name }}{% elif a.phase_name %}Phase: {{ a.phase_name }}{% else %}Entire Scheme{% endif %}</td>
+            <td>{{ a.weight }}</td>
+            <td>
+              <form method="post" onsubmit="return confirm('Remove this evaluator assignment?');">
+                <input type="hidden" name="action" value="remove"><input type="hidden" name="assignment_id" value="{{ a.id }}">
+                <button class="btn btn-sm btn-outline-danger">Remove</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="text-center text-muted py-4">No evaluator assignments yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+function setAll(name, checked){ document.querySelectorAll('input[name="'+name+'"]').forEach(x=>x.checked=checked); }
+function toggleScope(){
+  const s=document.getElementById('scope').value;
+  document.getElementById('phaseBox').style.display=(s==='phase'||s==='presentation')?'block':'none';
+  document.getElementById('presentationBox').style.display=(s==='presentation')?'block':'none';
+  if(s==='scheme'){document.getElementById('phase_id').value='';document.getElementById('presentation_id').value='';}
+}
+function filterPresentations(){
+  const phase=document.getElementById('phase_id').value;
+  const sel=document.getElementById('presentation_id');
+  [...sel.options].forEach(o=>{ if(!o.dataset.phase) return; o.hidden=!!phase && o.dataset.phase!==phase; });
+  if(sel.value && phase && sel.selectedOptions[0].dataset.phase!==phase) sel.value='';
+}
+</script>
+{% endblock %}
