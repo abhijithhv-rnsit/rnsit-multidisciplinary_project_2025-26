@@ -1,107 +1,167 @@
-<nav class="navbar navbar-expand-xl navbar-dark" style="background:#073b73;">
+<nav class="navbar navbar-dark" style="background:#003366;">
   <div class="container-fluid px-3">
-    <a class="navbar-brand fw-bold me-3" href="/admin/home">RNSIT Admin Panel</a>
+    <div class="d-flex align-items-center w-100 gap-2 flex-wrap">
 
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
-            data-bs-target="#adminNavbar" aria-controls="adminNavbar"
-            aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
+      <a class="navbar-brand fw-bold me-2" href="/admin/home" style="white-space:nowrap;">
+        RNSIT Admin Panel
+      </a>
 
-    <div class="collapse navbar-collapse" id="adminNavbar">
-      <ul class="navbar-nav me-auto align-items-xl-center">
+      <a class="admin-nav-link {% if active_page=='home' %}active{% endif %}" href="/admin/home">Home</a>
 
-        <li class="nav-item">
-          <a class="nav-link {% if active_page=='home' %}active fw-bold{% endif %}" href="/admin/home">Home</a>
-        </li>
+      {% if session.get("admin_role") == "super_admin" %}
+      <details class="admin-nav-menu">
+        <summary>Problems</summary>
+        <div class="admin-dropdown">
+          <a href="/admin/upload">Upload Problems</a>
+          <a href="/admin/problems">View Problems</a>
+        </div>
+      </details>
+      {% endif %}
 
-        <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Problems</a>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/admin/upload">Upload Problems</a></li>
-            <li><a class="dropdown-item" href="/admin/problems">View Problems</a></li>
-          </ul>
-        </li>
+      <details class="admin-nav-menu">
+        <summary>Management</summary>
+        <div class="admin-dropdown">
+          {% if session.get("admin_role") == "super_admin" %}
+          <a href="/admin/admin-management">Admin Management</a>
+          {% endif %}
+          <a href="/admin/students">Student Management</a>
+          <a href="/admin/faculty-management">Faculty Management</a>
+        </div>
+      </details>
 
-        <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Management</a>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/admin/management">Admin Management</a></li>
-            <li><a class="dropdown-item" href="/admin/students">Student Management</a></li>
-            <li><a class="dropdown-item" href="/admin/faculty-management">Faculty Management</a></li>
-          </ul>
-        </li>
+      <details class="admin-nav-menu">
+        <summary>Projects</summary>
+        <div class="admin-dropdown">
+          <a href="/admin/teams">View Teams</a>
+          <a href="/admin/assignments">Faculty Assignment</a>
+          <a href="/dashboard">Dashboard</a>
+          <a href="/admin/notices">Notice Board</a>
+          {% if session.get("admin_role") == "super_admin" %}
+          <a href="/admin/project-settings">Project Settings</a>
+          <a href="/admin/reports">Reports</a>
+          {% endif %}
+        </div>
+      </details>
 
-        <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Projects</a>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/admin/teams">View Teams</a></li>
-            <li><a class="dropdown-item" href="/admin/assignments">Faculty Assignment</a></li>
-            <li><a class="dropdown-item" href="/admin/settings">Project Settings</a></li>
-            <li><a class="dropdown-item" href="/admin/reports">Reports</a></li>
-          </ul>
-        </li>
+      {% if session.get("admin_role") == "super_admin" %}
+      <details class="admin-nav-menu">
+        <summary>Submissions</summary>
+        <div class="admin-dropdown">
+          <a href="/admin/submission-settings">Submission Settings</a>
+          <a href="/admin/project-status">Project Status</a>
+          <a href="/admin/report-submissions">Report Submissions</a>
+        </div>
+      </details>
 
-        <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle {% if active_page in ['submissions','submission_settings','project_status'] %}active fw-bold{% endif %}"
-             href="#" data-bs-toggle="dropdown">Submissions</a>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/admin/submission-settings">Submission Settings</a></li>
-            <li><a class="dropdown-item" href="/admin/project-status">Project Status</a></li>
-          </ul>
-        </li>
+      <details class="admin-nav-menu">
+        <summary>Evaluation</summary>
+        <div class="admin-dropdown">
+          <a href="/admin/evaluation-settings">Evaluation Settings</a>
+          <a href="/admin/evaluation-assignments">Evaluator Assignments</a>
+          <a href="/admin/evaluation-dashboard">Evaluation Dashboard</a>
+        </div>
+      </details>
+      {% endif %}
 
-        {% if session.get("admin_role") == "super_admin" %}
-        <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle {% if active_page=='evaluation' %}active fw-bold{% endif %}"
-             href="#" data-bs-toggle="dropdown">Evaluation</a>
-          <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/admin/evaluation-settings">Evaluation Settings</a></li>
-            <li><a class="dropdown-item" href="/admin/evaluation-assignments">Evaluator Assignments</a></li>
-            <li><a class="dropdown-item" href="/admin/evaluation-dashboard">Evaluation Dashboard</a></li>
-          </ul>
-        </li>
-        {% endif %}
+      <div class="admin-nav-spacer"></div>
 
-      </ul>
+      {% if session.get("admin_batches") %}
+      <form method="post" action="/admin/select-batch" class="admin-batch-form">
+        <span>View Batch:</span>
+        <select name="batch_id" onchange="this.form.submit()" aria-label="View Batch">
+          {% for b in session.get("admin_batches", []) %}
+          <option value="{{ b.id }}"
+            {% if session.get("admin_view_batch_id")|string == b.id|string %}selected{% endif %}>
+            {{ b.batch_name }} — {{ b.academic_year }}
+          </option>
+          {% endfor %}
+        </select>
+        <input type="hidden" name="next" value="{{ request.path }}">
+      </form>
+      {% endif %}
 
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <span class="text-white small">View Batch:</span>
-        <form method="POST" action="/admin/select-batch" class="m-0">
-          <select name="batch_id" class="form-select form-select-sm" onchange="this.form.submit()">
-            {% for b in available_batches %}
-              <option value="{{ b.id }}" {% if selected_batch and b.id == selected_batch.id %}selected{% endif %}>
-                {{ b.batch_name }} — {{ b.academic_year }}
-                {% if b.status != 'active' %} (READ-ONLY){% endif %}
-              </option>
-            {% endfor %}
-          </select>
-        </form>
+      {% if session.get("admin_view_batch_status") and session.get("admin_view_batch_status") != "active" %}
+      <span class="badge bg-warning text-dark">READ-ONLY</span>
+      {% endif %}
 
-        <a class="btn btn-outline-light btn-sm" href="/admin/logout">Logout</a>
-      </div>
+      <a class="btn btn-outline-light btn-sm" href="/admin/logout">Logout</a>
     </div>
   </div>
 </nav>
 
 <style>
-  .navbar {
-    min-height: 64px;
-  }
-  .navbar .navbar-brand {
-    white-space: nowrap;
-  }
-  .navbar .nav-link {
-    white-space: nowrap;
-    padding-left: .7rem !important;
-    padding-right: .7rem !important;
-  }
-  .navbar .dropdown-menu {
-    min-width: 210px;
-  }
-  @media (min-width: 1200px) {
-    .navbar .navbar-nav {
-      gap: .1rem;
-    }
-  }
+.admin-nav-link,
+.admin-nav-menu > summary {
+  color: rgba(255,255,255,.88);
+  text-decoration: none;
+  font-size: .94rem;
+  padding: .55rem .55rem;
+  border-radius: .3rem;
+  cursor: pointer;
+  white-space: nowrap;
+  list-style: none;
+}
+.admin-nav-link:hover,
+.admin-nav-menu > summary:hover,
+.admin-nav-link.active {
+  color: #fff;
+  background: rgba(255,255,255,.14);
+}
+.admin-nav-menu {
+  position: relative;
+}
+.admin-nav-menu > summary::-webkit-details-marker { display:none; }
+.admin-nav-menu > summary::after {
+  content: " ▾";
+  font-size: .72rem;
+}
+.admin-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 2000;
+  min-width: 220px;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,.15);
+  border-radius: .35rem;
+  box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+  padding: .35rem 0;
+}
+.admin-dropdown a {
+  display:block;
+  padding: .55rem .85rem;
+  color:#212529;
+  text-decoration:none;
+  white-space:nowrap;
+}
+.admin-dropdown a:hover {
+  background:#f1f3f5;
+}
+.admin-nav-spacer { flex:1 1 auto; min-width:10px; }
+.admin-batch-form {
+  display:flex;
+  align-items:center;
+  gap:.35rem;
+  margin:0;
+}
+.admin-batch-form span {
+  color:#fff;
+  font-size:.82rem;
+  white-space:nowrap;
+}
+.admin-batch-form select {
+  min-width:180px;
+  max-width:230px;
+  height:32px;
+  border-radius:.3rem;
+  border:1px solid #ced4da;
+  padding:0 .5rem;
+}
+@media (max-width: 1200px) {
+  .admin-nav-spacer { display:none; }
+}
+@media (max-width: 900px) {
+  .admin-batch-form { width:100%; margin-top:.35rem; }
+  .admin-batch-form select { flex:1; max-width:none; }
+}
 </style>
