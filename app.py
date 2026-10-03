@@ -664,6 +664,15 @@ def admin_reports():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     # ================= TEAM SIZE =================
     execute(cur, """
         SELECT 
@@ -673,20 +682,28 @@ def admin_reports():
             COUNT(tm.id) + 1 AS total_students
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
+        WHERE t.batch_id = %s
         GROUP BY t.id, t.team_name, t.leader_name
         ORDER BY total_students DESC
-    """)
+    """, (active_batch_id,))
     team_sizes = cur.fetchall()
 
     # ================= TOTAL STUDENTS =================
     execute(cur, """
         SELECT COUNT(DISTINCT usn) AS total_students
         FROM (
-            SELECT leader_usn AS usn FROM teams
+            SELECT leader_usn AS usn
+            FROM teams
+            WHERE batch_id = %s
+
             UNION
-            SELECT usn FROM team_members
+
+            SELECT tm.usn
+            FROM team_members tm
+            JOIN teams t ON tm.team_id = t.id
+            WHERE t.batch_id = %s
         ) x
-    """)
+    """, (active_batch_id, active_batch_id))
     total_students = cur.fetchone()["total_students"]
 
     # ================= STUDENT MAPPING =================
@@ -701,6 +718,7 @@ def admin_reports():
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         JOIN students s ON s.usn = t.leader_usn
+        WHERE t.batch_id = %s
 
         UNION
 
@@ -714,9 +732,10 @@ def admin_reports():
         FROM team_members m
         JOIN teams t ON m.team_id = t.id
         JOIN problems p ON t.problem_id = p.id
+        WHERE t.batch_id = %s
 
         ORDER BY usn
-    """)
+    """, (active_batch_id, active_batch_id))
     student_projects = cur.fetchall()
 
     if pg_pool:
@@ -745,6 +764,15 @@ def export_team_size():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     execute(cur, """
         SELECT 
             t.team_name,
@@ -752,9 +780,10 @@ def export_team_size():
             COUNT(tm.id) + 1 AS total_students
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
+        WHERE t.batch_id = %s
         GROUP BY t.team_name, t.leader_name
         ORDER BY total_students DESC
-    """)
+    """, (active_batch_id,))
 
     rows = cur.fetchall()
 
@@ -785,14 +814,30 @@ def export_total_students():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     execute(cur, """
         SELECT COUNT(DISTINCT usn) AS total_students
         FROM (
-            SELECT leader_usn AS usn FROM teams
+            SELECT leader_usn AS usn
+            FROM teams
+            WHERE batch_id = %s
+
             UNION
-            SELECT usn FROM team_members
+
+            SELECT tm.usn
+            FROM team_members tm
+            JOIN teams t ON tm.team_id = t.id
+            WHERE t.batch_id = %s
         ) x
-    """)
+    """, (active_batch_id, active_batch_id))
 
     total = cur.fetchone()["total_students"]
 
@@ -819,6 +864,15 @@ def export_student_mapping():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     execute(cur, """
         SELECT 
             s.usn,
@@ -830,6 +884,7 @@ def export_student_mapping():
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         JOIN students s ON s.usn = t.leader_usn
+        WHERE t.batch_id = %s
 
         UNION
 
@@ -843,9 +898,10 @@ def export_student_mapping():
         FROM team_members m
         JOIN teams t ON m.team_id = t.id
         JOIN problems p ON t.problem_id = p.id
+        WHERE t.batch_id = %s
 
         ORDER BY usn
-    """)
+    """, (active_batch_id, active_batch_id))
 
     rows = cur.fetchall()
 
@@ -1011,18 +1067,32 @@ def student_problems():
         except:
             registration_closed = False
 
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # ---------------- CHECK IF STUDENT ALREADY IN ANY TEAM ----------------
     already_in_team = False
 
-    execute(cur,"SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=?", (student_usn,))
+    execute(cur,"SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=? AND batch_id=?", (student_usn, active_batch_id))
     if cur.fetchone()["cnt"] > 0:
         already_in_team = True
     else:
-        execute(cur,"SELECT COUNT(*) AS cnt FROM team_members WHERE usn=?", (student_usn,))
+        execute(cur,"""
+            SELECT COUNT(*) AS cnt
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            WHERE m.usn=? AND t.batch_id=?
+        """, (student_usn, active_batch_id))
         if cur.fetchone()["cnt"] > 0:
             already_in_team = True
-    # ---------------- ACTIVE BATCH ----------------
-    active_batch_id = get_active_batch_id(cur)
 
     if not active_batch_id:
         if pg_pool:
@@ -1043,6 +1113,8 @@ def student_problems():
          WHERE batch_id=%s
          ORDER BY year DESC
     """, (active_batch_id,))
+
+    probs = cur.fetchall()
 
     # ---------------- BUILD DATA ----------------
     data = []
@@ -1077,6 +1149,15 @@ def student_my_registration():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # 1️⃣ Check if student is TEAM LEADER
     execute(cur,"""
         SELECT
@@ -1086,7 +1167,8 @@ def student_my_registration():
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         WHERE t.leader_usn = ?
-    """, (usn,))
+          AND t.batch_id = ?
+    """, (usn, active_batch_id))
     row = cur.fetchone()
 
     # 2️⃣ If not leader, check TEAM MEMBERS
@@ -1100,7 +1182,8 @@ def student_my_registration():
             JOIN teams t ON m.team_id = t.id
             JOIN problems p ON t.problem_id = p.id
             WHERE m.usn = ?
-        """, (usn,))
+              AND t.batch_id = ?
+        """, (usn, active_batch_id))
         row = cur.fetchone()
 
     if pg_pool:
@@ -1140,13 +1223,23 @@ def student_my_project():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # ---------------- 1) CHECK IF LEADER ----------------
     execute(cur, """
         SELECT t.*, p.title AS problem_title, p.year AS problem_year
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         WHERE t.leader_usn = %s
-    """, (usn,))
+          AND t.batch_id = %s
+    """, (usn, active_batch_id))
     team = cur.fetchone()
 
     # ---------------- 2) CHECK IF MEMBER ----------------
@@ -1157,7 +1250,8 @@ def student_my_project():
             JOIN teams t ON m.team_id = t.id
             JOIN problems p ON t.problem_id = p.id
             WHERE m.usn = %s
-        """, (usn,))
+              AND t.batch_id = %s
+        """, (usn, active_batch_id))
         team = cur.fetchone()
 
     # ---------------- 3) NO TEAM ----------------
@@ -1232,8 +1326,17 @@ def student_project_details():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # Get team_id (leader or member)
-    execute(cur,"SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id FROM teams WHERE leader_usn=? AND batch_id=?", (usn, active_batch_id))
     team = cur.fetchone()
 
     if not team:
@@ -1242,7 +1345,8 @@ def student_project_details():
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
             WHERE m.usn=?
-        """, (usn,))
+              AND t.batch_id=?
+        """, (usn, active_batch_id))
         team = cur.fetchone()
 
     if not team:
@@ -1327,6 +1431,15 @@ def student_synopsis_pdf():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # -------- Get team (leader/member) --------
     execute(cur,"""
         SELECT t.*, 
@@ -1337,7 +1450,8 @@ def student_synopsis_pdf():
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
         WHERE t.leader_usn=?
-    """, (usn,))
+      AND t.batch_id=?
+    """, (usn, active_batch_id))
     team = cur.fetchone()
 
     if not team:
@@ -1351,7 +1465,8 @@ def student_synopsis_pdf():
             JOIN teams t ON m.team_id = t.id
             JOIN problems p ON t.problem_id = p.id
             WHERE m.usn=?
-        """, (usn,))
+              AND t.batch_id=?
+        """, (usn, active_batch_id))
         team = cur.fetchone()
 
     if not team:
@@ -1607,8 +1722,17 @@ def student_weekly_progress():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # ---------------- FIND TEAM ID (leader or member) ----------------
-    execute(cur,"SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id FROM teams WHERE leader_usn=? AND batch_id=?", (usn, active_batch_id))
     team = cur.fetchone()
 
     if not team:
@@ -1617,7 +1741,8 @@ def student_weekly_progress():
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
             WHERE m.usn=?
-        """, (usn,))
+              AND t.batch_id=?
+        """, (usn, active_batch_id))
         team = cur.fetchone()
 
     if not team:
@@ -1791,8 +1916,17 @@ def student_edit_weekly_progress(progress_id):
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # Find student's team_id (leader OR member)
-    execute(cur,"SELECT id FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id FROM teams WHERE leader_usn=? AND batch_id=?", (usn, active_batch_id))
     team = cur.fetchone()
 
     if not team:
@@ -1801,7 +1935,8 @@ def student_edit_weekly_progress(progress_id):
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
             WHERE m.usn=?
-        """, (usn,))
+              AND t.batch_id=?
+        """, (usn, active_batch_id))
         team = cur.fetchone()
 
     if not team:
@@ -3169,13 +3304,23 @@ def faculty_review_progress(progress_id):
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("faculty_login"))
+
     # Security check: faculty can only review progress of assigned teams
     execute(cur,"""
         SELECT wp.team_id
         FROM weekly_progress wp
         JOIN team_faculty tf ON wp.team_id = tf.team_id
-        WHERE wp.id=? AND tf.faculty_id=?
-    """, (progress_id, faculty_id))
+        JOIN teams t ON wp.team_id = t.id
+        WHERE wp.id=? AND tf.faculty_id=? AND t.batch_id=?
+    """, (progress_id, faculty_id, active_batch_id))
 
     row = cur.fetchone()
     if not row:
@@ -3318,7 +3463,7 @@ def register(pid):
         return redirect(url_for("student_problems"))
 
     # ---------------- TEAM COUNT CHECK ----------------
-    execute(cur, "SELECT COUNT(*) FROM teams WHERE problem_id=%s", (pid,))
+    execute(cur, "SELECT COUNT(*) FROM teams WHERE problem_id=%s AND batch_id=%s", (pid, active_batch_id))
     already_registered = list(cur.fetchone().values())[0]
 
     if already_registered >= 1:
@@ -3374,7 +3519,7 @@ def register(pid):
             return redirect(request.url)
 
         # ---------------- DUPLICATE CHECKS ----------------
-        execute(cur, "SELECT COUNT(*) FROM teams WHERE leader_usn=%s", (leader_usn,))
+        execute(cur, "SELECT COUNT(*) FROM teams WHERE leader_usn=%s AND batch_id=%s", (leader_usn, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
                 pg_pool.putconn(con)
@@ -3383,7 +3528,12 @@ def register(pid):
             flash("Team Leader USN already registered.")
             return redirect(request.url)
 
-        execute(cur, "SELECT COUNT(*) FROM team_members WHERE usn=%s", (leader_usn,))
+        execute(cur, """
+            SELECT COUNT(*)
+            FROM team_members m
+            JOIN teams t ON m.team_id = t.id
+            WHERE m.usn=%s AND t.batch_id=%s
+        """, (leader_usn, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
                 pg_pool.putconn(con)
@@ -3392,7 +3542,7 @@ def register(pid):
             flash("This USN already exists as team member.")
             return redirect(request.url)
 
-        execute(cur, "SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(%s)", (leader_email,))
+        execute(cur, "SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(%s) AND batch_id=%s", (leader_email, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
                 pg_pool.putconn(con)
@@ -3494,11 +3644,27 @@ def unlock_problem(pid):
     con = db()
     cur = con.cursor()
 
-    # unlock problem
-    execute(cur,"UPDATE problems SET is_locked=0 WHERE id=?", (pid,))
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
 
-    # remove teams linked to this problem (optional but recommended)
-    execute(cur,"DELETE FROM teams WHERE problem_id=?", (pid,))
+    # Unlock only a problem belonging to the active batch.
+    execute(cur, """
+        UPDATE problems
+        SET is_locked=0
+        WHERE id=? AND batch_id=?
+    """, (pid, active_batch_id))
+
+    # Remove only the active-batch team linked to this problem.
+    execute(cur, """
+        DELETE FROM teams
+        WHERE problem_id=? AND batch_id=?
+    """, (pid, active_batch_id))
 
     con.commit()
     if pg_pool:
@@ -3518,8 +3684,17 @@ def admin_edit_team(team_id):
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     # ---------------- LOAD TEAM ----------------
-    execute(cur,"SELECT * FROM teams WHERE id=%s", (team_id,))
+    execute(cur,"SELECT * FROM teams WHERE id=%s AND batch_id=%s", (team_id, active_batch_id))
     team = cur.fetchone()
 
     if not team:
@@ -4237,9 +4412,18 @@ def admin_export_teams():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     # ---------------- ROLE-BASED FILTER ----------------
-    where = []
-    params = []
+    where = ["t.batch_id=%s"]
+    params = [active_batch_id]
 
     # Department admin should see ONLY their department
     if session.get("admin_role") == "admin":
@@ -4275,10 +4459,12 @@ def admin_export_teams():
 
     # ---------------- FETCH TEAM MEMBERS ----------------
     execute(cur,"""
-        SELECT team_id, member_name, usn, department
-        FROM team_members
-        ORDER BY team_id, id
-    """)
+        SELECT tm.team_id, tm.member_name, tm.usn, tm.department
+        FROM team_members tm
+        JOIN teams t ON tm.team_id = t.id
+        WHERE t.batch_id = ?
+        ORDER BY tm.team_id, tm.id
+    """, (active_batch_id,))
     members_rows = cur.fetchall()
 
     if pg_pool:
@@ -4456,6 +4642,17 @@ def dashboard():
 @app.route("/export")
 def export():
     con = db()
+    cur = con.cursor()
+
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     query = """
     SELECT
         t.team_name,
@@ -4478,10 +4675,11 @@ def export():
     FROM teams t
     JOIN problems p ON t.problem_id = p.id
     LEFT JOIN team_members m ON t.id = m.team_id
+    WHERE t.batch_id = %s
 
     ORDER BY p.title, t.team_name
     """
-    df = pd.read_sql(query, con)
+    df = pd.read_sql(query, con, params=[active_batch_id])
     if pg_pool:
         pg_pool.putconn(con)
     else:
@@ -4507,6 +4705,15 @@ def admin_assignments():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     # ---------------- SAVE ASSIGNMENTS ----------------
     if request.method == "POST":
 
@@ -4520,13 +4727,26 @@ def admin_assignments():
             if not faculty_id:
                 continue
 
+            # 🔒 VERIFY TEAM BELONGS TO ACTIVE BATCH
+            execute(cur, """
+                SELECT id
+                FROM teams
+                WHERE id=%s AND batch_id=%s
+            """, (team_id, active_batch_id))
+
+            if not cur.fetchone():
+                skipped += 1
+                continue
+
             # 🔒 CHECK CURRENT LOAD OF FACULTY
             execute(cur, """
                 SELECT COUNT(*)
-                FROM team_faculty
-                WHERE faculty_id = %s
-                  AND team_id != %s
-            """, (faculty_id, team_id))
+                FROM team_faculty tf
+                JOIN teams t ON tf.team_id = t.id
+                WHERE tf.faculty_id = %s
+                  AND tf.team_id != %s
+                  AND t.batch_id = %s
+            """, (faculty_id, team_id, active_batch_id))
 
             assigned_count = list(cur.fetchone().values())[0]
 
@@ -4586,14 +4806,18 @@ def admin_assignments():
     faculty_list = cur.fetchall()
 
     # ---------------- PROBLEM LIST ----------------
-    execute(cur, "SELECT DISTINCT title FROM problems ORDER BY title")
+    execute(
+        cur,
+        "SELECT DISTINCT title FROM problems WHERE batch_id=%s ORDER BY title",
+        (active_batch_id,)
+    )
     problems_list = [r["title"] for r in cur.fetchall()]
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "CV", "ME"]
 
     # ---------------- WHERE CLAUSE ----------------
-    where = []
-    params = []
+    where = ["t.batch_id=%s"]
+    params = [active_batch_id]
 
     if session.get("admin_role") == "admin":
         where.append("COALESCE(t.assigned_department, t.leader_department) = %s")
@@ -4695,6 +4919,15 @@ def export_assignments():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     base_query = """
     SELECT
         t.id AS team_id,
@@ -4722,10 +4955,10 @@ def export_assignments():
     JOIN problems p ON t.problem_id = p.id
     LEFT JOIN team_faculty tf ON tf.team_id = t.id
     LEFT JOIN faculty f ON f.id = tf.faculty_id
-    WHERE 1=1
+    WHERE t.batch_id = ?
     """
 
-    params = []
+    params = [active_batch_id]
 
     # Search filter
     if q:
@@ -4788,8 +5021,17 @@ def student_chat():
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
     # Find team_id (leader or member)
-    execute(cur,"SELECT id, team_name, leader_name FROM teams WHERE leader_usn=?", (usn,))
+    execute(cur,"SELECT id, team_name, leader_name FROM teams WHERE leader_usn=? AND batch_id=?", (usn, active_batch_id))
     team = cur.fetchone()
 
     if not team:
@@ -4798,7 +5040,8 @@ def student_chat():
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
             WHERE m.usn=?
-        """, (usn,))
+              AND t.batch_id=?
+        """, (usn, active_batch_id))
         team = cur.fetchone()
 
     if not team:
@@ -4990,13 +5233,24 @@ def faculty_chat(team_id):
     con = db()
     cur = con.cursor()
 
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("faculty_login"))
+
     # Ensure this team belongs to this faculty
     execute(cur,"""
         SELECT t.id, t.team_name, t.leader_name, t.leader_usn
         FROM team_faculty tf
         JOIN teams t ON tf.team_id = t.id
-        WHERE tf.faculty_id=? AND tf.team_id=?
-    """, (faculty_id, team_id))
+        WHERE tf.faculty_id=?
+          AND tf.team_id=?
+          AND t.batch_id=?
+    """, (faculty_id, team_id, active_batch_id))
     team = cur.fetchone()
 
     if not team:
