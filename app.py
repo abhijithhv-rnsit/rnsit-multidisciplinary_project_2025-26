@@ -3558,14 +3558,36 @@ def admin_home():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
+
+
     con = db()
     cur = con.cursor()
 
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+
     # ---------------- COUNTS ----------------
-    execute(cur,"SELECT COUNT(*) FROM teams")
+    execute(
+        cur,
+        "SELECT COUNT(*) FROM teams WHERE batch_id=%s",
+        (active_batch_id,)
+    )
     teams = list(cur.fetchone().values())[0]
 
-    execute(cur,"SELECT COUNT(*) FROM problems")
+    execute(
+        cur,
+        "SELECT COUNT(*) FROM problems WHERE batch_id=%s",
+        (active_batch_id,)
+    )
     problems = list(cur.fetchone().values())[0]
 
     # ---------------- FETCH NOTICES (ROLE AWARE) ----------------
@@ -3953,12 +3975,37 @@ def admin_teams():
     con = db()
     cur = con.cursor()
 
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
+   
     # ================= ACTIONS =================
     if request.method == "POST":
 
         action = request.form.get("action")
         team_id = request.form.get("team_id")
+        # ---------------- VERIFY TEAM BELONGS TO ACTIVE BATCH ----------------
+        if team_id:
 
+            execute(
+                cur,
+                "SELECT id FROM teams WHERE id=%s AND batch_id=%s",
+                (team_id, active_batch_id)
+            )
+
+            active_team = cur.fetchone()
+
+            if not active_team:
+                flash("This team does not belong to the active batch.")
+                return redirect(url_for("admin_teams"))
         # -------- TRANSFER TEAM (SUPER ADMIN ONLY) --------
         if action == "transfer_department":
 
@@ -3998,8 +4045,8 @@ def admin_teams():
         return redirect(url_for("admin_teams"))
 
     # ---------------- ROLE FILTER ----------------
-    where = []
-    params = []
+    where = ["t.batch_id=%s"]
+    params = [active_batch_id]
 
     if session.get("admin_role") == "admin":
         where.append("COALESCE(t.assigned_department,t.leader_department)=?")
@@ -4212,10 +4259,20 @@ def dashboard():
 
     con = db()
     cur = con.cursor()
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
 
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash("No active batch is configured.")
+        return redirect(url_for("admin"))
     # ---------------- ROLE-BASED FILTER ----------------
-    where = []
-    params = []
+    where = ["t.batch_id=%s"]
+    params = [active_batch_id]
 
     if session.get("admin_role") == "admin":
         where.append("t.leader_department = %s")
@@ -4232,7 +4289,11 @@ def dashboard():
     total_teams = list(cur.fetchone().values())[0]
 
     # ---------------- TOTAL PROBLEMS ----------------
-    execute(cur, "SELECT COUNT(*) FROM problems")
+    execute(
+        cur,
+        "SELECT COUNT(*) FROM problems WHERE batch_id=%s",
+        (active_batch_id,)
+    )
     total_problems = list(cur.fetchone().values())[0]
 
     # ---------------- TEAMS PER DEPARTMENT ----------------
