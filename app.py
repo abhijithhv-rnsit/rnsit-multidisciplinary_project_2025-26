@@ -323,97 +323,6 @@ def ensure_batch_system():
 ensure_batch_system()
 
 # ============================================================
-# BATCH LIFECYCLE / REGISTRATION SETTINGS MIGRATION
-# ============================================================
-
-def ensure_batch_lifecycle_system():
-    """
-    Add batch-specific lifecycle settings.
-
-    This migration is additive and idempotent:
-    - Existing Batch 1/Batch 2 records are preserved.
-    - Registration is CLOSED by default.
-    - Project settings are stored against each batch, not globally.
-    """
-    if not pg_pool:
-        return
-
-    con = None
-    try:
-        con = db()
-        cur = con.cursor()
-
-        cur.execute("""
-            ALTER TABLE batches
-            ADD COLUMN IF NOT EXISTS registration_open BOOLEAN DEFAULT FALSE
-        """)
-
-        cur.execute("""
-            ALTER TABLE batches
-            ADD COLUMN IF NOT EXISTS registration_start TIMESTAMP NULL
-        """)
-
-        cur.execute("""
-            ALTER TABLE batches
-            ADD COLUMN IF NOT EXISTS registration_deadline TIMESTAMP NULL
-        """)
-
-        cur.execute("""
-            ALTER TABLE batches
-            ADD COLUMN IF NOT EXISTS project_start_date DATE NULL
-        """)
-
-        cur.execute("""
-            ALTER TABLE batches
-            ADD COLUMN IF NOT EXISTS total_weeks INTEGER DEFAULT 16
-        """)
-
-        # Never open registration automatically during migration.
-        cur.execute("""
-            UPDATE batches
-            SET registration_open = FALSE
-            WHERE registration_open IS NULL
-        """)
-
-        cur.execute("""
-            UPDATE batches
-            SET total_weeks = 16
-            WHERE total_weeks IS NULL OR total_weeks < 1
-        """)
-
-        # Batch 1 is historical/read-only. Batch 2 is the current active batch.
-        cur.execute("""
-            UPDATE batches
-            SET registration_open = FALSE
-            WHERE academic_year = '2025-26'
-        """)
-
-
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_batches_status
-            ON batches(status)
-        """)
-
-        con.commit()
-
-        print("==============================================")
-        print("Batch lifecycle settings initialized")
-        print("Registration remains CLOSED until explicitly opened")
-        print("==============================================")
-
-    except Exception as e:
-        if con:
-            con.rollback()
-        print("⚠️ Batch lifecycle migration failed:", e)
-
-    finally:
-        if con:
-            pg_pool.putconn(con)
-
-
-ensure_batch_lifecycle_system()
-
-# ============================================================
 # ADMIN BATCH ACCESS MIGRATION
 # ============================================================
 
@@ -513,70 +422,6 @@ def get_active_batch_id(cur):
         return batch["id"]
 
     return None
-
-
-def get_batch_settings(cur, batch_id):
-    """
-    Return lifecycle/project settings for a specific batch.
-    Registration/project settings are batch-specific.
-    """
-    if not batch_id:
-        return None
-
-    execute(cur, """
-        SELECT
-            id,
-            batch_name,
-            academic_year,
-            status,
-            COALESCE(registration_open, FALSE) AS registration_open,
-            registration_start,
-            registration_deadline,
-            project_start_date,
-            COALESCE(total_weeks, 16) AS total_weeks
-        FROM batches
-        WHERE id=%s
-    """, (batch_id,))
-
-    return cur.fetchone()
-
-
-def get_registration_state(batch):
-    """
-    Return (closed, message) using IST and the selected batch settings.
-    """
-    if not batch:
-        return True, "No active batch is configured."
-
-    IST = pytz.timezone("Asia/Kolkata")
-    now_ist = datetime.now(IST).replace(tzinfo=None)
-
-    if not batch["registration_open"]:
-        return True, "Registration is currently closed."
-
-    registration_start = batch.get("registration_start")
-    if registration_start:
-        if isinstance(registration_start, str):
-            try:
-                registration_start = datetime.fromisoformat(registration_start)
-            except Exception:
-                registration_start = None
-
-        if registration_start and now_ist < registration_start:
-            return True, "Registration has not started yet."
-
-    registration_deadline = batch.get("registration_deadline")
-    if registration_deadline:
-        if isinstance(registration_deadline, str):
-            try:
-                registration_deadline = datetime.fromisoformat(registration_deadline)
-            except Exception:
-                registration_deadline = None
-
-        if registration_deadline and now_ist > registration_deadline:
-            return True, "Registration deadline has passed."
-
-    return False, "Registration is open."
 
 
 # ============================================================
@@ -782,6 +627,493 @@ try:
 
 except Exception as e:
     print("⚠ Sync skipped:", e)
+# ============================================================
+# CONFIGURABLE EVALUATION ENGINE - BATCH SAFE
+# ============================================================
+
+def ensure_evaluation_system():
+    if not pg_pool:
+        return
+    con = None
+    try:
+        con = db(); cur = con.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_schemes (
+                id SERIAL PRIMARY KEY,
+                batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'draft',
+                evaluator_mode TEXT DEFAULT 'single',
+                aggregation_mode TEXT DEFAULT 'average',
+                marking_scope TEXT DEFAULT 'team',
+                student_visibility TEXT DEFAULT 'hidden',
+                show_criterion_marks BOOLEAN DEFAULT TRUE,
+                show_remarks BOOLEAN DEFAULT TRUE,
+                result_released BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(batch_id, name)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_phases (
+                id SERIAL PRIMARY KEY,
+                scheme_id INTEGER NOT NULL REFERENCES evaluation_schemes(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                max_marks NUMERIC(10,2) NOT NULL DEFAULT 100,
+                evaluation_mode TEXT DEFAULT 'presentation',
+                start_at TIMESTAMP NULL,
+                end_at TIMESTAMP NULL,
+                sort_order INTEGER DEFAULT 1,
+                locked BOOLEAN DEFAULT FALSE,
+                result_released BOOLEAN DEFAULT FALSE
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_presentations (
+                id SERIAL PRIMARY KEY,
+                phase_id INTEGER NOT NULL REFERENCES evaluation_phases(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                max_marks NUMERIC(10,2) NOT NULL DEFAULT 0,
+                sort_order INTEGER DEFAULT 1,
+                evaluation_date DATE NULL
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_criteria (
+                id SERIAL PRIMARY KEY,
+                presentation_id INTEGER NOT NULL REFERENCES evaluation_presentations(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                max_marks NUMERIC(10,2) NOT NULL DEFAULT 0,
+                sort_order INTEGER DEFAULT 1,
+                rubric_enabled BOOLEAN DEFAULT FALSE
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_rubrics (
+                id SERIAL PRIMARY KEY,
+                criterion_id INTEGER NOT NULL REFERENCES evaluation_criteria(id) ON DELETE CASCADE,
+                level_name TEXT NOT NULL,
+                min_marks NUMERIC(10,2) NOT NULL DEFAULT 0,
+                max_marks NUMERIC(10,2) NOT NULL DEFAULT 0,
+                description TEXT,
+                sort_order INTEGER DEFAULT 1
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_team_evaluators (
+                id SERIAL PRIMARY KEY,
+                scheme_id INTEGER NOT NULL REFERENCES evaluation_schemes(id) ON DELETE CASCADE,
+                team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                faculty_id INTEGER NOT NULL REFERENCES faculty(id) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(scheme_id, team_id, faculty_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_entries (
+                id SERIAL PRIMARY KEY,
+                scheme_id INTEGER NOT NULL REFERENCES evaluation_schemes(id) ON DELETE CASCADE,
+                phase_id INTEGER NOT NULL REFERENCES evaluation_phases(id) ON DELETE CASCADE,
+                presentation_id INTEGER NULL REFERENCES evaluation_presentations(id) ON DELETE CASCADE,
+                team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                evaluator_id INTEGER NOT NULL REFERENCES faculty(id) ON DELETE CASCADE,
+                student_usn TEXT NULL,
+                marks NUMERIC(10,2) NULL,
+                remarks TEXT,
+                status TEXT DEFAULT 'draft',
+                submitted_at TIMESTAMP NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(scheme_id, phase_id, presentation_id, team_id, evaluator_id, student_usn)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_criterion_scores (
+                id SERIAL PRIMARY KEY,
+                entry_id INTEGER NOT NULL REFERENCES evaluation_entries(id) ON DELETE CASCADE,
+                criterion_id INTEGER NOT NULL REFERENCES evaluation_criteria(id) ON DELETE CASCADE,
+                marks NUMERIC(10,2) NOT NULL DEFAULT 0,
+                rubric_id INTEGER NULL REFERENCES evaluation_rubrics(id) ON DELETE SET NULL,
+                UNIQUE(entry_id, criterion_id)
+            )
+        """)
+        for sql in [
+            "CREATE INDEX IF NOT EXISTS idx_eval_scheme_batch ON evaluation_schemes(batch_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_phase_scheme ON evaluation_phases(scheme_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_pres_phase ON evaluation_presentations(phase_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_criteria_pres ON evaluation_criteria(presentation_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_entries_team ON evaluation_entries(team_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_entries_phase ON evaluation_entries(phase_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_entries_evaluator ON evaluation_entries(evaluator_id)",
+        ]:
+            cur.execute(sql)
+        con.commit()
+        print("Evaluation system initialized")
+    except Exception as e:
+        if con: con.rollback()
+        print("Evaluation migration failed:", e)
+    finally:
+        if con: pg_pool.putconn(con)
+
+ensure_evaluation_system()
+
+
+def get_selected_evaluation_scheme(cur, batch_id, scheme_id=None):
+    if scheme_id:
+        execute(cur, "SELECT * FROM evaluation_schemes WHERE id=%s AND batch_id=%s", (scheme_id, batch_id))
+    else:
+        execute(cur, """
+            SELECT * FROM evaluation_schemes WHERE batch_id=%s
+            ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, id DESC LIMIT 1
+        """, (batch_id,))
+    return cur.fetchone()
+
+
+def evaluation_batch_context(cur):
+    batch = get_admin_view_batch(cur)
+    return batch, (batch["id"] if batch else None)
+
+
+def _float(v, default=0):
+    try: return float(v)
+    except: return default
+
+
+def _validate_evaluation_structure(cur, phase_id):
+    execute(cur, "SELECT max_marks, evaluation_mode FROM evaluation_phases WHERE id=%s", (phase_id,))
+    phase = cur.fetchone()
+    if not phase: return False, "Phase not found."
+    if phase["evaluation_mode"] != "presentation": return True, ""
+    execute(cur, "SELECT COALESCE(SUM(max_marks),0) AS total FROM evaluation_presentations WHERE phase_id=%s", (phase_id,))
+    total = float(cur.fetchone()["total"] or 0)
+    max_marks = float(phase["max_marks"] or 0)
+    if abs(total - max_marks) > 0.001:
+        return False, f"Presentation marks total {total:g}, but phase total is {max_marks:g}."
+    return True, ""
+
+# ---------------- ADMIN: EVALUATION CONFIGURATION ----------------
+@app.route("/admin/evaluation-settings", methods=["GET", "POST"])
+def admin_evaluation_settings():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    con=db(); cur=con.cursor()
+    batch, batch_id = evaluation_batch_context(cur)
+    if not batch_id:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("No batch selected."); return redirect(url_for("admin"))
+    if request.method == "POST":
+        if is_admin_batch_read_only(batch):
+            flash("Historical batch is read-only.")
+        else:
+            action=request.form.get("action")
+            try:
+                if action=="create_scheme":
+                    execute(cur,"""INSERT INTO evaluation_schemes(batch_id,name,description,evaluator_mode,aggregation_mode,marking_scope,student_visibility,show_criterion_marks,show_remarks)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""",(
+                        batch_id,request.form["name"].strip(),request.form.get("description",""),request.form.get("evaluator_mode","single"),
+                        request.form.get("aggregation_mode","average"),request.form.get("marking_scope","team"),request.form.get("student_visibility","hidden"),
+                        request.form.get("show_criterion_marks")=='1',request.form.get("show_remarks")=='1'))
+                    con.commit(); flash("Evaluation scheme created.")
+                elif action=="update_scheme":
+                    sid=int(request.form["scheme_id"])
+                    execute(cur,"""UPDATE evaluation_schemes SET name=%s,description=%s,evaluator_mode=%s,aggregation_mode=%s,marking_scope=%s,
+                        student_visibility=%s,show_criterion_marks=%s,show_remarks=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s AND batch_id=%s""",
+                        (request.form["name"].strip(),request.form.get("description",""),request.form.get("evaluator_mode","single"),request.form.get("aggregation_mode","average"),request.form.get("marking_scope","team"),request.form.get("student_visibility","hidden"),request.form.get("show_criterion_marks")=='1',request.form.get("show_remarks")=='1',sid,batch_id))
+                    con.commit(); flash("Evaluation scheme updated.")
+                elif action=="activate_scheme":
+                    sid=int(request.form["scheme_id"])
+                    execute(cur,"UPDATE evaluation_schemes SET status='draft' WHERE batch_id=%s",(batch_id,))
+                    execute(cur,"UPDATE evaluation_schemes SET status='active' WHERE id=%s AND batch_id=%s",(sid,batch_id))
+                    con.commit(); flash("Evaluation scheme activated.")
+                elif action=="add_phase":
+                    sid=int(request.form["scheme_id"])
+                    execute(cur,"""INSERT INTO evaluation_phases(scheme_id,name,description,max_marks,evaluation_mode,start_at,end_at,sort_order)
+                        VALUES(%s,%s,%s,%s,%s,NULLIF(%s,'' )::timestamp,NULLIF(%s,'' )::timestamp,%s)""",
+                        (sid,request.form["name"].strip(),request.form.get("description",""),_float(request.form.get("max_marks")),request.form.get("evaluation_mode","presentation"),request.form.get("start_at",""),request.form.get("end_at",""),int(request.form.get("sort_order",1))))
+                    con.commit(); flash("Phase added.")
+                elif action=="update_phase":
+                    pid=int(request.form["phase_id"])
+                    execute(cur,"""UPDATE evaluation_phases SET name=%s,description=%s,max_marks=%s,evaluation_mode=%s,
+                        start_at=NULLIF(%s,'')::timestamp,end_at=NULLIF(%s,'')::timestamp,sort_order=%s WHERE id=%s""",
+                        (request.form["name"].strip(),request.form.get("description",""),_float(request.form.get("max_marks")),request.form.get("evaluation_mode","presentation"),request.form.get("start_at",""),request.form.get("end_at",""),int(request.form.get("sort_order",1)),pid))
+                    con.commit(); flash("Phase updated.")
+                elif action=="add_presentation":
+                    pid=int(request.form["phase_id"])
+                    execute(cur,"INSERT INTO evaluation_presentations(phase_id,name,description,max_marks,sort_order,evaluation_date) VALUES(%s,%s,%s,%s,%s,NULLIF(%s,'')::date)",
+                        (pid,request.form["name"].strip(),request.form.get("description",""),_float(request.form.get("max_marks")),int(request.form.get("sort_order",1)),request.form.get("evaluation_date","")))
+                    con.commit(); flash("Presentation added.")
+                elif action=="add_criterion":
+                    prid=int(request.form["presentation_id"])
+                    execute(cur,"INSERT INTO evaluation_criteria(presentation_id,name,description,max_marks,sort_order,rubric_enabled) VALUES(%s,%s,%s,%s,%s,%s)",
+                        (prid,request.form["name"].strip(),request.form.get("description",""),_float(request.form.get("max_marks")),int(request.form.get("sort_order",1)),request.form.get("rubric_enabled")=='1'))
+                    con.commit(); flash("Criterion added.")
+                elif action=="add_rubric":
+                    cid=int(request.form["criterion_id"])
+                    execute(cur,"INSERT INTO evaluation_rubrics(criterion_id,level_name,min_marks,max_marks,description,sort_order) VALUES(%s,%s,%s,%s,%s,%s)",
+                        (cid,request.form["level_name"].strip(),_float(request.form.get("min_marks")),_float(request.form.get("max_marks")),request.form.get("description",""),int(request.form.get("sort_order",1))))
+                    con.commit(); flash("Rubric level added.")
+                elif action=="lock_phase":
+                    pid=int(request.form["phase_id"]); execute(cur,"UPDATE evaluation_phases SET locked=TRUE WHERE id=%s",(pid,)); con.commit(); flash("Phase locked.")
+                elif action=="release_results":
+                    sid=int(request.form["scheme_id"]); execute(cur,"UPDATE evaluation_schemes SET result_released=TRUE WHERE id=%s AND batch_id=%s",(sid,batch_id)); con.commit(); flash("Results released to students according to visibility settings.")
+            except Exception as e:
+                con.rollback(); flash(f"Could not save evaluation configuration: {e}")
+        return redirect(url_for("admin_evaluation_settings", scheme_id=request.form.get("scheme_id","")))
+    scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get("scheme_id"))
+    execute(cur,"SELECT * FROM evaluation_schemes WHERE batch_id=%s ORDER BY id DESC",(batch_id,)); schemes=cur.fetchall()
+    phases=[]; presentations=[]; criteria=[]; rubrics=[]
+    if scheme:
+        execute(cur,"SELECT * FROM evaluation_phases WHERE scheme_id=%s ORDER BY sort_order,id",(scheme["id"],)); phases=cur.fetchall()
+        if phases:
+            ids=[p["id"] for p in phases]
+            placeholders=','.join(['%s']*len(ids))
+            execute(cur,f"SELECT * FROM evaluation_presentations WHERE phase_id IN ({placeholders}) ORDER BY sort_order,id",tuple(ids))
+            presentations=cur.fetchall()
+            if presentations:
+                pids=[p["id"] for p in presentations]
+                placeholders=','.join(['%s']*len(pids))
+                execute(cur,f"SELECT * FROM evaluation_criteria WHERE presentation_id IN ({placeholders}) ORDER BY sort_order,id",tuple(pids)); criteria=cur.fetchall()
+                if criteria:
+                    cids=[c["id"] for c in criteria]
+                    placeholders=','.join(['%s']*len(cids))
+                    execute(cur,f"SELECT * FROM evaluation_rubrics WHERE criterion_id IN ({placeholders}) ORDER BY sort_order,id",tuple(cids)); rubrics=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template("admin_evaluation_settings.html",batch=batch,schemes=schemes,scheme=scheme,phases=phases,presentations=presentations,criteria=criteria,rubrics=rubrics,active_page="evaluation")
+
+
+@app.route("/admin/evaluation-dashboard")
+def admin_evaluation_dashboard():
+    if not session.get("admin_logged_in"): return redirect(url_for("admin"))
+    con=db(); cur=con.cursor(); batch,batch_id=evaluation_batch_context(cur)
+    if not batch_id: return redirect(url_for("admin"))
+    scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get("scheme_id"))
+    filters={k:request.args.get(k,'').strip() for k in ['department','section','faculty_id','phase_id','presentation_id','status','team_id','evaluator_id']}
+    params=[batch_id]; where=["t.batch_id=%s"]
+    if filters['department']: where.append("COALESCE(t.leader_department,'')=%s"); params.append(filters['department'])
+    if filters['section']: where.append("COALESCE(t.leader_section,'')=%s"); params.append(filters['section'])
+    if filters['team_id']: where.append("t.id=%s"); params.append(filters['team_id'])
+    if filters['faculty_id']: where.append("EXISTS (SELECT 1 FROM team_faculty tx WHERE tx.team_id=t.id AND tx.faculty_id=%s)"); params.append(filters['faculty_id'])
+    if filters['phase_id']: where.append("ep.id=%s"); params.append(filters['phase_id'])
+    if filters['presentation_id']: where.append("e.presentation_id=%s"); params.append(filters['presentation_id'])
+    if filters['status']: where.append("COALESCE(e.status,'pending')=%s"); params.append(filters['status'])
+    if filters['evaluator_id']: where.append("e.evaluator_id=%s"); params.append(filters['evaluator_id'])
+    join_eval="LEFT JOIN evaluation_entries e ON e.team_id=t.id AND e.scheme_id=%s LEFT JOIN evaluation_phases ep ON ep.id=e.phase_id"
+    params2=[scheme['id'] if scheme else -1]+params
+    execute(cur,f"""SELECT t.id AS team_id,t.team_name,t.leader_name,t.leader_usn,t.leader_department,t.leader_section,
+        p.title AS problem_title,f.name AS assigned_faculty,
+        COUNT(DISTINCT e.id) AS entries,
+        COUNT(DISTINCT CASE WHEN e.status='submitted' THEN e.id END) AS submitted_entries
+        FROM teams t JOIN problems p ON p.id=t.problem_id
+        LEFT JOIN team_faculty tf ON tf.team_id=t.id LEFT JOIN faculty f ON f.id=tf.faculty_id
+        {join_eval}
+        WHERE {' AND '.join(where)} GROUP BY t.id,p.title,f.name ORDER BY t.leader_department,t.leader_section,t.team_name""",params2)
+    rows=cur.fetchall()
+    execute(cur,"SELECT DISTINCT leader_department FROM teams WHERE batch_id=%s AND leader_department IS NOT NULL ORDER BY leader_department",(batch_id,)); departments=[r['leader_department'] for r in cur.fetchall()]
+    execute(cur,"SELECT DISTINCT leader_section FROM teams WHERE batch_id=%s AND leader_section IS NOT NULL ORDER BY leader_section",(batch_id,)); sections=[r['leader_section'] for r in cur.fetchall()]
+    execute(cur,"SELECT id,name FROM faculty ORDER BY name"); faculty=cur.fetchall()
+    phases=[]; presentations=[]
+    if scheme:
+        execute(cur,"SELECT id,name FROM evaluation_phases WHERE scheme_id=%s ORDER BY sort_order,id",(scheme['id'],)); phases=cur.fetchall()
+        execute(cur,"""SELECT p.id,p.name,ph.name AS phase_name FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE ph.scheme_id=%s ORDER BY ph.sort_order,p.sort_order""",(scheme['id'],)); presentations=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template("admin_evaluation_dashboard.html",batch=batch,scheme=scheme,rows=rows,departments=departments,sections=sections,faculty=faculty,phases=phases,presentations=presentations,filters=filters,active_page="evaluation")
+
+
+@app.route("/admin/evaluation/export")
+def admin_evaluation_export():
+    if not session.get("admin_logged_in"): return redirect(url_for("admin"))
+    con=db(); cur=con.cursor(); batch,batch_id=evaluation_batch_context(cur)
+    scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get("scheme_id")) if batch_id else None
+    if not scheme:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Create an evaluation scheme before exporting."); return redirect(url_for("admin_evaluation_settings"))
+    # Apply all dashboard filters to the detailed export.
+    params=[scheme['id'],batch_id]; where=["e.scheme_id=%s","t.batch_id=%s"]
+    for key,col in [('department','t.leader_department'),('section','t.leader_section'),('team_id','t.id'),('faculty_id','e.evaluator_id'),('phase_id','e.phase_id'),('presentation_id','e.presentation_id'),('status','e.status')]:
+        val=request.args.get(key,'').strip()
+        if val: where.append(f"{col}=%s"); params.append(val)
+    condition=' AND '.join(where)
+    execute(cur,f"""SELECT t.id AS team_id,t.team_name,t.leader_name,t.leader_usn,t.leader_department,t.leader_section,
+        p.title AS problem_title,eph.name AS phase_name,ep.name AS presentation_name,
+        f.name AS evaluator,e.student_usn,e.marks,e.status,e.remarks,e.submitted_at
+        FROM evaluation_entries e JOIN teams t ON t.id=e.team_id JOIN problems p ON p.id=t.problem_id
+        JOIN evaluation_phases eph ON eph.id=e.phase_id LEFT JOIN evaluation_presentations ep ON ep.id=e.presentation_id
+        JOIN faculty f ON f.id=e.evaluator_id WHERE {condition}
+        ORDER BY t.leader_department,t.leader_section,t.team_name,eph.sort_order,ep.sort_order""",params)
+    detailed=[dict(r) for r in cur.fetchall()]
+    df=pd.DataFrame(detailed)
+    if df.empty: df=pd.DataFrame(columns=['team_id','team_name','leader_name','leader_usn','leader_department','leader_section','problem_title','phase_name','presentation_name','evaluator','student_usn','marks','status','remarks','submitted_at'])
+    # The remaining sheets deliberately use the same branch/section/team/faculty/phase filters where applicable.
+    common=["t.batch_id=%s"]
+    cp=[batch_id]
+    for key,col in [('department','t.leader_department'),('section','t.leader_section'),('team_id','t.id')]:
+        val=request.args.get(key,'').strip()
+        if val: common.append(f"{col}=%s"); cp.append(val)
+    execute(cur,f"""SELECT t.team_name,t.leader_name,t.leader_department,t.leader_section,p.title AS problem_title,
+        COALESCE(SUM(e.marks),0) AS marks_total,COUNT(e.id) AS entries,COUNT(CASE WHEN e.status='submitted' THEN 1 END) AS submitted
+        FROM teams t JOIN problems p ON p.id=t.problem_id LEFT JOIN evaluation_entries e ON e.team_id=t.id AND e.scheme_id=%s
+        WHERE {' AND '.join(common)} GROUP BY t.id,p.title ORDER BY t.leader_department,t.leader_section,t.team_name""",[scheme['id']]+cp)
+    team_summary=pd.DataFrame([dict(r) for r in cur.fetchall()])
+    execute(cur,f"""SELECT t.leader_department AS branch,t.leader_section AS section,COUNT(DISTINCT t.id) AS teams,
+        COUNT(DISTINCT CASE WHEN e.status='submitted' THEN e.team_id END) AS teams_with_submissions,
+        COALESCE(SUM(e.marks),0) AS marks_total,COUNT(e.id) AS entries
+        FROM teams t LEFT JOIN evaluation_entries e ON e.team_id=t.id AND e.scheme_id=%s
+        WHERE {' AND '.join(common)} GROUP BY t.leader_department,t.leader_section ORDER BY t.leader_department,t.leader_section""",[scheme['id']]+cp)
+    branch_summary=pd.DataFrame([dict(r) for r in cur.fetchall()])
+    execute(cur,"""SELECT f.name AS faculty,COUNT(e.id) AS entries,COUNT(CASE WHEN e.status='submitted' THEN 1 END) AS submitted,COUNT(CASE WHEN e.status='draft' THEN 1 END) AS drafts,COALESCE(SUM(e.marks),0) AS marks_total
+        FROM evaluation_entries e JOIN faculty f ON f.id=e.evaluator_id JOIN teams t ON t.id=e.team_id WHERE e.scheme_id=%s AND t.batch_id=%s GROUP BY f.id,f.name ORDER BY f.name""",(scheme['id'],batch_id))
+    faculty_summary=pd.DataFrame([dict(r) for r in cur.fetchall()])
+    execute(cur,"""SELECT ph.name AS phase,COALESCE(SUM(e.marks),0) AS marks_total,COUNT(e.id) AS entries,COUNT(CASE WHEN e.status='submitted' THEN 1 END) AS submitted
+        FROM evaluation_phases ph LEFT JOIN evaluation_entries e ON e.phase_id=ph.id AND e.scheme_id=%s WHERE ph.scheme_id=%s GROUP BY ph.id,ph.name,ph.sort_order ORDER BY ph.sort_order""",(scheme['id'],scheme['id']))
+    phase_summary=pd.DataFrame([dict(r) for r in cur.fetchall()])
+    execute(cur,"""SELECT COALESCE(e.student_usn,t.leader_usn) AS usn,COALESCE(s.name,t.leader_name) AS name,COALESCE(s.department,t.leader_department) AS branch,COALESCE(s.section,t.leader_section) AS section,t.team_name,COALESCE(SUM(e.marks),0) AS marks_total,COUNT(e.id) AS entries
+        FROM evaluation_entries e JOIN teams t ON t.id=e.team_id LEFT JOIN students s ON s.usn=e.student_usn WHERE e.scheme_id=%s AND t.batch_id=%s GROUP BY COALESCE(e.student_usn,t.leader_usn),COALESCE(s.name,t.leader_name),COALESCE(s.department,t.leader_department),COALESCE(s.section,t.leader_section),t.team_name ORDER BY branch,section,usn""",(scheme['id'],batch_id))
+    student_summary=pd.DataFrame([dict(r) for r in cur.fetchall()])
+    out=io.BytesIO()
+    with pd.ExcelWriter(out,engine='openpyxl') as writer:
+        df.to_excel(writer,index=False,sheet_name='Detailed')
+        team_summary.to_excel(writer,index=False,sheet_name='Team Summary')
+        branch_summary.to_excel(writer,index=False,sheet_name='Branch-Section')
+        faculty_summary.to_excel(writer,index=False,sheet_name='Faculty Summary')
+        phase_summary.to_excel(writer,index=False,sheet_name='Phase Summary')
+        student_summary.to_excel(writer,index=False,sheet_name='Student Summary')
+    out.seek(0)
+    filename=f"evaluation_{batch['academic_year']}_{scheme['name'].replace(' ','_')}.xlsx"
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return send_file(out,download_name=filename,as_attachment=True,mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/faculty/evaluation/<int:team_id>", methods=["GET","POST"])
+def faculty_evaluation(team_id):
+    if not session.get("faculty_id"): return redirect(url_for("faculty_login"))
+    con=db(); cur=con.cursor(); active_batch_id=get_active_batch_id(cur); faculty_id=session['faculty_id']
+    execute(cur,"SELECT * FROM teams WHERE id=%s AND batch_id=%s",(team_id,active_batch_id)); team=cur.fetchone()
+    execute(cur,"""SELECT 1 FROM team_faculty tf WHERE tf.team_id=%s AND tf.faculty_id=%s
+        UNION SELECT 1 FROM evaluation_team_evaluators ete WHERE ete.team_id=%s AND ete.faculty_id=%s AND ete.scheme_id=(SELECT id FROM evaluation_schemes WHERE batch_id=%s AND status='active' ORDER BY id DESC LIMIT 1)""",(team_id,faculty_id,team_id,faculty_id,active_batch_id)); assigned=cur.fetchone()
+    if not team or not assigned:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Access denied."); return redirect(url_for('faculty_dashboard'))
+    scheme=get_selected_evaluation_scheme(cur,active_batch_id)
+    if not scheme:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Evaluation scheme is not configured yet."); return redirect(url_for('faculty_dashboard'))
+    if request.method=='POST':
+        try:
+            phase_id=int(request.form['phase_id']); presentation_id=request.form.get('presentation_id') or None
+            if presentation_id: presentation_id=int(presentation_id)
+            execute(cur,"SELECT locked,evaluation_mode,max_marks FROM evaluation_phases WHERE id=%s AND scheme_id=%s",(phase_id,scheme['id'])); phase=cur.fetchone()
+            if not phase or phase['locked']: raise ValueError('This evaluation phase is locked.')
+            if phase['evaluation_mode']=='presentation' and not presentation_id: raise ValueError('Select a presentation.')
+            student_usn=request.form.get('student_usn') or None
+            if scheme['marking_scope']=='individual' and not student_usn:
+                raise ValueError('Select the student for individual evaluation.')
+            if scheme['marking_scope']=='team':
+                student_usn=None
+            marks=_float(request.form.get('marks'),0)
+            max_marks=float(phase['max_marks'])
+            criteria_ids=[]
+            if presentation_id:
+                execute(cur,"SELECT max_marks FROM evaluation_presentations WHERE id=%s AND phase_id=%s",(presentation_id,phase_id)); pr=cur.fetchone(); max_marks=float(pr['max_marks']) if pr else max_marks
+                execute(cur,"SELECT id,max_marks FROM evaluation_criteria WHERE presentation_id=%s ORDER BY sort_order,id",(presentation_id,)); crit_rows=cur.fetchall()
+                criteria_ids=[c['id'] for c in crit_rows]
+                if criteria_ids and any(f'criterion_{c["id"]}' in request.form for c in crit_rows):
+                    marks=0
+                    for c in crit_rows:
+                        cm=_float(request.form.get(f'criterion_{c["id"]}'),0)
+                        if cm<0 or cm>float(c['max_marks']): raise ValueError(f"Invalid marks for criterion {c['id']}.")
+                        marks += cm
+            if marks<0 or marks>max_marks: raise ValueError(f'Marks must be between 0 and {max_marks:g}.')
+            remarks=request.form.get('remarks','').strip(); status='submitted' if request.form.get('submit_final') else 'draft'
+            execute(cur,"""INSERT INTO evaluation_entries(scheme_id,phase_id,presentation_id,team_id,evaluator_id,student_usn,marks,remarks,status,submitted_at,updated_at)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,CASE WHEN %s='submitted' THEN CURRENT_TIMESTAMP ELSE NULL END,CURRENT_TIMESTAMP)
+                ON CONFLICT(scheme_id,phase_id,presentation_id,team_id,evaluator_id,student_usn)
+                DO UPDATE SET marks=EXCLUDED.marks,remarks=EXCLUDED.remarks,status=EXCLUDED.status,submitted_at=EXCLUDED.submitted_at,updated_at=CURRENT_TIMESTAMP
+                RETURNING id""",
+                (scheme['id'],phase_id,presentation_id,team_id,faculty_id,student_usn,marks,remarks,status,status))
+            entry_id=cur.fetchone()['id']
+            if presentation_id:
+                execute(cur,"DELETE FROM evaluation_criterion_scores WHERE entry_id=%s",(entry_id,))
+                for c in crit_rows:
+                    cm=_float(request.form.get(f'criterion_{c["id"]}'),0)
+                    rubric_id=request.form.get(f'rubric_{c["id"]}') or None
+                    execute(cur,"INSERT INTO evaluation_criterion_scores(entry_id,criterion_id,marks,rubric_id) VALUES(%s,%s,%s,%s)", (entry_id,c['id'],cm,rubric_id))
+            con.commit(); flash('Evaluation saved successfully.')
+        except Exception as e:
+            con.rollback(); flash(f'Could not save evaluation: {e}')
+    execute(cur,"SELECT * FROM evaluation_phases WHERE scheme_id=%s ORDER BY sort_order,id",(scheme['id'],)); phases=cur.fetchall()
+    execute(cur,"""SELECT p.*,ph.name AS phase_name FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE ph.scheme_id=%s ORDER BY ph.sort_order,p.sort_order""",(scheme['id'],)); presentations=cur.fetchall()
+    execute(cur,"""SELECT c.*,p.name AS presentation_name,p.max_marks AS presentation_max,ph.id AS phase_id FROM evaluation_criteria c JOIN evaluation_presentations p ON p.id=c.presentation_id JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE ph.scheme_id=%s ORDER BY ph.sort_order,p.sort_order,c.sort_order""",(scheme['id'],)); criteria=cur.fetchall()
+    execute(cur,"""SELECT r.* FROM evaluation_rubrics r JOIN evaluation_criteria c ON c.id=r.criterion_id JOIN evaluation_presentations p ON p.id=c.presentation_id JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE ph.scheme_id=%s ORDER BY r.sort_order,r.id""",(scheme['id'],)); rubrics=cur.fetchall()
+    execute(cur,"""SELECT usn,member_name AS name,department,section FROM team_members WHERE team_id=%s UNION SELECT leader_usn,leader_name,leader_department,leader_section FROM teams WHERE id=%s""",(team_id,team_id)); members=cur.fetchall()
+    execute(cur,"""SELECT e.*,ph.name AS phase_name,pr.name AS presentation_name FROM evaluation_entries e JOIN evaluation_phases ph ON ph.id=e.phase_id LEFT JOIN evaluation_presentations pr ON pr.id=e.presentation_id WHERE e.scheme_id=%s AND e.team_id=%s AND e.evaluator_id=%s ORDER BY ph.sort_order,pr.sort_order""",(scheme['id'],team_id,faculty_id)); entries=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template('faculty_evaluation.html',team=team,scheme=scheme,phases=phases,presentations=presentations,criteria=criteria,rubrics=rubrics,members=members,entries=entries)
+
+
+
+@app.route("/admin/evaluation-assignments", methods=["GET","POST"])
+def admin_evaluation_assignments():
+    if not session.get("admin_logged_in"): return redirect(url_for("admin"))
+    con=db(); cur=con.cursor(); batch,batch_id=evaluation_batch_context(cur)
+    scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get('scheme_id')) if batch_id else None
+    if not batch_id or not scheme:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('Create an evaluation scheme first.'); return redirect(url_for('admin_evaluation_settings'))
+    if request.method=='POST':
+        if is_admin_batch_read_only(batch): flash('Historical batch is read-only.')
+        else:
+            action=request.form.get('action')
+            try:
+                team_id=int(request.form['team_id']); faculty_id=int(request.form['faculty_id'])
+                if action=='add':
+                    execute(cur,"INSERT INTO evaluation_team_evaluators(scheme_id,team_id,faculty_id) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(scheme['id'],team_id,faculty_id))
+                    con.commit(); flash('Evaluator assigned.')
+                elif action=='remove':
+                    execute(cur,"DELETE FROM evaluation_team_evaluators WHERE scheme_id=%s AND team_id=%s AND faculty_id=%s",(scheme['id'],team_id,faculty_id)); con.commit(); flash('Evaluator removed.')
+            except Exception as e:
+                con.rollback(); flash(f'Could not update evaluator assignment: {e}')
+        return redirect(url_for('admin_evaluation_assignments',scheme_id=scheme['id']))
+    execute(cur,"SELECT id,team_name,leader_department,leader_section FROM teams WHERE batch_id=%s ORDER BY leader_department,leader_section,team_name",(batch_id,)); teams=cur.fetchall()
+    execute(cur,"SELECT f.id,f.name,f.department FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id WHERE fb.batch_id=%s ORDER BY f.name",(batch_id,)); faculty=cur.fetchall()
+    execute(cur,"""SELECT ete.team_id,ete.faculty_id,t.team_name,f.name AS faculty_name FROM evaluation_team_evaluators ete JOIN teams t ON t.id=ete.team_id JOIN faculty f ON f.id=ete.faculty_id WHERE ete.scheme_id=%s ORDER BY t.team_name,f.name""",(scheme['id'],)); assignments=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template('admin_evaluation_assignments.html',batch=batch,scheme=scheme,teams=teams,faculty=faculty,assignments=assignments,active_page='evaluation')
+
+@app.route("/student/evaluations")
+def student_evaluations():
+    if not session.get('student_usn'): return redirect(url_for('student_login'))
+    usn=session['student_usn']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
+    execute(cur,"""SELECT t.id,t.team_name,t.leader_department,t.leader_section FROM teams t WHERE t.batch_id=%s AND (t.leader_usn=%s OR EXISTS(SELECT 1 FROM team_members m WHERE m.team_id=t.id AND m.usn=%s)) LIMIT 1""",(batch_id,usn,usn)); team=cur.fetchone()
+    if not team: 
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('You are not part of a registered team.'); return redirect(url_for('student_home'))
+    scheme=get_selected_evaluation_scheme(cur,batch_id)
+    rows=[]
+    visible = bool(scheme and scheme['student_visibility']!='hidden' and (scheme['student_visibility']=='submitted' or scheme['result_released']))
+    if visible:
+        execute(cur,"""SELECT e.*,ph.name AS phase_name,pr.name AS presentation_name,f.name AS evaluator
+            FROM evaluation_entries e JOIN evaluation_phases ph ON ph.id=e.phase_id LEFT JOIN evaluation_presentations pr ON pr.id=e.presentation_id
+            JOIN faculty f ON f.id=e.evaluator_id WHERE e.scheme_id=%s AND e.team_id=%s AND e.status='submitted' ORDER BY ph.sort_order,pr.sort_order""",(scheme['id'],team['id'])); rows=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template('student_evaluations.html',team=team,scheme=scheme,rows=rows)
+
+
 @app.route("/__migrate_to_postgres_once")
 def migrate_once():
     import sqlite3
@@ -1449,6 +1781,19 @@ def student_problems():
     con = db()
     cur = con.cursor()
 
+    # ---------------- DEADLINE CHECK ----------------
+    registration_closed = False
+    execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
+    row = cur.fetchone()
+
+    if row and row["value"]:
+        try:
+            deadline = datetime.fromisoformat(row["value"])
+            if datetime.now() > deadline:
+                registration_closed = True
+        except:
+            registration_closed = False
+
     # ---------------- ACTIVE BATCH ----------------
     active_batch_id = get_active_batch_id(cur)
 
@@ -1460,22 +1805,14 @@ def student_problems():
         flash("No active batch is configured.")
         return redirect(url_for("student_login"))
 
-    # ---------------- BATCH-SPECIFIC REGISTRATION STATE ----------------
-    batch_settings = get_batch_settings(cur, active_batch_id)
-    registration_closed, registration_message = get_registration_state(batch_settings)
-
     # ---------------- CHECK IF STUDENT ALREADY IN ANY TEAM ----------------
     already_in_team = False
 
-    execute(
-        cur,
-        "SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=? AND batch_id=?",
-        (student_usn, active_batch_id)
-    )
+    execute(cur,"SELECT COUNT(*) AS cnt FROM teams WHERE leader_usn=? AND batch_id=?", (student_usn, active_batch_id))
     if cur.fetchone()["cnt"] > 0:
         already_in_team = True
     else:
-        execute(cur, """
+        execute(cur,"""
             SELECT COUNT(*) AS cnt
             FROM team_members m
             JOIN teams t ON m.team_id = t.id
@@ -1484,8 +1821,18 @@ def student_problems():
         if cur.fetchone()["cnt"] > 0:
             already_in_team = True
 
-    # ---------------- FETCH PROBLEMS ----------------
-    execute(cur, """
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+   
+    # ---------------- FETCH PROBLEMS (WITH LOCK STATUS) ----------------
+
+
+    execute(cur,"""
          SELECT id, year, title, category, domain_theme, max_teams,
                problem_description, problem_details, expected_outcome,
                COALESCE(is_locked,0) AS is_locked
@@ -1516,10 +1863,8 @@ def student_problems():
         "student_problems.html",
         data=data,
         registration_closed=registration_closed,
-        registration_message=registration_message,
         already_in_team=already_in_team
     )
-
 
 @app.route("/student/my-registration")
 def student_my_registration():
@@ -2141,44 +2486,30 @@ def student_weekly_progress():
     IST = pytz.timezone("Asia/Kolkata")
     now_ist = datetime.now(IST)
 
-    # ---------------- GET BATCH-SPECIFIC PROJECT SETTINGS ----------------
-    batch_settings = get_batch_settings(cur, active_batch_id)
+    # ---------------- GET PROJECT START DATE FROM DB ----------------
+    execute(cur,"SELECT value FROM settings WHERE key='project_start_date'")
+    row = cur.fetchone()
 
-    if not batch_settings:
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-        flash("Batch project settings are not configured.")
-        return redirect(url_for("student_home"))
-
-    if batch_settings.get("project_start_date"):
+    if row and row["value"]:
         try:
-            start_date = batch_settings["project_start_date"]
-            if isinstance(start_date, str):
-                start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
-            PROJECT_START_DATE = IST.localize(
-                datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0)
-            )
-        except Exception:
-            PROJECT_START_DATE = now_ist.replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
+            # expected format: YYYY-MM-DD
+            start_date = datetime.strptime(row["value"], "%Y-%m-%d")
+            PROJECT_START_DATE = IST.localize(datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0))
+        except:
+            # fallback if format wrong
+            PROJECT_START_DATE = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
     else:
-        # If the admin has not configured a project start date yet,
-        # use today only as a safe fallback.
-        PROJECT_START_DATE = now_ist.replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        # fallback if admin didn't set
+        PROJECT_START_DATE = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # ---------------- AUTO WEEK CALCULATION ----------------
+    # ---------------- AUTO WEEK CALCULATION (Week 1..16) ----------------
     days_since_start = (now_ist.date() - PROJECT_START_DATE.date()).days
     auto_week_no = (days_since_start // 7) + 1
 
     if auto_week_no < 1:
         auto_week_no = 1
 
-    TOTAL_WEEKS = int(batch_settings.get("total_weeks") or 16)
+    TOTAL_WEEKS = 16
     if auto_week_no > TOTAL_WEEKS:
         auto_week_no = TOTAL_WEEKS
 
@@ -3440,18 +3771,38 @@ def student_change_password():
 
 @app.route("/admin/deadline", methods=["GET", "POST"])
 def admin_deadline():
-    """
-    Legacy deadline route.
-
-    Registration settings are now managed from the batch-specific
-    Project Settings page. Redirect here so the old menu/link cannot
-    accidentally modify the obsolete global settings table.
-    """
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
+    con = db()
+    cur = con.cursor()
 
-    return redirect(url_for("admin_project_settings"))
+    if request.method == "POST":
+        deadline = request.form["deadline"]
+        execute(cur,
+            "REPLACE INTO settings(key,value) VALUES (?,?)",
+            ("registration_deadline", deadline)
+        )
+        con.commit()
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Registration deadline updated successfully")
+        return redirect(url_for("admin_deadline"))
 
+    execute(cur,
+        "SELECT value FROM settings WHERE key='registration_deadline'"
+    )
+    row = cur.fetchone()
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    return render_template(
+        "admin_deadline.html",active_page="deadline",
+        deadline=row[0] if row else ""
+    )
 
 @app.route("/admin/project-settings", methods=["GET", "POST"])
 def admin_project_settings():
@@ -3461,169 +3812,57 @@ def admin_project_settings():
     con = db()
     cur = con.cursor()
 
-    view_batch = get_admin_view_batch(cur)
-
-    if not view_batch:
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-        flash("No batch is configured.")
-        return redirect(url_for("admin_home"))
-
-    batch_id = view_batch["id"]
-    batch_settings = get_batch_settings(cur, batch_id)
-
     if request.method == "POST":
-        # Historical batches are strictly read-only.
-        if is_admin_batch_read_only(view_batch):
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("Batch 1 is historical and read-only. Settings cannot be changed.")
-            return redirect(url_for("admin_project_settings"))
-
-        registration_open = request.form.get("registration_open") == "1"
-        registration_start = request.form.get("registration_start", "").strip()
-        registration_deadline = request.form.get("registration_deadline", "").strip()
         project_start_date = request.form.get("project_start_date", "").strip()
-        total_weeks_raw = request.form.get("total_weeks", "16").strip()
+        registration_deadline = request.form.get("registration_deadline", "").strip()
+        total_weeks = request.form.get("total_weeks", "16").strip()
 
-        # Validate total weeks.
-        try:
-            total_weeks = int(total_weeks_raw)
-            if total_weeks < 1 or total_weeks > 52:
-                raise ValueError
-        except Exception:
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("Total weeks must be between 1 and 52.")
-            return redirect(url_for("admin_project_settings"))
+        # ✅ PostgreSQL UPSERT instead of INSERT OR REPLACE
 
-        # Validate dates/times before saving.
-        parsed_start = None
-        parsed_deadline = None
-        parsed_project_start = None
+        if project_start_date:
+            execute(cur, """
+                INSERT INTO settings(key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value
+            """, ("project_start_date", project_start_date))
 
-        try:
-            if registration_start:
-                parsed_start = datetime.fromisoformat(registration_start)
-        except Exception:
-            flash("Invalid registration start date/time.")
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            return redirect(url_for("admin_project_settings"))
+        if registration_deadline:
+            execute(cur, """
+                INSERT INTO settings(key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value
+            """, ("registration_deadline", registration_deadline))
 
-        try:
-            if registration_deadline:
-                parsed_deadline = datetime.fromisoformat(registration_deadline)
-        except Exception:
-            flash("Invalid registration deadline.")
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            return redirect(url_for("admin_project_settings"))
-
-        try:
-            if project_start_date:
-                parsed_project_start = datetime.strptime(
-                    project_start_date, "%Y-%m-%d"
-                ).date()
-        except Exception:
-            flash("Invalid project start date.")
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            return redirect(url_for("admin_project_settings"))
-
-        if parsed_start and parsed_deadline and parsed_deadline <= parsed_start:
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("Registration deadline must be after registration start.")
-            return redirect(url_for("admin_project_settings"))
-
-        # Do not allow an already-past deadline to be saved as OPEN.
-        IST = pytz.timezone("Asia/Kolkata")
-        now_ist = datetime.now(IST).replace(tzinfo=None)
-
-        if registration_open and parsed_deadline and parsed_deadline <= now_ist:
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("Registration cannot be opened with a deadline that has already passed.")
-            return redirect(url_for("admin_project_settings"))
-
-        execute(cur, """
-            UPDATE batches
-            SET registration_open=%s,
-                registration_start=%s,
-                registration_deadline=%s,
-                project_start_date=%s,
-                total_weeks=%s
-            WHERE id=%s
-        """, (
-            registration_open,
-            parsed_start,
-            parsed_deadline,
-            parsed_project_start,
-            total_weeks,
-            batch_id
-        ))
+        if total_weeks:
+            execute(cur, """
+                INSERT INTO settings(key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value
+            """, ("total_weeks", total_weeks))
 
         con.commit()
+        flash("Project settings saved successfully ✅")
 
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
 
-        flash("Project settings saved successfully ✅")
         return redirect(url_for("admin_project_settings"))
 
-    registration_closed, registration_message = get_registration_state(batch_settings)
+    # -------- Fetch existing values --------
 
-    # Convert DB timestamps to the format required by datetime-local inputs.
-    registration_start_value = ""
-    registration_deadline_value = ""
+    def get_setting(key, default=""):
+        execute(cur, "SELECT value FROM settings WHERE key=%s", (key,))
+        row = cur.fetchone()
+        return row["value"] if row and row["value"] else default
 
-    if batch_settings:
-        if batch_settings.get("registration_start"):
-            value = batch_settings["registration_start"]
-            if hasattr(value, "strftime"):
-                registration_start_value = value.strftime("%Y-%m-%dT%H:%M")
-            else:
-                registration_start_value = str(value).replace(" ", "T")[:16]
-
-        if batch_settings.get("registration_deadline"):
-            value = batch_settings["registration_deadline"]
-            if hasattr(value, "strftime"):
-                registration_deadline_value = value.strftime("%Y-%m-%dT%H:%M")
-            else:
-                registration_deadline_value = str(value).replace(" ", "T")[:16]
-
-    project_start_date = ""
-    total_weeks = 16
-
-    if batch_settings:
-        project_start_date = (
-            batch_settings["project_start_date"].strftime("%Y-%m-%d")
-            if batch_settings.get("project_start_date")
-            and hasattr(batch_settings["project_start_date"], "strftime")
-            else str(batch_settings.get("project_start_date") or "")
-        )
-        total_weeks = batch_settings.get("total_weeks") or 16
-
-    read_only = is_admin_batch_read_only(view_batch)
+    project_start_date = get_setting("project_start_date", "")
+    registration_deadline = get_setting("registration_deadline", "")
+    total_weeks = get_setting("total_weeks", "16")
 
     if pg_pool:
         pg_pool.putconn(con)
@@ -3633,18 +3872,10 @@ def admin_project_settings():
     return render_template(
         "admin_project_settings.html",
         active_page="project_settings",
-        view_batch=view_batch,
-        batch_settings=batch_settings,
-        registration_open=bool(batch_settings and batch_settings["registration_open"]),
-        registration_start=registration_start_value,
-        registration_deadline=registration_deadline_value,
         project_start_date=project_start_date,
-        total_weeks=total_weeks,
-        registration_closed=registration_closed,
-        registration_message=registration_message,
-        read_only=read_only
+        registration_deadline=registration_deadline,
+        total_weeks=total_weeks
     )
-
 
 @app.route("/faculty/review-progress/<int:progress_id>", methods=["POST"])
 def faculty_review_progress(progress_id):
@@ -3759,10 +3990,11 @@ def register(pid):
         flash("Please login as student to register a team.")
         return redirect(url_for("student_login"))
 
+    # ---------------- DEADLINE CHECK ----------------
     con = db()
     cur = con.cursor()
 
-    # ---------------- ACTIVE BATCH ----------------
+     # ---------------- ACTIVE BATCH ----------------
     active_batch_id = get_active_batch_id(cur)
 
     if not active_batch_id:
@@ -3774,18 +4006,17 @@ def register(pid):
         flash("No active batch is configured.")
         return redirect(url_for("student_problems"))
 
-    # ---------------- BATCH-SPECIFIC REGISTRATION CHECK ----------------
-    batch_settings = get_batch_settings(cur, active_batch_id)
-    registration_closed, registration_message = get_registration_state(batch_settings)
+    execute(cur, "SELECT value FROM settings WHERE key='registration_deadline'")
+    row = cur.fetchone()
 
-    if registration_closed:
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-
-        flash(registration_message)
-        return redirect(url_for("student_problems"))
+    if row and row.get("value"):
+        try:
+            deadline = datetime.fromisoformat(row["value"])
+            if datetime.now() > deadline:
+                flash("Registration closed. Deadline has passed.")
+                return redirect(url_for("student_problems"))
+        except:
+            pass
 
     # ---------------- GET PROBLEM DETAILS ----------------
     execute(cur, """
@@ -3821,12 +4052,12 @@ def register(pid):
     execute(cur, "SELECT COUNT(*) FROM teams WHERE problem_id=%s AND batch_id=%s", (pid, active_batch_id))
     already_registered = list(cur.fetchone().values())[0]
 
-    if already_registered >= max_teams:
+    if already_registered >= 1:
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
-        flash(f"Registration closed for this project ({max_teams} team(s) already registered).")
+        flash("Registration closed for this project (1 team already registered).")
         return redirect(url_for("student_problems"))
 
     # ---------------- POST SUBMIT ----------------
