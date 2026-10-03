@@ -23,6 +23,7 @@
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <div>
       <h4 class="fw-bold mb-1">Student Management</h4>
+      {% if view_batch %}<div class="mb-1"><span class="badge bg-primary">{{ view_batch.batch_name }} — {{ view_batch.academic_year }}</span>{% if read_only %} <span class="badge bg-warning text-dark">READ-ONLY</span>{% else %} <span class="badge bg-success">ACTIVE</span>{% endif %}</div>{% endif %}
       <div class="text-muted small">
         Default Password: <b>RNSIT@2026</b> |
         Total Students (Filtered): <b>{{ total_rows }}</b> |
@@ -49,6 +50,7 @@
   {% endwith %}
 
   <!-- BULK UPLOAD -->
+  {% if not read_only %}
   <div class="card shadow-sm mb-4 border-0">
     <div class="card-body p-4">
       <h5 class="fw-bold mb-3">📌 Bulk Upload Students (Excel)</h5>
@@ -79,8 +81,12 @@
       </form>
     </div>
   </div>
+  {% else %}
+  <div class="alert alert-warning">This historical batch is read-only. Student upload/edit/reset/delete actions are disabled.</div>
+  {% endif %}
 
   <!-- MANUAL ADD -->
+  {% if not read_only %}
   <div class="card shadow-sm mb-4 border-0">
     <div class="card-body p-4">
       <h5 class="fw-bold mb-3">➕ Add Student Manually</h5>
@@ -133,6 +139,7 @@
       </form>
     </div>
   </div>
+  {% endif %}
 
   <!-- FILTER BAR -->
   <form method="get" action="/admin/students" class="card shadow-sm p-3 mb-3">
