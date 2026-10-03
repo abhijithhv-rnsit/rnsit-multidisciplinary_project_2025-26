@@ -13,6 +13,7 @@
 
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">Bulk Faculty Upload</h4>
+    {% if view_batch %}<div><span class="badge bg-primary">{{ view_batch.batch_name }} — {{ view_batch.academic_year }}</span></div>{% endif %}
     <a href="/admin/home" class="btn btn-outline-secondary btn-sm">← Back</a>
   </div>
 
