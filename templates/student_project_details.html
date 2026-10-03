@@ -12,6 +12,8 @@
     </a>
   </div>
 
+  {% if details %}<div class="alert {% if details.status in ['Reviewed','Approved'] %}alert-success{% elif details.status=='Submitted' %}alert-primary{% else %}alert-secondary{% endif %}"><strong>Synopsis Status:</strong> {{ details.status or 'Draft' }}{% if details.faculty_remark %}<br><strong>Faculty Remark:</strong> {{ details.faculty_remark }}{% endif %}</div>{% endif %}
+
   {% with messages = get_flashed_messages() %}
     {% if messages %}
       <div class="alert alert-success">{{ messages[0] }}</div>
