@@ -11,7 +11,15 @@
 
 <div class="container mt-4">
 
-  <h4 class="fw-bold mb-3">Admin Management</h4>
+  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="fw-bold mb-1">Admin Management</h4>
+    <div class="text-muted small">
+      Selected Batch: <b>{{ view_batch.batch_name }} — {{ view_batch.academic_year }}</b>
+      {% if read_only %}<span class="badge bg-secondary ms-2">Historical / Read-Only</span>{% else %}<span class="badge bg-success ms-2">Active</span>{% endif %}
+    </div>
+  </div>
+</div>
 
   {% with messages = get_flashed_messages() %}
     {% if messages %}
@@ -19,6 +27,7 @@
     {% endif %}
   {% endwith %}
 
+  {% if not read_only %}
   <!-- CREATE ADMIN -->
   <div class="card shadow-sm mb-4">
     <div class="card-body">
@@ -63,6 +72,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   <!-- ADMIN LIST -->
   <div class="card shadow-sm">
@@ -92,7 +102,9 @@
               <td>{{ a.created_at }}</td>
 
               <td class="d-flex gap-2 flex-wrap">
+                {% if read_only %}<span class="badge bg-secondary">View Only</span>{% endif %}
 
+                {% if not read_only %}
                 <!-- EDIT -->
                 <button class="btn btn-sm btn-primary"
                         data-bs-toggle="modal"
@@ -113,15 +125,16 @@
                   </button>
                 </form>
 
-                <!-- DELETE -->
+                <!-- REMOVE FROM SELECTED BATCH -->
                 <form method="post">
                   <input type="hidden" name="action" value="delete_admin">
                   <input type="hidden" name="aid" value="{{ a.id }}">
                   <button class="btn btn-sm btn-danger"
-                          onclick="return confirm('Delete this admin?')">
-                    Delete
+                          onclick="return confirm('Remove this admin from the selected batch?')">
+                    Remove from Batch
                   </button>
                 </form>
+                {% endif %}
 
               </td>
             </tr>
@@ -136,6 +149,7 @@
 </div>
 
 
+{% if not read_only %}
 <!-- EDIT ADMIN MODAL -->
 <div class="modal fade" id="editAdminModal" tabindex="-1">
   <div class="modal-dialog">
@@ -211,6 +225,8 @@ editAdminModal.addEventListener('show.bs.modal', function (event) {
 });
 
 </script>
+
+{% endif %}
 
 </body>
 </html>
