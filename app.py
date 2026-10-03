@@ -775,6 +775,86 @@ def ensure_evaluation_system():
 
 ensure_evaluation_system()
 
+# ============================================================
+# PROJECT SUBMISSION / MONITORING SYSTEM - BATCH SAFE
+# ============================================================
+def ensure_submission_system():
+    if not pg_pool:
+        return
+    con = None
+    try:
+        con = db(); cur = con.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS submission_configs (
+                id SERIAL PRIMARY KEY,
+                batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+                submission_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                start_at TIMESTAMP NULL,
+                end_at TIMESTAMP NULL,
+                allowed_extensions TEXT DEFAULT 'pdf,doc,docx,ppt,pptx,zip,rar',
+                max_size_mb INTEGER DEFAULT 10,
+                required BOOLEAN DEFAULT TRUE,
+                max_files INTEGER DEFAULT 1,
+                review_required BOOLEAN DEFAULT TRUE,
+                active BOOLEAN DEFAULT TRUE,
+                sort_order INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(batch_id, submission_type)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS report_submissions (
+                id SERIAL PRIMARY KEY,
+                config_id INTEGER NOT NULL REFERENCES submission_configs(id) ON DELETE CASCADE,
+                batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+                team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                student_usn TEXT NULL,
+                version_no INTEGER DEFAULT 1,
+                filename TEXT NOT NULL,
+                content_type TEXT,
+                file_size INTEGER DEFAULT 0,
+                file_data BYTEA NOT NULL,
+                status TEXT DEFAULT 'Submitted',
+                review_status TEXT DEFAULT 'Pending',
+                faculty_remark TEXT,
+                reviewed_by INTEGER NULL REFERENCES faculty(id) ON DELETE SET NULL,
+                reviewed_at TIMESTAMP NULL,
+                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_current BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_submission_configs_batch ON submission_configs(batch_id)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_report_submissions_team ON report_submissions(team_id, config_id, is_current)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_report_submissions_batch ON report_submissions(batch_id)
+        """)
+        # Synopsis/project-details review metadata.
+        for sql in [
+            "ALTER TABLE project_details ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Draft'",
+            "ALTER TABLE project_details ADD COLUMN IF NOT EXISTS faculty_remark TEXT",
+            "ALTER TABLE project_details ADD COLUMN IF NOT EXISTS reviewed_by INTEGER NULL REFERENCES faculty(id) ON DELETE SET NULL",
+            "ALTER TABLE project_details ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP NULL",
+            "ALTER TABLE project_details ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP NULL",
+        ]:
+            cur.execute(sql)
+        con.commit()
+        print('Submission and project monitoring system initialized')
+    except Exception as e:
+        if con: con.rollback()
+        print('Submission system migration failed:', e)
+    finally:
+        if con: pg_pool.putconn(con)
+
+ensure_submission_system()
+
 
 def get_selected_evaluation_scheme(cur, batch_id, scheme_id=None):
     if scheme_id:
@@ -1601,6 +1681,312 @@ def add_cascade_once():
         con.close()
 
     return "✅ Cascade deletes enabled successfully"
+
+def _current_team_for_student(cur, usn, batch_id):
+    execute(cur, "SELECT id FROM teams WHERE leader_usn=%s AND batch_id=%s", (usn, batch_id))
+    team = cur.fetchone()
+    if team:
+        return team
+    execute(cur, """
+        SELECT t.id FROM team_members m JOIN teams t ON t.id=m.team_id
+        WHERE m.usn=%s AND t.batch_id=%s
+    """, (usn, batch_id))
+    return cur.fetchone()
+
+
+def _parse_dt_local(value):
+    if not value:
+        return None
+    value=str(value).strip()
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def _submission_window_state(config, now=None):
+    now = now or datetime.now()
+    start = config.get('start_at') if isinstance(config, dict) else config['start_at']
+    end = config.get('end_at') if isinstance(config, dict) else config['end_at']
+    if hasattr(start, 'replace') and start and not isinstance(start, str):
+        start_dt=start.replace(tzinfo=None)
+    else:
+        start_dt=_parse_dt_local(start)
+    if hasattr(end, 'replace') and end and not isinstance(end, str):
+        end_dt=end.replace(tzinfo=None)
+    else:
+        end_dt=_parse_dt_local(end)
+    if start_dt and now < start_dt: return 'Not Started'
+    if end_dt and now > end_dt: return 'Closed'
+    return 'Open'
+
+
+def _team_submission_summary(cur, team_id, batch_id):
+    execute(cur, """
+        SELECT sc.id, sc.submission_type, sc.title, sc.required, sc.review_required,
+               sc.start_at, sc.end_at, sc.active,
+               rs.id AS submission_id, rs.filename, rs.status, rs.review_status,
+               rs.version_no, rs.submitted_at, rs.faculty_remark
+        FROM submission_configs sc
+        LEFT JOIN report_submissions rs
+          ON rs.config_id=sc.id AND rs.team_id=%s AND rs.batch_id=%s AND rs.is_current=TRUE
+        WHERE sc.batch_id=%s AND sc.active=TRUE
+        ORDER BY sc.sort_order, sc.id
+    """, (team_id,batch_id,batch_id))
+    return cur.fetchall()
+
+
+@app.route('/admin/submission-settings', methods=['GET','POST'])
+def admin_submission_settings():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin'))
+    con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
+    if not batch:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('No batch is selected.'); return redirect(url_for('admin'))
+    batch_id=batch['id']; read_only=is_admin_batch_read_only(batch)
+    if request.method=='POST':
+        if read_only:
+            flash('Historical batch is read-only.')
+        else:
+            action=request.form.get('action')
+            if action=='save':
+                sid=request.form.get('id')
+                submission_type=request.form.get('submission_type','').strip()
+                title=request.form.get('title','').strip()
+                description=request.form.get('description','').strip()
+                start_at=request.form.get('start_at','').strip() or None
+                end_at=request.form.get('end_at','').strip() or None
+                exts=request.form.get('allowed_extensions','').strip().lower()
+                max_size=int(request.form.get('max_size_mb','10') or 10)
+                required=request.form.get('required')=='on'
+                max_files=max(1,int(request.form.get('max_files','1') or 1))
+                review_required=request.form.get('review_required')=='on'
+                active=request.form.get('active')=='on'
+                sort_order=int(request.form.get('sort_order','1') or 1)
+                if not submission_type or not title:
+                    flash('Submission Type and Title are required.')
+                elif start_at and end_at and _parse_dt_local(start_at) and _parse_dt_local(end_at) and _parse_dt_local(start_at) >= _parse_dt_local(end_at):
+                    flash('End date/time must be after start date/time.')
+                else:
+                    if sid:
+                        execute(cur,"""UPDATE submission_configs SET submission_type=?,title=?,description=?,start_at=?,end_at=?,allowed_extensions=?,max_size_mb=?,required=?,max_files=?,review_required=?,active=?,sort_order=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND batch_id=?""",(submission_type,title,description,start_at,end_at,exts,max_size,required,max_files,review_required,active,sort_order,sid,batch_id))
+                    else:
+                        execute(cur,"""INSERT INTO submission_configs(batch_id,submission_type,title,description,start_at,end_at,allowed_extensions,max_size_mb,required,max_files,review_required,active,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",(batch_id,submission_type,title,description,start_at,end_at,exts,max_size,required,max_files,review_required,active,sort_order))
+                    con.commit(); flash('Submission configuration saved successfully.')
+            elif action=='delete':
+                sid=request.form.get('id')
+                execute(cur,'DELETE FROM submission_configs WHERE id=? AND batch_id=?',(sid,batch_id)); con.commit(); flash('Submission configuration deleted.')
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        return redirect(url_for('admin_submission_settings'))
+    execute(cur,'SELECT * FROM submission_configs WHERE batch_id=? ORDER BY sort_order,id',(batch_id,)); configs=cur.fetchall()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template('admin_submission_settings.html',batch=batch,configs=configs,read_only=read_only,active_page='submissions')
+
+
+@app.route('/student/reports', methods=['GET','POST'])
+def student_reports():
+    if not session.get('student_usn'):
+        return redirect(url_for('student_login'))
+    usn=session['student_usn']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
+    if not batch_id:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('No active batch is configured.'); return redirect(url_for('student_login'))
+    team=_current_team_for_student(cur,usn,batch_id)
+    if not team:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('You are not part of any registered team.'); return redirect(url_for('student_home'))
+    team_id=team['id']
+    if request.method=='POST':
+        config_id=request.form.get('config_id')
+        execute(cur,'SELECT * FROM submission_configs WHERE id=? AND batch_id=? AND active=TRUE',(config_id,batch_id)); cfg=cur.fetchone()
+        if not cfg:
+            flash('Invalid submission type.');
+        else:
+            now=datetime.now(); state=_submission_window_state(cfg,now)
+            if state!='Open':
+                flash(f"Submission window is {state.lower()}. Students can submit only between the configured start and end date/time.")
+            else:
+                file=request.files.get('file')
+                if not file or not file.filename:
+                    flash('Please select a file.')
+                else:
+                    filename=secure_filename(file.filename)
+                    ext=filename.rsplit('.',1)[1].lower() if '.' in filename else ''
+                    allowed={x.strip().lstrip('.') for x in (cfg['allowed_extensions'] or '').split(',') if x.strip()}
+                    if allowed and ext not in allowed:
+                        flash('File type is not allowed for this submission.')
+                    else:
+                        data=file.read(); max_bytes=int(cfg['max_size_mb'] or 10)*1024*1024
+                        if len(data)>max_bytes:
+                            flash(f"File exceeds the configured limit of {cfg['max_size_mb']} MB.")
+                        else:
+                            execute(cur,'SELECT COALESCE(MAX(version_no),0)+1 AS next_version FROM report_submissions WHERE config_id=? AND team_id=?',(config_id,team_id)); ver=cur.fetchone()['next_version']
+                            execute(cur,'UPDATE report_submissions SET is_current=FALSE WHERE config_id=? AND team_id=? AND is_current=TRUE',(config_id,team_id))
+                            execute(cur,"""INSERT INTO report_submissions(config_id,batch_id,team_id,student_usn,version_no,filename,content_type,file_size,file_data,status,review_status,submitted_at,is_current) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,TRUE)""",(config_id,batch_id,team_id,usn,ver,filename,file.content_type or 'application/octet-stream',len(data),psycopg2.Binary(data),'Submitted','Pending',now))
+                            con.commit(); flash(f"{cfg['title']} submitted successfully (Version {ver}).")
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        return redirect(url_for('student_reports'))
+    configs=_team_submission_summary(cur,team_id,batch_id)
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template('student_reports.html',configs=configs,active_page='submissions')
+
+
+@app.route('/student/reports/download/<int:submission_id>')
+def student_report_download(submission_id):
+    if not session.get('student_usn'): return redirect(url_for('student_login'))
+    con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur); team=_current_team_for_student(cur,session['student_usn'],batch_id) if batch_id else None
+    if not team:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('Access denied.'); return redirect(url_for('student_reports'))
+    execute(cur,'SELECT filename,content_type,file_data FROM report_submissions WHERE id=? AND team_id=? AND batch_id=?',(submission_id,team['id'],batch_id)); row=cur.fetchone()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    if not row: flash('Submission not found.'); return redirect(url_for('student_reports'))
+    return send_file(io.BytesIO(bytes(row['file_data'])),download_name=row['filename'],as_attachment=True,mimetype=row['content_type'] or 'application/octet-stream')
+
+
+@app.route('/faculty/reports/<int:submission_id>', methods=['POST'])
+def faculty_review_report(submission_id):
+    if not session.get('faculty_id'): return redirect(url_for('faculty_login'))
+    fid=session['faculty_id']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
+    execute(cur,"""SELECT rs.id,rs.team_id FROM report_submissions rs JOIN team_faculty tf ON tf.team_id=rs.team_id JOIN teams t ON t.id=rs.team_id WHERE rs.id=? AND tf.faculty_id=? AND t.batch_id=?""",(submission_id,fid,batch_id)); row=cur.fetchone()
+    if not row:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('Access denied.'); return redirect(url_for('faculty_dashboard'))
+    status=request.form.get('review_status','Reviewed'); remark=request.form.get('faculty_remark','').strip()
+    execute(cur,'UPDATE report_submissions SET review_status=?,faculty_remark=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?',(status,remark,fid,submission_id)); con.commit()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    flash('Report review saved successfully.'); return redirect(url_for('faculty_team_details',team_id=row['team_id']))
+
+
+@app.route('/faculty/reports/download/<int:submission_id>')
+def faculty_report_download(submission_id):
+    if not session.get('faculty_id'): return redirect(url_for('faculty_login'))
+    con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur); fid=session['faculty_id']
+    execute(cur,"""SELECT rs.filename,rs.content_type,rs.file_data FROM report_submissions rs JOIN team_faculty tf ON tf.team_id=rs.team_id JOIN teams t ON t.id=rs.team_id WHERE rs.id=? AND tf.faculty_id=? AND t.batch_id=?""",(submission_id,fid,batch_id)); row=cur.fetchone()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    if not row: flash('Access denied.'); return redirect(url_for('faculty_dashboard'))
+    return send_file(io.BytesIO(bytes(row['file_data'])),download_name=row['filename'],as_attachment=True,mimetype=row['content_type'] or 'application/octet-stream')
+
+
+@app.route('/admin/project-status')
+def admin_project_status():
+    if not session.get('admin_logged_in'): return redirect(url_for('admin'))
+    con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
+    if not batch:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('No batch is selected.'); return redirect(url_for('admin'))
+    batch_id=batch['id']
+    dept=request.args.get('department','').strip(); section=request.args.get('section','').strip(); faculty_id=request.args.get('faculty_id','').strip(); status_filter=request.args.get('status','').strip()
+    where=['t.batch_id=%s']; params=[batch_id]
+    if dept: where.append('t.leader_department=%s'); params.append(dept)
+    if section: where.append('t.leader_section=%s'); params.append(section)
+    if faculty_id: where.append('tf.faculty_id=%s'); params.append(faculty_id)
+    execute(cur,f"""SELECT t.id,t.team_name,t.leader_name,t.leader_usn,t.leader_department,t.leader_section,COALESCE(f.name,'Unassigned') AS faculty_name
+        FROM teams t LEFT JOIN team_faculty tf ON tf.team_id=t.id LEFT JOIN faculty f ON f.id=tf.faculty_id WHERE {' AND '.join(where)} ORDER BY t.leader_department,t.leader_section,t.team_name""",params)
+    teams=cur.fetchall(); rows=[]
+    execute(cur,'SELECT id,name FROM faculty ORDER BY name'); faculty=cur.fetchall()
+    execute(cur,'SELECT DISTINCT leader_department FROM teams WHERE batch_id=%s AND leader_department IS NOT NULL ORDER BY leader_department',(batch_id,)); departments=[r['leader_department'] for r in cur.fetchall()]
+    execute(cur,'SELECT DISTINCT leader_section FROM teams WHERE batch_id=%s AND leader_section IS NOT NULL ORDER BY leader_section',(batch_id,)); sections=[r['leader_section'] for r in cur.fetchall()]
+    execute(cur,'SELECT id,title,submission_type,required,review_required FROM submission_configs WHERE batch_id=%s AND active=TRUE ORDER BY sort_order,id',(batch_id,)); configs=cur.fetchall()
+    execute(cur,"SELECT COUNT(*) AS c FROM evaluation_schemes WHERE batch_id=%s",(batch_id,)); scheme_exists=cur.fetchone()['c']>0
+    required_eval=0
+    if scheme_exists:
+        execute(cur,"SELECT COUNT(*) AS c FROM evaluation_phases ph JOIN evaluation_schemes es ON es.id=ph.scheme_id WHERE es.batch_id=%s",(batch_id,)); required_eval=cur.fetchone()['c']
+    for t in teams:
+        tid=t['id']
+        execute(cur,"SELECT COUNT(*) AS c FROM weekly_progress WHERE team_id=%s",(tid,)); wp_total=cur.fetchone()['c']
+        execute(cur,"SELECT COUNT(*) AS c FROM weekly_progress WHERE team_id=%s AND status IN ('Reviewed','Approved')",(tid,)); wp_reviewed=cur.fetchone()['c']
+        execute(cur,"SELECT COUNT(*) AS c FROM weekly_progress WHERE team_id=%s AND status='Pending'",(tid,)); wp_pending=cur.fetchone()['c']
+        execute(cur,"SELECT status,faculty_remark FROM project_details WHERE team_id=%s",(tid,)); syn=cur.fetchone()
+        execute(cur,"""SELECT sc.submission_type,sc.required,rs.review_status,rs.status FROM submission_configs sc LEFT JOIN report_submissions rs ON rs.config_id=sc.id AND rs.team_id=%s AND rs.is_current=TRUE WHERE sc.batch_id=%s AND sc.active=TRUE""",(tid,batch_id)); subrows=cur.fetchall()
+        submitted=sum(1 for r in subrows if r['status'])
+        reviewed=sum(1 for r in subrows if r['review_status'] in ('Reviewed','Approved'))
+        pending_review=sum(1 for r in subrows if r['status'] and r['review_status']=='Pending')
+        required_reports=sum(1 for r in subrows if r['required'])
+        report_items=[dict(r) for r in subrows if r['status']]
+        execute(cur,"""SELECT COUNT(*) AS total,COUNT(CASE WHEN e.status='submitted' THEN 1 END) AS submitted FROM evaluation_entries e JOIN evaluation_schemes es ON es.id=e.scheme_id WHERE e.team_id=%s AND es.batch_id=%s""",(tid,batch_id)); ev=cur.fetchone()
+        marks_status='Not Started'
+        if ev and ev['total']:
+            marks_status='Completed' if ev['submitted']==ev['total'] else 'In Progress'
+        elif scheme_exists: marks_status='Pending'
+        row=dict(t); row.update({
+            'synopsis_status': (syn['status'] if syn else 'Not Submitted'),
+            'synopsis_review': (syn['status'] if syn and syn['reviewed_by'] else ('Submitted' if syn and syn['submitted_at'] else 'Not Submitted')),
+            'weekly_total':wp_total,'weekly_reviewed':wp_reviewed,'weekly_pending':wp_pending,
+            'reports_submitted':submitted,'reports_required':required_reports,'reports_reviewed':reviewed,'reports_pending_review':pending_review,'report_items':report_items,
+            'marks_status':marks_status,'evaluation_entries':ev['total'] if ev else 0,'evaluation_submitted':ev['submitted'] if ev else 0
+        })
+        if status_filter:
+            matches={
+                'Synopsis Pending': row['synopsis_status'] in ('Draft','Not Submitted','Needs Improvement'),
+                'Synopsis Submitted': row['synopsis_status'] == 'Submitted',
+                'Synopsis Reviewed': row['synopsis_review'] in ('Reviewed','Approved'),
+                'Weekly Pending Review': row['weekly_pending'] > 0,
+                'Report Pending Review': row['reports_pending_review'] > 0,
+                'Marks Pending': row['marks_status'] in ('Pending','In Progress'),
+                'Marks Completed': row['marks_status'] == 'Completed',
+            }
+            if not matches.get(status_filter, True): continue
+        rows.append(row)
+    if request.args.get('export')=='excel':
+        data=[]
+        for r in rows:
+            data.append({
+                'Team':r['team_name'],'Leader':r['leader_name'],'USN':r['leader_usn'],'Branch':r['leader_department'],'Section':r['leader_section'],'Faculty':r['faculty_name'],
+                'Synopsis Status':r['synopsis_status'],'Synopsis Review':r['synopsis_review'],'Weekly Submitted':r['weekly_total'],'Weekly Reviewed':r['weekly_reviewed'],'Weekly Pending Review':r['weekly_pending'],
+                'Reports Submitted':r['reports_submitted'],'Reports Required':r['reports_required'],'Reports Reviewed':r['reports_reviewed'],'Reports Pending Review':r['reports_pending_review'],
+                'Marks Status':r['marks_status'],'Evaluation Entries':r['evaluation_entries'],'Evaluation Submitted':r['evaluation_submitted']
+            })
+        out=io.BytesIO()
+        pd.DataFrame(data).to_excel(out,index=False,engine='openpyxl'); out.seek(0)
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        return send_file(out,download_name=f'project_status_{batch["academic_year"]}.xlsx',as_attachment=True,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template('admin_project_status.html',batch=batch,rows=rows,configs=configs,departments=departments,sections=sections,faculty=faculty,filters={'department':dept,'section':section,'faculty_id':faculty_id,'status':status_filter},active_page='project_status')
+
+
+@app.route('/admin/submission-download/<int:submission_id>')
+def admin_submission_download(submission_id):
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin'))
+    con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
+    if not batch:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('No batch is selected.'); return redirect(url_for('admin_project_status'))
+    execute(cur,"""SELECT rs.filename,rs.content_type,rs.file_data,rs.batch_id FROM report_submissions rs WHERE rs.id=? AND rs.batch_id=?""",(submission_id,batch['id']))
+    row=cur.fetchone()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    if not row:
+        flash('Submission not found for the selected batch.'); return redirect(url_for('admin_project_status'))
+    return send_file(io.BytesIO(bytes(row['file_data'])),download_name=row['filename'],as_attachment=True,mimetype=row['content_type'] or 'application/octet-stream')
+
+
+@app.route('/admin/report-submissions')
+def admin_report_submissions():
+    # Alias for the monitoring dashboard for easy navigation.
+    return redirect(url_for('admin_project_status'))
+
+
 @app.route("/admin/reports")
 def admin_reports():
 
@@ -2341,24 +2727,22 @@ def student_project_details():
         expected_output = request.form.get("expected_output", "").strip()
         project_references = request.form.get("project_references", "").strip()
 
+        if details and details.get('status') in ('Reviewed','Approved'):
+            if pg_pool: pg_pool.putconn(con)
+            else: con.close()
+            flash('Synopsis has already been reviewed and cannot be edited.')
+            return redirect(url_for('student_project_details'))
         if details:
             execute(cur,"""
                 UPDATE project_details
-                SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_output=?, project_references=?
+                SET abstract=?, objectives=?, tech_stack=?, methodology=?, modules=?, expected_output=?, project_references=?, status='Submitted', submitted_at=CURRENT_TIMESTAMP, faculty_remark=NULL, reviewed_by=NULL, reviewed_at=NULL
                 WHERE team_id=?
-            """, (
-                abstract, objectives, tech_stack, methodology, modules, expected_output, project_references,
-                team_id
-            ))
+            """, (abstract, objectives, tech_stack, methodology, modules, expected_output, project_references, team_id))
         else:
             execute(cur,"""
-                INSERT INTO project_details(
-                    team_id, abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
-                )
-                VALUES (?,?,?,?,?,?,?,?)
-            """, (
-                team_id, abstract, objectives, tech_stack, methodology, modules, expected_output, project_references
-            ))
+                INSERT INTO project_details(team_id, abstract, objectives, tech_stack, methodology, modules, expected_output, project_references, status, submitted_at)
+                VALUES (?,?,?,?,?,?,?,?,'Submitted',CURRENT_TIMESTAMP)
+            """, (team_id, abstract, objectives, tech_stack, methodology, modules, expected_output, project_references))
 
         con.commit()
         if pg_pool:
@@ -3298,6 +3682,13 @@ def faculty_team_details(team_id):
     """, (team_id,))
     progress_list = cur.fetchall()
 
+    execute(cur,"""
+        SELECT sc.id,sc.title,sc.submission_type,rs.id AS submission_id,rs.filename,rs.review_status,rs.faculty_remark,rs.submitted_at
+        FROM submission_configs sc LEFT JOIN report_submissions rs ON rs.config_id=sc.id AND rs.team_id=? AND rs.is_current=TRUE
+        WHERE sc.batch_id=? AND sc.active=TRUE ORDER BY sc.sort_order,sc.id
+    """,(team_id,active_batch_id))
+    report_submissions=cur.fetchall()
+
     if pg_pool:
         pg_pool.putconn(con)
     else:
@@ -3308,7 +3699,8 @@ def faculty_team_details(team_id):
         team=team,
         members=members,
         project_details=project_details,
-        progress_list=progress_list
+        progress_list=progress_list,
+        report_submissions=report_submissions
     )
 
 
@@ -4118,6 +4510,22 @@ def admin_project_settings():
         registration_deadline=registration_deadline,
         total_weeks=total_weeks
     )
+
+@app.route('/faculty/review-synopsis/<int:team_id>', methods=['POST'])
+def faculty_review_synopsis(team_id):
+    if not session.get('faculty_id'): return redirect(url_for('faculty_login'))
+    fid=session['faculty_id']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
+    execute(cur,"""SELECT pd.team_id FROM project_details pd JOIN team_faculty tf ON tf.team_id=pd.team_id JOIN teams t ON t.id=pd.team_id WHERE pd.team_id=? AND tf.faculty_id=? AND t.batch_id=?""",(team_id,fid,batch_id)); row=cur.fetchone()
+    if not row:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('Access denied.'); return redirect(url_for('faculty_dashboard'))
+    status=request.form.get('status','Reviewed'); remark=request.form.get('faculty_remark','').strip()
+    execute(cur,"UPDATE project_details SET status=?,faculty_remark=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE team_id=?",(status,remark,fid,team_id)); con.commit()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    flash('Synopsis review saved successfully.'); return redirect(url_for('faculty_team_details',team_id=team_id))
+
 
 @app.route("/faculty/review-progress/<int:progress_id>", methods=["POST"])
 def faculty_review_progress(progress_id):
