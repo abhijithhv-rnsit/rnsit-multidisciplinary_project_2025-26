@@ -323,7 +323,68 @@ def ensure_batch_system():
 ensure_batch_system()
 
 # ============================================================
-# END BATCH SYSTEM
+# ADMIN BATCH ACCESS MIGRATION
+# ============================================================
+
+def ensure_admin_batch_system():
+    """Create batch-to-admin mapping and preserve existing admin access."""
+    if not pg_pool:
+        return
+
+    con = None
+    try:
+        con = db()
+        cur = con.cursor()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS admin_batches (
+                id SERIAL PRIMARY KEY,
+                admin_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+                batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(admin_id, batch_id)
+            )
+        """)
+
+        # Preserve existing admin access: every existing admin can work with
+        # every currently configured batch.
+        cur.execute("""
+            INSERT INTO admin_batches (admin_id, batch_id)
+            SELECT a.id, b.id
+            FROM admins a
+            CROSS JOIN batches b
+            ON CONFLICT (admin_id, batch_id) DO NOTHING
+        """)
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_admin_batches_admin_id
+            ON admin_batches(admin_id)
+        """)
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_admin_batches_batch_id
+            ON admin_batches(batch_id)
+        """)
+
+        con.commit()
+        print("==============================================")
+        print("Admin batch access initialized")
+        print("Existing admins linked to all configured batches")
+        print("==============================================")
+
+    except Exception as e:
+        if con:
+            con.rollback()
+        print("Admin batch migration failed:", e)
+
+    finally:
+        if con:
+            pg_pool.putconn(con)
+
+ensure_admin_batch_system()
+
+# ============================================================
+# END ADMIN BATCH ACCESS MIGRATION
 # ============================================================
 # ============================================================
 # ACTIVE BATCH HELPER
@@ -4093,7 +4154,7 @@ def admin_management():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
-    # 🔐 Only super admin allowed
+    # Only super admin can manage administrator accounts/access.
     if session.get("admin_role") != "super_admin":
         flash("Access denied")
         return redirect(url_for("admin_home"))
@@ -4103,10 +4164,56 @@ def admin_management():
 
     departments_list = ["CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "ECE", "EEE", "ME", "CV", "PHY", "CHE", "MAT"]
 
+    # Resolve the currently selected admin batch. If the session does not yet
+    # have one, fall back to the active batch.
+    selected_batch_id = session.get("admin_view_batch_id")
+    if selected_batch_id:
+        execute(cur, """
+            SELECT id, batch_name, academic_year, status
+            FROM batches
+            WHERE id=?
+        """, (selected_batch_id,))
+        selected_batch = cur.fetchone()
+    else:
+        execute(cur, """
+            SELECT id, batch_name, academic_year, status
+            FROM batches
+            WHERE status='active'
+            ORDER BY id DESC
+            LIMIT 1
+        """)
+        selected_batch = cur.fetchone()
+        if selected_batch:
+            selected_batch_id = selected_batch["id"]
+            session["admin_view_batch_id"] = selected_batch_id
+            session["admin_view_batch_name"] = selected_batch["batch_name"]
+            session["admin_view_academic_year"] = selected_batch["academic_year"]
+            session["admin_view_batch_status"] = selected_batch["status"]
+
+    if not selected_batch:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin_home"))
+
+    read_only = selected_batch["status"] != "active"
+
     # ---------------- POST ACTIONS ----------------
     if request.method == "POST":
 
         action = request.form.get("action")
+
+        # Historical batches are view-only. Do not permit account changes
+        # through a historical batch context.
+        if read_only:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Historical batch is read-only. Select the active batch to manage admins.")
+            return redirect(request.url)
 
         # ---------- CREATE ADMIN ----------
         if action == "create_admin":
@@ -4118,105 +4225,135 @@ def admin_management():
 
             if not name or not email or not role:
                 flash("All fields are required")
-                return redirect(request.url)
-
-            if role == "admin" and not department:
+            elif role == "admin" and not department:
                 flash("Department is required for Department Admin")
-                return redirect(request.url)
-
-            password = "RNSIT@2026"
-            password_hash = generate_password_hash(password)
-
-            try:
-                # INSERT INTO ADMINS
-                execute(cur, """
-                    INSERT INTO admins
-                    (name, email, password_hash, role, department, must_reset_password)
-                    VALUES (?,?,?,?,?,1)
-                """, (name, email, password_hash, role, department if role=="admin" else None))
-
-                # ALSO INSERT INTO FACULTY (POSTGRESQL SAFE)
+            else:
+                password = "RNSIT@2026"
+                password_hash = generate_password_hash(password)
                 try:
+                    # Reuse an existing admin account if the email already
+                    # exists; otherwise create a new account.
+                    execute(cur, "SELECT id FROM admins WHERE email=?", (email,))
+                    existing = cur.fetchone()
+
+                    if existing:
+                        aid = existing["id"]
+                    else:
+                        execute(cur, """
+                            INSERT INTO admins
+                            (name, email, password_hash, role, department, must_reset_password)
+                            VALUES (?,?,?,?,?,1)
+                        """, (name, email, password_hash, role, department if role == "admin" else None))
+                        execute(cur, "SELECT id FROM admins WHERE email=?", (email,))
+                        aid = cur.fetchone()["id"]
+
                     execute(cur, """
-                        INSERT INTO faculty (name, email, department)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (email) DO NOTHING
-                    """, (name, email, department if role=="admin" else None))
-                except:
-                    pass
+                        INSERT INTO admin_batches (admin_id, batch_id)
+                        VALUES (?, ?)
+                        ON CONFLICT (admin_id, batch_id) DO NOTHING
+                    """, (aid, selected_batch_id))
 
-                con.commit()
+                    # Keep the existing faculty synchronization behaviour.
+                    try:
+                        execute(cur, """
+                            INSERT INTO faculty (name, email, department)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (email) DO NOTHING
+                        """, (name, email, department if role == "admin" else None))
+                    except Exception:
+                        pass
 
-                flash(f"Admin created successfully ✅ Default password: {password}")
-
-            except:
-                flash("Email already exists ❌")
+                    con.commit()
+                    flash(f"Admin assigned to {selected_batch['batch_name']} ({selected_batch['academic_year']}) successfully ✅ Default password: {password}")
+                except Exception as e:
+                    con.rollback()
+                    flash(f"Unable to create/assign admin: {e}")
 
         # ---------- EDIT ADMIN ----------
         elif action == "edit_admin":
 
             aid = request.form.get("aid")
-            name = request.form.get("name").strip()
-            email = request.form.get("email").strip().lower()
-            department = request.form.get("department").strip()
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip().lower()
+            department = request.form.get("department", "").strip()
 
             execute(cur, """
-                UPDATE admins
-                SET name=?, email=?, department=?
-                WHERE id=?
-            """, (name, email, department, aid))
+                SELECT a.id
+                FROM admins a
+                JOIN admin_batches ab ON ab.admin_id = a.id
+                WHERE a.id=? AND ab.batch_id=?
+            """, (aid, selected_batch_id))
+            allowed = cur.fetchone()
 
-            # ALSO UPDATE FACULTY
-            execute(cur, """
-                UPDATE faculty
-                SET name=%s, department=%s
-                WHERE email=%s
-            """, (name, department, email))
+            if not allowed:
+                flash("Admin is not assigned to the selected batch.")
+            else:
+                execute(cur, """
+                    UPDATE admins
+                    SET name=?, email=?, department=?
+                    WHERE id=?
+                """, (name, email, department, aid))
 
-            con.commit()
+                execute(cur, """
+                    UPDATE faculty
+                    SET name=%s, department=%s
+                    WHERE email=%s
+                """, (name, department, email))
 
-            flash("Admin updated successfully ✅")
+                con.commit()
+                flash("Admin updated successfully ✅")
 
         # ---------- RESET PASSWORD ----------
         elif action == "reset_password":
 
             aid = request.form.get("aid")
-
-            password_hash = generate_password_hash("RNSIT@2026")
-
             execute(cur, """
-                UPDATE admins
-                SET password_hash=?, must_reset_password=1
-                WHERE id=?
-            """, (password_hash, aid))
+                SELECT a.id
+                FROM admins a
+                JOIN admin_batches ab ON ab.admin_id = a.id
+                WHERE a.id=? AND ab.batch_id=?
+            """, (aid, selected_batch_id))
+            allowed = cur.fetchone()
 
-            con.commit()
+            if not allowed:
+                flash("Admin is not assigned to the selected batch.")
+            else:
+                password_hash = generate_password_hash("RNSIT@2026")
+                execute(cur, """
+                    UPDATE admins
+                    SET password_hash=?, must_reset_password=1
+                    WHERE id=?
+                """, (password_hash, aid))
+                con.commit()
+                flash("Password reset successfully 🔁")
 
-            flash("Password reset successfully 🔁")
-
-        # ---------- DELETE ADMIN ----------
+        # ---------- REMOVE ADMIN FROM SELECTED BATCH ----------
         elif action == "delete_admin":
 
             aid = request.form.get("aid")
 
-            # get email first
-            execute(cur, "SELECT email FROM admins WHERE id=?", (aid,))
+            execute(cur, """
+                SELECT a.role
+                FROM admins a
+                JOIN admin_batches ab ON ab.admin_id = a.id
+                WHERE a.id=? AND ab.batch_id=?
+            """, (aid, selected_batch_id))
             row = cur.fetchone()
 
-            if row:
-                email = row["email"]
-
-                # delete admin
-                execute(cur, "DELETE FROM admins WHERE id=?", (aid,))
-
-                # delete from faculty also
+            if not row:
+                flash("Admin is not assigned to the selected batch.")
+            elif row["role"] == "super_admin":
+                flash("Super Admin access cannot be removed from a batch.")
+            else:
                 execute(cur, """
-                    DELETE FROM faculty WHERE email=%s
-                """, (email,))
-
+                    DELETE FROM admin_batches
+                    WHERE admin_id=? AND batch_id=?
+                """, (aid, selected_batch_id))
                 con.commit()
+                flash("Admin removed from the selected batch. The admin account was not deleted.")
 
-            flash("Admin deleted successfully 🗑️")
+        else:
+            flash("Invalid admin action.")
 
         if pg_pool:
             pg_pool.putconn(con)
@@ -4225,12 +4362,14 @@ def admin_management():
 
         return redirect(request.url)
 
-    # ---------------- LIST ADMINS ----------------
+    # ---------------- LIST ADMINS FOR SELECTED BATCH ----------------
     execute(cur, """
-        SELECT id, name, email, role, department, created_at
-        FROM admins
-        ORDER BY role DESC, department, name
-    """)
+        SELECT a.id, a.name, a.email, a.role, a.department, a.created_at
+        FROM admins a
+        JOIN admin_batches ab ON ab.admin_id = a.id
+        WHERE ab.batch_id=?
+        ORDER BY a.role DESC, a.department, a.name
+    """, (selected_batch_id,))
 
     admins = cur.fetchall()
 
@@ -4243,7 +4382,9 @@ def admin_management():
         "admin_management.html",
         admins=admins,
         departments_list=departments_list,
-        active_page="admins"
+        active_page="admins",
+        view_batch=selected_batch,
+        read_only=read_only
     )
 
 @app.route("/admin/upload", methods=["GET", "POST"])
