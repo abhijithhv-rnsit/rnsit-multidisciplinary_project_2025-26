@@ -1,87 +1,106 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Admin Home</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
+{% extends "student_base.html" %}
 
-{% include "admin_nav.html" %}
+{% block title %}Student Dashboard{% endblock %}
 
-<div class="container mt-4">
+{% block content %}
 
-  <!-- Stats Cards -->
-  <div class="row g-3 text-center mb-4">
+<h4 class="mb-3">Welcome, {{ session["student_usn"] }}</h4>
 
-    <div class="col-md-6">
-      <div class="card shadow-sm border-0">
-        <div class="card-body">
-          <h6 class="text-muted">Total Problems</h6>
-          <h2 class="fw-bold">{{ problems }}</h2>
-        </div>
-      </div>
+<div class="row g-3">
+
+  <div class="col-md-4">
+    <div class="card shadow-sm p-3">
+      <h6>Problem Statements</h6>
+      <p class="text-muted mb-2">View and register projects</p>
+      <a href="/student/problems" class="btn btn-success btn-sm">View Problems</a>
     </div>
-
-    <div class="col-md-6">
-      <div class="card shadow-sm border-0">
-        <div class="card-body">
-          <h6 class="text-muted">Total Registered Teams</h6>
-          <h2 class="fw-bold">{{ teams }}</h2>
-        </div>
-      </div>
+  </div>
+<div class="col-md-4">
+    <div class="card shadow-sm p-3">
+      <h6>Update Project Details</h6>
+      <p class="text-muted mb-2">Update project details</p>
+      <a href="/student/project-details" class="btn btn-success btn-sm">Open My Project</a>
     </div>
-
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm p-3">
+      <h6>My Project</h6>
+      <p class="text-muted mb-2">View your registered project details</p>
+      <a href="/student/my-project" class="btn btn-success btn-sm">Update Project details</a>
+    </div>
   </div>
 
-  <!-- ================= NOTICE BOARD ================= -->
-
-  <div class="card shadow-sm border-0">
-    <div class="card-body">
-
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h5 class="fw-bold mb-0">📢 Notice Board</h5>
-
-        {% if session.admin_role == "super_admin" %}
-          <a href="/admin/notices" class="btn btn-sm btn-outline-primary">
-            Manage Notices
-          </a>
-        {% endif %}
-      </div>
-
-      {% if notices %}
-
-        <div class="list-group">
-
-          {% for n in notices %}
-            <div class="list-group-item list-group-item-action">
-
-              <div class="fw-semibold">{{ n.title }}</div>
-
-              <div class="text-muted small mt-1">
-                {{ n.message }}
-              </div>
-
-              {% if n.expires_at %}
-                <div class="small text-danger mt-1">
-                  Expires: {{ n.expires_at }}
-                </div>
-              {% endif %}
-
-            </div>
-          {% endfor %}
-
-        </div>
-
-      {% else %}
-        <div class="alert alert-secondary mb-0">
-          No notices posted yet.
-        </div>
-      {% endif %}
-
+  <div class="col-md-4">
+    <div class="card shadow-sm p-3">
+      <h6>Weekly Progress</h6>
+      <p class="text-muted mb-2">Submit weekly updates</p>
+      <a href="/student/weekly-progress" class="btn btn-success btn-sm">Update Progress</a>
     </div>
   </div>
 
 </div>
 
-</body>
+{% endblock %}
+<!--<!DOCTYPE html>
+<html>
+<head>
+    <title>Student Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-dark bg-primary px-3">
+    <span class="navbar-brand">RNSIT Multidisciplinary Project 2026–27</span>
+    <a href="/student/logout" class="btn btn-light btn-sm">Logout</a>
+</nav>
+
+<div class="container mt-4">
+    <h4 class="mb-3">Welcome, {{ session.student_usn }}</h4>
+    <a href="/student/problems" class="btn btn-primary btn-sm mb-3">
+  View Problem Statements
+</a>
+
+    <a href="/student/my-registration" class="btn btn-outline-primary btn-sm mb-3">
+    My Registered Project
+    </a>
+    <a href="/student/project-details" class="btn btn-outline-success btn-sm mb-3 ms-2">
+    Project Abstract & Objectives
+    </a>
+    <a href="/student/weekly-progress" class="btn btn-outline-warning btn-sm mb-3 ms-2">
+    Weekly Progress
+    </a>
+    <a href="/student/my-project" class="btn btn-outline-success btn-sm mb-3 ms-2">
+    My Registered Project
+    </a>
+
+
+
+    <div class="row">
+        {% for p, count in problems %}
+        <div class="col-md-4 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="card-title">{{ p["title"] }}</h6>
+                    <p class="text-muted small">
+                        Category: {{ p["category"] }}<br>
+                        Difficulty: {{ p["difficulty"] }}
+                    </p>
+
+                    {% if count >= p["max_teams"] %}
+                        <button class="btn btn-secondary btn-sm w-100" disabled>
+                            Registration Full
+                        </button>
+                    {% else %}
+                        <a href="/register/{{ p['id'] }}" class="btn btn-primary btn-sm w-100">
+                            Register Team
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+</body>-->
 </html>
