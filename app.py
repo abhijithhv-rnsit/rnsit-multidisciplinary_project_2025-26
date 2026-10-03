@@ -365,6 +365,63 @@ def get_active_batch_id(cur):
 
 # ============================================================
 # END ACTIVE BATCH HELPER
+# ============================================================
+# ADMIN BATCH VIEW HELPER
+# ============================================================
+
+def get_admin_view_batch(cur):
+    """
+    Returns the batch currently selected by the admin.
+    If the admin has not selected a batch, the active batch is used.
+    Students and faculty continue to use get_active_batch()/get_active_batch_id().
+    """
+
+    # Refresh the available batch list if this session was created before
+    # the batch selector was introduced.
+    if not session.get("admin_batches"):
+        execute(cur, """
+            SELECT id, batch_name, academic_year, status
+            FROM batches
+            ORDER BY id DESC
+        """)
+        session["admin_batches"] = [dict(b) for b in cur.fetchall()]
+
+    selected_id = session.get("admin_view_batch_id")
+
+    if selected_id:
+        execute(cur, """
+            SELECT id, batch_name, academic_year, status
+            FROM batches
+            WHERE id=%s
+        """, (selected_id,))
+        batch = cur.fetchone()
+        if batch:
+            session["admin_view_batch_id"] = batch["id"]
+            session["admin_view_batch_name"] = batch["batch_name"]
+            session["admin_view_academic_year"] = batch["academic_year"]
+            session["admin_view_batch_status"] = batch["status"]
+            return batch
+
+    batch = get_active_batch(cur)
+
+    if batch:
+        session["admin_view_batch_id"] = batch["id"]
+        session["admin_view_batch_name"] = batch["batch_name"]
+        session["admin_view_academic_year"] = batch["academic_year"]
+        session["admin_view_batch_status"] = batch["status"]
+
+    return batch
+
+
+def is_admin_batch_read_only(batch):
+    """Historical/inactive batches are view-only for admin data screens."""
+    return bool(batch and batch.get("status") != "active")
+
+
+# ============================================================
+# END ADMIN BATCH VIEW HELPER
+# ============================================================
+
 # ============================================================     
 # ONE TIME DEPARTMENT SYNC FIX
 try:
@@ -664,7 +721,8 @@ def admin_reports():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -748,6 +806,7 @@ def admin_reports():
         team_sizes=team_sizes,
         total_students=total_students,
         student_projects=student_projects,
+        view_batch=view_batch,
         active_page="reports"
     )
 
@@ -764,7 +823,8 @@ def export_team_size():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -814,7 +874,8 @@ def export_total_students():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -864,7 +925,8 @@ def export_student_mapping():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -2345,7 +2407,8 @@ def admin_assign_faculty():
     cur = con.cursor()
 
     # ---------------- ACTIVE BATCH ----------------
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
 
     if not active_batch_id:
         if pg_pool:
@@ -2356,7 +2419,15 @@ def admin_assign_faculty():
         flash("No active batch is configured.")
         return redirect(url_for("admin"))
 
-    # ---------------- FETCH ACTIVE BATCH TEAMS ----------------
+    if request.method == "POST" and is_admin_batch_read_only(view_batch):
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Historical batch is read-only. Select the active batch to make changes.")
+        return redirect(url_for("admin_assign_faculty"))
+
+    # ---------------- FETCH SELECTED BATCH TEAMS ----------------
     execute(cur,"""
         SELECT id, team_name, leader_usn
         FROM teams
@@ -3644,7 +3715,8 @@ def unlock_problem(pid):
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -3653,14 +3725,22 @@ def unlock_problem(pid):
         flash("No active batch is configured.")
         return redirect(url_for("admin"))
 
-    # Unlock only a problem belonging to the active batch.
+    if is_admin_batch_read_only(view_batch):
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Historical batch is read-only. Select the active batch to make changes.")
+        return redirect(request.referrer or url_for("admin_home"))
+
+    # Unlock only a problem belonging to the selected batch.
     execute(cur, """
         UPDATE problems
         SET is_locked=0
         WHERE id=? AND batch_id=?
     """, (pid, active_batch_id))
 
-    # Remove only the active-batch team linked to this problem.
+    # Remove only the selected-batch team linked to this problem.
     execute(cur, """
         DELETE FROM teams
         WHERE problem_id=? AND batch_id=?
@@ -3684,7 +3764,8 @@ def admin_edit_team(team_id):
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -3714,6 +3795,14 @@ def admin_edit_team(team_id):
 
     # ---------------- SAVE EDIT ----------------
     if request.method == "POST":
+
+        if is_admin_batch_read_only(view_batch):
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Historical batch is read-only. Select the active batch to make changes.")
+            return redirect(request.url)
 
         team_name = request.form.get("team_name").strip()
 
@@ -3812,7 +3901,8 @@ def admin_home():
     cur = con.cursor()
 
     # ---------------- ACTIVE BATCH ----------------
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
 
     if not active_batch_id:
         if pg_pool:
@@ -3869,6 +3959,7 @@ def admin_home():
         teams=teams,
         problems=problems,
         notices=notices,
+        view_batch=view_batch,
         active_page="home"
     )
 @app.route("/admin", methods=["GET", "POST"])
@@ -3884,6 +3975,15 @@ def admin():
             SELECT * FROM admins WHERE email=?
         """, (email,))
         admin = cur.fetchone()
+
+        # Load available batches for the admin batch selector.
+        execute(cur, """
+            SELECT id, batch_name, academic_year, status
+            FROM batches
+            ORDER BY id DESC
+        """)
+        admin_batches = cur.fetchall()
+
         if pg_pool:
             pg_pool.putconn(con)
         else:
@@ -3903,6 +4003,18 @@ def admin():
         session["admin_role"] = admin["role"]              # super_admin / admin
         session["admin_department"] = admin["department"]  # None or dept
 
+        # Default admin view = current active batch.
+        session["admin_batches"] = [dict(b) for b in admin_batches]
+        active_admin_batch = next(
+            (b for b in admin_batches if b.get("status") == "active"),
+            None
+        )
+        if active_admin_batch:
+            session["admin_view_batch_id"] = active_admin_batch["id"]
+            session["admin_view_batch_name"] = active_admin_batch["batch_name"]
+            session["admin_view_academic_year"] = active_admin_batch["academic_year"]
+            session["admin_view_batch_status"] = active_admin_batch["status"]
+
         # Force password reset if needed
         if admin["must_reset_password"]:
             return redirect(url_for("admin_change_password"))
@@ -3910,6 +4022,64 @@ def admin():
         return redirect(url_for("admin_home"))
 
     return render_template("admin.html")
+
+@app.route("/admin/select-batch", methods=["POST"])
+def admin_select_batch():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    selected_id = request.form.get("batch_id")
+    next_url = request.form.get("next", "")
+
+    if not selected_id:
+        flash("Please select a batch.")
+        return redirect(next_url if next_url.startswith("/") else url_for("admin_home"))
+
+    con = db()
+    cur = con.cursor()
+
+    execute(cur, """
+        SELECT id, batch_name, academic_year, status
+        FROM batches
+        WHERE id=%s
+    """, (selected_id,))
+    batch = cur.fetchone()
+
+    if not batch:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Invalid batch selected.")
+        return redirect(next_url if next_url.startswith("/") else url_for("admin_home"))
+
+    execute(cur, """
+        SELECT id, batch_name, academic_year, status
+        FROM batches
+        ORDER BY id DESC
+    """)
+    admin_batches = cur.fetchall()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    session["admin_batches"] = [dict(b) for b in admin_batches]
+    session["admin_view_batch_id"] = batch["id"]
+    session["admin_view_batch_name"] = batch["batch_name"]
+    session["admin_view_academic_year"] = batch["academic_year"]
+    session["admin_view_batch_status"] = batch["status"]
+
+    if batch["status"] == "active":
+        flash(f"Viewing active batch: {batch['batch_name']} ({batch['academic_year']})")
+    else:
+        flash(
+            f"Viewing historical batch: {batch['batch_name']} ({batch['academic_year']}). "
+            "Historical batch is read-only."
+        )
+
+    return redirect(next_url if next_url.startswith("/") else url_for("admin_home"))
 
 @app.route("/admin/change-password", methods=["GET", "POST"])
 def admin_change_password():
@@ -4148,7 +4318,8 @@ def admin_upload():
         con = db()
         cur = con.cursor()
         # ---------------- ACTIVE BATCH ----------------
-        active_batch_id = get_active_batch_id(cur)
+        active_batch = get_active_batch(cur)
+        active_batch_id = active_batch["id"] if active_batch else None
 
         if not active_batch_id:
             if pg_pool:
@@ -4158,6 +4329,16 @@ def admin_upload():
 
             flash("No active batch is configured.")
             return redirect(request.url)
+
+        selected_batch = get_admin_view_batch(cur)
+        if selected_batch and selected_batch["id"] != active_batch_id:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Problem uploads are allowed only for the active batch. Select Batch 2 – 2026-27 first.")
+            return redirect(request.url)
+
         added = 0
         skipped = 0
 
@@ -4224,7 +4405,8 @@ def admin_teams():
     cur = con.cursor()
 
     # ---------------- ACTIVE BATCH ----------------
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
 
     if not active_batch_id:
         if pg_pool:
@@ -4237,6 +4419,14 @@ def admin_teams():
    
     # ================= ACTIONS =================
     if request.method == "POST":
+
+        if is_admin_batch_read_only(view_batch):
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Historical batch is read-only. Select the active batch to make changes.")
+            return redirect(url_for("admin_teams"))
 
         action = request.form.get("action")
         team_id = request.form.get("team_id")
@@ -4402,6 +4592,7 @@ def admin_teams():
     return render_template(
         "admin_teams.html",
         rows=rows,
+        view_batch=view_batch,
         active_page="teams"
     )
 @app.route("/admin/export-teams")
@@ -4412,7 +4603,8 @@ def admin_export_teams():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -4519,7 +4711,8 @@ def dashboard():
     con = db()
     cur = con.cursor()
     # ---------------- ACTIVE BATCH ----------------
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
 
     if not active_batch_id:
         if pg_pool:
@@ -4634,6 +4827,7 @@ def dashboard():
         faculty_data=faculty_data,
         not_assigned_count=not_assigned_count,
         pending_progress_count=pending_progress_count,
+        view_batch=view_batch,
         active_page="dashboard"
     )
 
@@ -4644,7 +4838,8 @@ def export():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -4693,6 +4888,11 @@ def export():
 @app.route("/admin/logout")
 def admin_logout():
     session.pop("admin_logged_in", None)
+    session.pop("admin_view_batch_id", None)
+    session.pop("admin_view_batch_name", None)
+    session.pop("admin_view_academic_year", None)
+    session.pop("admin_view_batch_status", None)
+    session.pop("admin_batches", None)
     flash("Logged out successfully")
     return redirect(url_for("admin"))
 
@@ -4705,7 +4905,8 @@ def admin_assignments():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
@@ -4716,6 +4917,14 @@ def admin_assignments():
 
     # ---------------- SAVE ASSIGNMENTS ----------------
     if request.method == "POST":
+
+        if is_admin_batch_read_only(view_batch):
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Historical batch is read-only. Select the active batch to make changes.")
+            return redirect(url_for("admin_assignments"))
 
         team_ids = request.form.getlist("team_id")
         updated = 0
@@ -4894,6 +5103,7 @@ def admin_assignments():
         faculty_list=faculty_list,
         problems_list=problems_list,
         departments_list=departments_list,
+        view_batch=view_batch,
         active_page="assignments",
         search=search,
         dept_filter=dept_filter,
@@ -4919,7 +5129,8 @@ def export_assignments():
     con = db()
     cur = con.cursor()
 
-    active_batch_id = get_active_batch_id(cur)
+    view_batch = get_admin_view_batch(cur)
+    active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
             pg_pool.putconn(con)
