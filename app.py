@@ -135,7 +135,196 @@ def execute(cur, query, params=()):
         cur.execute(query, params)
     else:
         cur.execute(query)
+# ============================================================
+# BATCH SYSTEM - SAFE MIGRATION
+# ============================================================
 
+def ensure_batch_system():
+
+    # Batch migration is required only for PostgreSQL/Render
+    if not pg_pool:
+        return
+
+    con = None
+
+    try:
+        con = db()
+        cur = con.cursor()
+
+        # ----------------------------------------------------
+        # 1. CREATE BATCHES TABLE
+        # ----------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS batches (
+                id SERIAL PRIMARY KEY,
+                batch_name TEXT NOT NULL,
+                academic_year TEXT UNIQUE NOT NULL,
+                status TEXT DEFAULT 'inactive',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ----------------------------------------------------
+        # 2. ADD BATCH ID TO PROBLEMS
+        # ----------------------------------------------------
+        cur.execute("""
+            ALTER TABLE problems
+            ADD COLUMN IF NOT EXISTS batch_id INTEGER
+        """)
+
+        # ----------------------------------------------------
+        # 3. ADD BATCH ID TO TEAMS
+        # ----------------------------------------------------
+        cur.execute("""
+            ALTER TABLE teams
+            ADD COLUMN IF NOT EXISTS batch_id INTEGER
+        """)
+
+        # ----------------------------------------------------
+        # 4. CREATE BATCH 1
+        # ----------------------------------------------------
+        cur.execute("""
+            INSERT INTO batches
+                (batch_name, academic_year, status)
+            VALUES
+                (%s, %s, %s)
+            ON CONFLICT (academic_year)
+            DO NOTHING
+        """, (
+            "Batch 1",
+            "2025-26",
+            "completed"
+        ))
+
+        # ----------------------------------------------------
+        # 5. CREATE BATCH 2
+        # ----------------------------------------------------
+        cur.execute("""
+            INSERT INTO batches
+                (batch_name, academic_year, status)
+            VALUES
+                (%s, %s, %s)
+            ON CONFLICT (academic_year)
+            DO NOTHING
+        """, (
+            "Batch 2",
+            "2026-27",
+            "active"
+        ))
+
+        # ----------------------------------------------------
+        # 6. GET BATCH 1 ID
+        # ----------------------------------------------------
+        cur.execute("""
+            SELECT id
+            FROM batches
+            WHERE academic_year = %s
+        """, ("2025-26",))
+
+        batch1 = cur.fetchone()
+
+        # ----------------------------------------------------
+        # 7. GET BATCH 2 ID
+        # ----------------------------------------------------
+        cur.execute("""
+            SELECT id
+            FROM batches
+            WHERE academic_year = %s
+        """, ("2026-27",))
+
+        batch2 = cur.fetchone()
+
+        if not batch1 or not batch2:
+            raise Exception("Unable to create Batch 1 / Batch 2")
+
+        batch1_id = batch1["id"]
+        batch2_id = batch2["id"]
+
+        # ----------------------------------------------------
+        # 8. ASSIGN EXISTING PROBLEMS TO BATCH 1
+        # ----------------------------------------------------
+        cur.execute("""
+            UPDATE problems
+            SET batch_id = %s
+            WHERE batch_id IS NULL
+        """, (batch1_id,))
+
+        # ----------------------------------------------------
+        # 9. ASSIGN EXISTING TEAMS TO BATCH 1
+        # ----------------------------------------------------
+        cur.execute("""
+            UPDATE teams
+            SET batch_id = %s
+            WHERE batch_id IS NULL
+        """, (batch1_id,))
+
+        # ----------------------------------------------------
+        # 10. BATCH 1 = COMPLETED
+        # ----------------------------------------------------
+        cur.execute("""
+            UPDATE batches
+            SET status = 'completed'
+            WHERE academic_year = '2025-26'
+        """)
+
+        # ----------------------------------------------------
+        # 11. BATCH 2 = ACTIVE
+        # ----------------------------------------------------
+        cur.execute("""
+            UPDATE batches
+            SET status = 'inactive'
+            WHERE academic_year <> '2026-27'
+        """)
+
+        cur.execute("""
+            UPDATE batches
+            SET status = 'active'
+            WHERE academic_year = '2026-27'
+        """)
+
+        # ----------------------------------------------------
+        # 12. CREATE INDEXES
+        # ----------------------------------------------------
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_problems_batch_id
+            ON problems(batch_id)
+        """)
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_teams_batch_id
+            ON teams(batch_id)
+        """)
+
+        con.commit()
+
+        print("==============================================")
+        print("✅ Batch system initialized")
+        print("✅ Existing data assigned to 2025-26")
+        print("✅ 2026-27 created as active batch")
+        print("==============================================")
+
+    except Exception as e:
+
+        if con:
+            con.rollback()
+
+        print("⚠️ Batch migration failed:", e)
+
+    finally:
+
+        if con:
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+
+
+# Run batch migration safely during application startup
+ensure_batch_system()
+
+# ============================================================
+# END BATCH SYSTEM
+# ============================================================
 # ONE TIME DEPARTMENT SYNC FIX
 try:
     con = db()
