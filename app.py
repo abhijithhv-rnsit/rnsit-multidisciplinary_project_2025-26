@@ -1235,11 +1235,14 @@ def admin_evaluation_assignments():
     con=db(); cur=con.cursor()
     batch,batch_id=evaluation_batch_context(cur)
     scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get('scheme_id')) if batch_id else None
-    if not batch_id or not scheme:
+    # The assignment page can be opened even before a scheme is created.
+    # This gives the administrator a clear setup message instead of redirecting
+    # immediately back to Evaluation Settings.
+    if request.method=='POST' and not scheme:
         if pg_pool: pg_pool.putconn(con)
         else: con.close()
-        flash('Create an evaluation scheme first.')
-        return redirect(url_for('admin_evaluation_settings'))
+        flash('Create an evaluation scheme first, then configure evaluator assignments.')
+        return redirect(url_for('admin_evaluation_assignments'))
 
     if request.method=='POST':
         if is_admin_batch_read_only(batch):
@@ -1290,6 +1293,27 @@ def admin_evaluation_assignments():
             except Exception as e:
                 con.rollback(); flash(f'Could not update evaluator assignment: {e}')
         return redirect(url_for('admin_evaluation_assignments',scheme_id=scheme['id']))
+
+    if not batch_id:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash('No batch is selected.')
+        return redirect(url_for('admin'))
+
+    if not scheme:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        return render_template(
+            'admin_evaluation_assignments.html',
+            batch=batch,
+            scheme=None,
+            teams=[],
+            faculty=[],
+            phases=[],
+            presentations=[],
+            assignments=[],
+            active_page='evaluation'
+        )
 
     execute(cur,"SELECT id,team_name,leader_department,leader_section FROM teams WHERE batch_id=%s ORDER BY leader_department,leader_section,team_name",(batch_id,)); teams=cur.fetchall()
     execute(cur,"SELECT f.id,f.name,f.department FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id WHERE fb.batch_id=%s ORDER BY f.name",(batch_id,)); faculty=cur.fetchall()
