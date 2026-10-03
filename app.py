@@ -1910,7 +1910,9 @@ def admin_project_status():
         FROM teams t LEFT JOIN team_faculty tf ON tf.team_id=t.id LEFT JOIN faculty f ON f.id=tf.faculty_id WHERE {' AND '.join(where)} ORDER BY t.leader_department,t.leader_section,t.team_name""",params)
     teams=cur.fetchall(); rows=[]
     execute(cur,'SELECT id,name FROM faculty ORDER BY name'); faculty=cur.fetchall()
-    execute(cur,'SELECT DISTINCT leader_department FROM teams WHERE batch_id=%s AND leader_department IS NOT NULL ORDER BY leader_department',(batch_id,)); departments=[r['leader_department'] for r in cur.fetchall()]
+    # Use the central department master so the filter shows all departments
+    # even before any Batch 2 teams have been registered.
+    departments = DEPARTMENTS
     execute(cur,'SELECT DISTINCT leader_section FROM teams WHERE batch_id=%s AND leader_section IS NOT NULL ORDER BY leader_section',(batch_id,)); sections=[r['leader_section'] for r in cur.fetchall()]
     execute(cur,'SELECT id,title,submission_type,required,review_required FROM submission_configs WHERE batch_id=%s AND active=TRUE ORDER BY sort_order,id',(batch_id,)); configs=cur.fetchall()
     execute(cur,"SELECT COUNT(*) AS c FROM evaluation_schemes WHERE batch_id=%s",(batch_id,)); scheme_exists=cur.fetchone()['c']>0
