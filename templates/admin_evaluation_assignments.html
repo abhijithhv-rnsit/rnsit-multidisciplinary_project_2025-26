@@ -5,7 +5,10 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h2>Evaluator Assignments</h2>
-      <div class="text-muted">{{ batch.batch_name }} · {{ batch.academic_year }} · <strong>{{ scheme.name }}</strong></div>
+      <div class="text-muted">
+        {{ batch.batch_name }} · {{ batch.academic_year }}
+        {% if scheme %}· <strong>{{ scheme.name }}</strong>{% endif %}
+      </div>
     </div>
     <div>
       <a class="btn btn-outline-primary" href="/admin/evaluation-settings">Settings</a>
@@ -13,6 +16,13 @@
     </div>
   </div>
 
+  {% if not scheme %}
+  <div class="alert alert-warning">
+    <strong>No evaluation scheme has been created for this batch yet.</strong>
+    Create the evaluation scheme first. Once the scheme is created, this page will allow you to assign one or more faculty evaluators to teams, phases and presentations.
+  </div>
+  <a class="btn btn-primary" href="/admin/evaluation-settings">Create Evaluation Scheme</a>
+  {% else %}
   <div class="alert alert-info">
     Assign one or more faculty evaluators to selected teams. Assignments can apply to the entire scheme, a specific phase, or a specific presentation. Existing assignments are replaced only for the same team, evaluator and scope.
   </div>
@@ -126,6 +136,7 @@
       </table>
     </div>
   </div>
+  {% endif %}
 </div>
 <script>
 function setAll(name, checked){ document.querySelectorAll('input[name="'+name+'"]').forEach(x=>x.checked=checked); }
