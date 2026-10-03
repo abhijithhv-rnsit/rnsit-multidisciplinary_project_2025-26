@@ -1,0 +1,59 @@
+{% extends "faculty_base.html" %}
+
+{% block title %}Evaluations{% endblock %}
+
+{% block page_content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">Team Evaluations</h3>
+    {% if scheme %}
+      <div class="text-muted">Current Evaluation Scheme: <strong>{{ scheme.name }}</strong></div>
+    {% else %}
+      <div class="text-muted">No evaluation scheme has been configured for the active batch yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% if teams %}
+<div class="table-responsive">
+  <table class="table table-bordered table-hover align-middle bg-white">
+    <thead class="table-dark">
+      <tr>
+        <th>#</th>
+        <th>Team</th>
+        <th>Leader</th>
+        <th>Branch</th>
+        <th>Section</th>
+        <th>Project / Problem</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for team in teams %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td><strong>{{ team.team_name }}</strong></td>
+        <td>{{ team.leader_name }}</td>
+        <td>{{ team.leader_department }}</td>
+        <td>{{ team.leader_section }}</td>
+        <td>{{ team.problem_title or '-' }}</td>
+        <td>
+          {% if scheme %}
+            <a href="/faculty/evaluation/{{ team.team_id }}" class="btn btn-primary btn-sm">
+              Evaluate
+            </a>
+          {% else %}
+            <span class="text-muted">Scheme not configured</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="alert alert-info">
+  No teams are currently assigned to you in the active batch.
+</div>
+{% endif %}
+{% endblock %}
