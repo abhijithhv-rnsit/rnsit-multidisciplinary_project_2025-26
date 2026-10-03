@@ -950,17 +950,33 @@ def student_home():
 
     con = db()
     cur = con.cursor()
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+
+    # ---------------- FETCH ACTIVE BATCH PROBLEMS ----------------
     execute(cur,"""
         SELECT id, title, category, domain_theme, max_teams
         FROM problems
-    """)
+        WHERE batch_id=%s
+        ORDER BY id
+    """, (active_batch_id,))
+
     problems = cur.fetchall()
 
     data = []
     for p in problems:
         execute(
-            cur, "SELECT COUNT(*) FROM teams WHERE problem_id=?",
-            (p["id"],)
+           cur,
+           "SELECT COUNT(*) FROM teams WHERE problem_id=? AND batch_id=?",
+           (p["id"], active_batch_id)
         )
         count = list(cur.fetchone().values())[0]
         data.append((p, count))
@@ -1005,21 +1021,37 @@ def student_problems():
         execute(cur,"SELECT COUNT(*) AS cnt FROM team_members WHERE usn=?", (student_usn,))
         if cur.fetchone()["cnt"] > 0:
             already_in_team = True
+    # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
 
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("student_login"))
+   
     # ---------------- FETCH PROBLEMS (WITH LOCK STATUS) ----------------
+
+
     execute(cur,"""
-        SELECT id, year, title, category, domain_theme, max_teams,
+         SELECT id, year, title, category, domain_theme, max_teams,
                problem_description, problem_details, expected_outcome,
                COALESCE(is_locked,0) AS is_locked
-        FROM problems
-        ORDER BY year DESC
-    """)
-    probs = cur.fetchall()
+         FROM problems
+         WHERE batch_id=%s
+         ORDER BY year DESC
+    """, (active_batch_id,))
 
     # ---------------- BUILD DATA ----------------
     data = []
     for p in probs:
-        execute(cur,"SELECT COUNT(*) AS cnt FROM teams WHERE problem_id=?", (p["id"],))
+        execute(
+            cur,
+            "SELECT COUNT(*) AS cnt FROM teams WHERE problem_id=? AND batch_id=?",
+            (p["id"], active_batch_id)
+        )
         registered_count = cur.fetchone()["cnt"]
         data.append((p, registered_count))
 
@@ -3158,6 +3190,18 @@ def register(pid):
     con = db()
     cur = con.cursor()
 
+     # ---------------- ACTIVE BATCH ----------------
+    active_batch_id = get_active_batch_id(cur)
+
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        flash("No active batch is configured.")
+        return redirect(url_for("student_problems"))
+
     execute(cur, "SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
 
@@ -3175,7 +3219,8 @@ def register(pid):
         SELECT title, max_teams, locked 
         FROM problems 
         WHERE id=%s
-    """, (pid,))
+           AND batch_id=%s
+    """, (pid,active_batch_id))
     prob = cur.fetchone()
 
     if not prob:
@@ -3317,8 +3362,9 @@ def register(pid):
                 assigned_department,
                 leader_section,
                 problem_id,
+                batch_id,
                 created_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
         """, (
             team_name,
@@ -3330,6 +3376,7 @@ def register(pid):
             leader_department,   # IMPORTANT SYNC
             leader_section,
             pid,
+            active_batch_id,
             datetime.now()
         ))
 
