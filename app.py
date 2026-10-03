@@ -4395,6 +4395,292 @@ def admin_upload():
 
     return render_template("admin_upload.html", active_page="upload")
 
+@app.route("/admin/problems")
+def admin_problems():
+
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+
+    view_batch = get_admin_view_batch(cur)
+    view_batch_id = view_batch["id"] if view_batch else None
+
+    if not view_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin"))
+
+    execute(cur, """
+        SELECT
+            id,
+            year,
+            title,
+            category,
+            domain_theme,
+            max_teams,
+            problem_description,
+            problem_details,
+            expected_outcome
+        FROM problems
+        WHERE batch_id=%s
+        ORDER BY id
+    """, (view_batch_id,))
+
+    problems = cur.fetchall()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    return render_template(
+        "admin_problems.html",
+        problems=problems,
+        view_batch=view_batch,
+        active_page="problems"
+    )
+
+
+@app.route("/admin/problems/delete/<int:problem_id>", methods=["POST"])
+def admin_delete_problem(problem_id):
+
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    if session.get("admin_role") != "super_admin":
+        flash("Only Super Admin can delete problem statements.")
+        return redirect(url_for("admin_problems"))
+
+    con = db()
+    cur = con.cursor()
+
+    view_batch = get_admin_view_batch(cur)
+    view_batch_id = view_batch["id"] if view_batch else None
+
+    if not view_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin_problems"))
+
+    if is_admin_batch_read_only(view_batch):
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Historical batches are read-only. Problem statement cannot be deleted.")
+        return redirect(url_for("admin_problems"))
+
+    # Verify that the problem belongs to the currently selected active batch.
+    execute(cur, """
+        SELECT id, title
+        FROM problems
+        WHERE id=%s AND batch_id=%s
+    """, (problem_id, view_batch_id))
+    problem = cur.fetchone()
+
+    if not problem:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Problem statement not found in the selected batch.")
+        return redirect(url_for("admin_problems"))
+
+    # Never delete a problem that already has registered teams.
+    execute(cur, """
+        SELECT COUNT(*) AS cnt
+        FROM teams
+        WHERE problem_id=%s AND batch_id=%s
+    """, (problem_id, view_batch_id))
+    team_count = cur.fetchone()["cnt"]
+
+    if team_count and int(team_count) > 0:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash(
+            f'Cannot delete "{problem["title"]}" because {team_count} registered team(s) are using this problem.'
+        )
+        return redirect(url_for("admin_problems"))
+
+    execute(cur, "DELETE FROM problems WHERE id=%s AND batch_id=%s", (problem_id, view_batch_id))
+    con.commit()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    flash(f'Problem deleted successfully: {problem["title"]}')
+    return redirect(url_for("admin_problems"))
+
+
+@app.route("/admin/problems/delete-all", methods=["POST"])
+def admin_delete_all_problems():
+
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    if session.get("admin_role") != "super_admin":
+        flash("Only Super Admin can delete problem statements.")
+        return redirect(url_for("admin_problems"))
+
+    con = db()
+    cur = con.cursor()
+
+    view_batch = get_admin_view_batch(cur)
+    view_batch_id = view_batch["id"] if view_batch else None
+
+    if not view_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin_problems"))
+
+    if is_admin_batch_read_only(view_batch):
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("Historical batches are read-only. Problems cannot be deleted.")
+        return redirect(url_for("admin_problems"))
+
+    # Safety rule: bulk deletion is allowed only when the selected batch has
+    # no registered teams. This prevents orphaned team records.
+    execute(cur, """
+        SELECT COUNT(*) AS cnt
+        FROM teams
+        WHERE batch_id=%s
+    """, (view_batch_id,))
+    team_count = cur.fetchone()["cnt"]
+
+    if team_count and int(team_count) > 0:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash(
+            f"Cannot delete all problems because {team_count} registered team(s) exist in this batch. "
+            "Remove/complete the batch data first."
+        )
+        return redirect(url_for("admin_problems"))
+
+    execute(cur, "SELECT COUNT(*) AS cnt FROM problems WHERE batch_id=%s", (view_batch_id,))
+    problem_count = cur.fetchone()["cnt"]
+
+    if not problem_count or int(problem_count) == 0:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No problems found in the selected batch.")
+        return redirect(url_for("admin_problems"))
+
+    execute(cur, "DELETE FROM problems WHERE batch_id=%s", (view_batch_id,))
+    con.commit()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    flash(f"All {problem_count} problem statement(s) deleted from {view_batch['academic_year']}.")
+    return redirect(url_for("admin_problems"))
+
+
+@app.route("/admin/export/problems")
+def admin_export_problems():
+
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    import io
+    import pandas as pd
+    from flask import send_file
+
+    con = db()
+    cur = con.cursor()
+
+    view_batch = get_admin_view_batch(cur)
+    view_batch_id = view_batch["id"] if view_batch else None
+
+    if not view_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin"))
+
+    execute(cur, """
+        SELECT
+            id,
+            year,
+            title,
+            category,
+            domain_theme,
+            max_teams,
+            problem_description,
+            problem_details,
+            expected_outcome
+        FROM problems
+        WHERE batch_id=%s
+        ORDER BY id
+    """, (view_batch_id,))
+
+    rows = cur.fetchall()
+
+    data = [{
+        "Sl. No.": index,
+        "Year": row["year"],
+        "Problem Statement": row["title"],
+        "Type": row["category"],
+        "Domain/Theme": row["domain_theme"],
+        "Max Teams": row["max_teams"],
+        "Problem Description": row["problem_description"],
+        "Problem Details": row["problem_details"],
+        "Expected Outcome": row["expected_outcome"]
+    } for index, row in enumerate(rows, start=1)]
+
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Problems")
+
+        # Add batch information to a second sheet for clear identification
+        batch_info = pd.DataFrame([{
+            "Batch": view_batch["batch_name"],
+            "Academic Year": view_batch["academic_year"],
+            "Status": view_batch["status"],
+            "Total Problems": len(rows)
+        }])
+        batch_info.to_excel(writer, index=False, sheet_name="Batch Info")
+
+    output.seek(0)
+
+    academic_year = str(view_batch["academic_year"]).replace("/", "-")
+    filename = f"rnsit_problems_{academic_year}.xlsx"
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    return send_file(output, download_name=filename, as_attachment=True)
+
+
 @app.route("/admin/teams", methods=["GET", "POST"])
 def admin_teams():
 
