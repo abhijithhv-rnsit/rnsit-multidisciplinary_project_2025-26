@@ -325,6 +325,47 @@ ensure_batch_system()
 # ============================================================
 # END BATCH SYSTEM
 # ============================================================
+# ============================================================
+# ACTIVE BATCH HELPER
+# ============================================================
+
+def get_active_batch(cur):
+    """
+    Returns the currently active batch.
+    Example:
+        Batch 2 / 2026-27
+    """
+
+    if not pg_pool:
+        return None
+
+    execute(cur, """
+        SELECT id, batch_name, academic_year, status
+        FROM batches
+        WHERE status = 'active'
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+
+    return cur.fetchone()
+
+
+def get_active_batch_id(cur):
+    """
+    Returns only the ID of the active batch.
+    """
+
+    batch = get_active_batch(cur)
+
+    if batch:
+        return batch["id"]
+
+    return None
+
+
+# ============================================================
+# END ACTIVE BATCH HELPER
+# ============================================================     
 # ONE TIME DEPARTMENT SYNC FIX
 try:
     con = db()
