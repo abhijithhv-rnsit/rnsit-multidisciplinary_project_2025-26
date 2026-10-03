@@ -992,6 +992,62 @@ def admin_evaluation_export():
     return send_file(out,download_name=filename,as_attachment=True,mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+
+@app.route("/faculty/evaluations")
+def faculty_evaluations():
+    if not session.get("faculty_id"):
+        return redirect(url_for("faculty_login"))
+
+    faculty_id = session["faculty_id"]
+    con = db()
+    cur = con.cursor()
+
+    active_batch_id = get_active_batch_id(cur)
+    if not active_batch_id:
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+        flash("No active batch is configured.")
+        return redirect(url_for("faculty_dashboard"))
+
+    execute(cur, """
+        SELECT
+            t.id AS team_id,
+            t.team_name,
+            t.leader_name,
+            t.leader_department,
+            t.leader_section,
+            p.title AS problem_title
+        FROM team_faculty tf
+        JOIN teams t ON tf.team_id = t.id
+        LEFT JOIN problems p ON t.problem_id = p.id
+        WHERE tf.faculty_id=%s
+          AND t.batch_id=%s
+        ORDER BY t.team_name
+    """, (faculty_id, active_batch_id))
+    teams = cur.fetchall()
+
+    execute(cur, """
+        SELECT id, name, status
+        FROM evaluation_schemes
+        WHERE batch_id=%s
+        ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END, id DESC
+        LIMIT 1
+    """, (active_batch_id,))
+    scheme = cur.fetchone()
+
+    if pg_pool:
+        pg_pool.putconn(con)
+    else:
+        con.close()
+
+    return render_template(
+        "faculty_evaluations.html",
+        teams=teams,
+        scheme=scheme
+    )
+
 @app.route("/faculty/evaluation/<int:team_id>", methods=["GET","POST"])
 def faculty_evaluation(team_id):
     if not session.get("faculty_id"): return redirect(url_for("faculty_login"))
