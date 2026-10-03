@@ -26,7 +26,7 @@
              href="/admin/upload">Upload Problems</a>
         </li>
         {% endif %}
-        
+
         {% if session.get("admin_role") == "super_admin" %}
         <li class="nav-item">
           <a class="nav-link {% if active_page=='admin_mgmt' %}active fw-bold{% endif %}"
@@ -61,16 +61,12 @@
              href="/dashboard">Dashboard</a>
         </li>
 
-        <!-- ================= NOTICE BOARD ================= -->
-
         <li class="nav-item">
           <a class="nav-link {% if active_page=='notices' %}active fw-bold{% endif %}"
              href="/admin/notices">
             Notice Board
           </a>
         </li>
-
-        <!-- ================================================= -->
 
         {% if session.get("admin_role") == "super_admin" %}
         <li class="nav-item">
@@ -80,15 +76,40 @@
         {% endif %}
 
         {% if session.get("admin_role") == "super_admin" %}
-<li class="nav-item">
-  <a class="nav-link {% if active_page=='reports' %}active fw-bold{% endif %}"
-     href="/admin/reports">Reports</a>
-</li>
-{% endif %}
+        <li class="nav-item">
+          <a class="nav-link {% if active_page=='reports' %}active fw-bold{% endif %}"
+             href="/admin/reports">Reports</a>
+        </li>
+        {% endif %}
 
       </ul>
 
-      <div class="ms-auto">
+      <div class="ms-auto d-flex align-items-center gap-2 flex-wrap">
+
+        <!-- ================= ADMIN BATCH SELECTOR ================= -->
+        {% if session.get("admin_batches") %}
+        <form method="post" action="/admin/select-batch" class="d-flex align-items-center gap-1">
+          <input type="hidden" name="next" value="{{ request.path }}">
+          <label for="adminBatchSelect" class="text-white small mb-0">View Batch:</label>
+          <select id="adminBatchSelect"
+                  name="batch_id"
+                  class="form-select form-select-sm"
+                  style="min-width:175px;"
+                  onchange="this.form.submit()">
+            {% for b in session.get("admin_batches", []) %}
+              <option value="{{ b.id }}"
+                {% if session.get("admin_view_batch_id")|string == b.id|string %}selected{% endif %}>
+                {{ b.batch_name }} — {{ b.academic_year }}{% if b.status == 'active' %} (Active){% else %} (Historical){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </form>
+        {% endif %}
+
+        {% if session.get("admin_view_batch_status") != "active" and session.get("admin_view_batch_status") %}
+          <span class="badge bg-warning text-dark">READ-ONLY</span>
+        {% endif %}
+
         <a href="/admin/logout" class="btn btn-outline-light btn-sm">
           Logout
         </a>
