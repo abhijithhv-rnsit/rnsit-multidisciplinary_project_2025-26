@@ -3925,7 +3925,7 @@ def admin_upload():
                 domain_theme,
                 problem_description,
                 problem_details,
-                expected_outcome
+                expected_outcome,
                 active_batch_id
             ))
 
