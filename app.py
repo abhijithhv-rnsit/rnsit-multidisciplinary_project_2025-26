@@ -3882,12 +3882,12 @@ def admin_upload():
 
         if not active_batch_id:
             if pg_pool:
-                 pg_pool.putconn(con)
-             else:
-                 con.close()
+                pg_pool.putconn(con)
+            else:
+                con.close()
 
-             flash("No active batch is configured.")
-             return redirect(request.url)
+            flash("No active batch is configured.")
+            return redirect(request.url)
         added = 0
         skipped = 0
 
