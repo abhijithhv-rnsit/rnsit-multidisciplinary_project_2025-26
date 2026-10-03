@@ -737,6 +737,11 @@ def ensure_evaluation_system():
             "ALTER TABLE evaluation_presentations ADD COLUMN IF NOT EXISTS end_at TIMESTAMP NULL",
             "ALTER TABLE evaluation_presentations ADD COLUMN IF NOT EXISTS remarks_required BOOLEAN DEFAULT FALSE",
             "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS weight NUMERIC(10,4) DEFAULT 1",
+            "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS phase_id INTEGER NULL REFERENCES evaluation_phases(id) ON DELETE CASCADE",
+            "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS presentation_id INTEGER NULL REFERENCES evaluation_presentations(id) ON DELETE CASCADE",
+            "CREATE INDEX IF NOT EXISTS idx_eval_team_eval_scheme_team ON evaluation_team_evaluators(scheme_id, team_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_team_eval_phase ON evaluation_team_evaluators(scheme_id, phase_id)",
+            "CREATE INDEX IF NOT EXISTS idx_eval_team_eval_presentation ON evaluation_team_evaluators(scheme_id, presentation_id)",
         ]:
             cur.execute(sql)
 
@@ -1111,23 +1116,6 @@ def faculty_evaluations():
         return redirect(url_for("faculty_dashboard"))
 
     execute(cur, """
-        SELECT
-            t.id AS team_id,
-            t.team_name,
-            t.leader_name,
-            t.leader_department,
-            t.leader_section,
-            p.title AS problem_title
-        FROM team_faculty tf
-        JOIN teams t ON tf.team_id = t.id
-        LEFT JOIN problems p ON t.problem_id = p.id
-        WHERE tf.faculty_id=%s
-          AND t.batch_id=%s
-        ORDER BY t.team_name
-    """, (faculty_id, active_batch_id))
-    teams = cur.fetchall()
-
-    execute(cur, """
         SELECT id, name, status
         FROM evaluation_schemes
         WHERE batch_id=%s
@@ -1135,6 +1123,26 @@ def faculty_evaluations():
         LIMIT 1
     """, (active_batch_id,))
     scheme = cur.fetchone()
+    scheme_id_for_landing = scheme['id'] if scheme else -1
+
+    execute(cur, """
+        SELECT DISTINCT
+            t.id AS team_id,
+            t.team_name,
+            t.leader_name,
+            t.leader_department,
+            t.leader_section,
+            p.title AS problem_title
+        FROM teams t
+        LEFT JOIN problems p ON t.problem_id = p.id
+        WHERE t.batch_id=%s
+          AND (
+              EXISTS (SELECT 1 FROM team_faculty tf WHERE tf.team_id=t.id AND tf.faculty_id=%s)
+              OR EXISTS (SELECT 1 FROM evaluation_team_evaluators ete WHERE ete.team_id=t.id AND ete.faculty_id=%s AND ete.scheme_id=%s)
+          )
+        ORDER BY t.team_name
+    """, (active_batch_id, faculty_id, faculty_id, scheme_id_for_landing))
+    teams = cur.fetchall()
 
     if pg_pool:
         pg_pool.putconn(con)
@@ -1152,13 +1160,15 @@ def faculty_evaluation(team_id):
     if not session.get("faculty_id"): return redirect(url_for("faculty_login"))
     con=db(); cur=con.cursor(); active_batch_id=get_active_batch_id(cur); faculty_id=session['faculty_id']
     execute(cur,"SELECT * FROM teams WHERE id=%s AND batch_id=%s",(team_id,active_batch_id)); team=cur.fetchone()
+    scheme=get_selected_evaluation_scheme(cur,active_batch_id)
+    scheme_id_for_access = scheme['id'] if scheme else -1
     execute(cur,"""SELECT 1 FROM team_faculty tf WHERE tf.team_id=%s AND tf.faculty_id=%s
-        UNION SELECT 1 FROM evaluation_team_evaluators ete WHERE ete.team_id=%s AND ete.faculty_id=%s AND ete.scheme_id=(SELECT id FROM evaluation_schemes WHERE batch_id=%s AND status='active' ORDER BY id DESC LIMIT 1)""",(team_id,faculty_id,team_id,faculty_id,active_batch_id)); assigned=cur.fetchone()
+        UNION SELECT 1 FROM evaluation_team_evaluators ete
+        WHERE ete.team_id=%s AND ete.faculty_id=%s AND ete.scheme_id=%s""",(team_id,faculty_id,team_id,faculty_id,scheme_id_for_access)); assigned=cur.fetchone()
     if not team or not assigned:
         if pg_pool: pg_pool.putconn(con)
         else: con.close()
         flash("Access denied."); return redirect(url_for('faculty_dashboard'))
-    scheme=get_selected_evaluation_scheme(cur,active_batch_id)
     if not scheme:
         if pg_pool: pg_pool.putconn(con)
         else: con.close()
@@ -1220,33 +1230,86 @@ def faculty_evaluation(team_id):
 
 @app.route("/admin/evaluation-assignments", methods=["GET","POST"])
 def admin_evaluation_assignments():
-    if not session.get("admin_logged_in"): return redirect(url_for("admin"))
-    con=db(); cur=con.cursor(); batch,batch_id=evaluation_batch_context(cur)
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    con=db(); cur=con.cursor()
+    batch,batch_id=evaluation_batch_context(cur)
     scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get('scheme_id')) if batch_id else None
     if not batch_id or not scheme:
         if pg_pool: pg_pool.putconn(con)
         else: con.close()
-        flash('Create an evaluation scheme first.'); return redirect(url_for('admin_evaluation_settings'))
+        flash('Create an evaluation scheme first.')
+        return redirect(url_for('admin_evaluation_settings'))
+
     if request.method=='POST':
-        if is_admin_batch_read_only(batch): flash('Historical batch is read-only.')
+        if is_admin_batch_read_only(batch):
+            flash('Historical batch is read-only.')
         else:
-            action=request.form.get('action')
+            action=request.form.get('action','')
             try:
-                team_id=int(request.form['team_id']); faculty_id=int(request.form['faculty_id'])
-                if action=='add':
-                    execute(cur,"INSERT INTO evaluation_team_evaluators(scheme_id,team_id,faculty_id) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(scheme['id'],team_id,faculty_id))
-                    con.commit(); flash('Evaluator assigned.')
-                elif action=='remove':
-                    execute(cur,"DELETE FROM evaluation_team_evaluators WHERE scheme_id=%s AND team_id=%s AND faculty_id=%s",(scheme['id'],team_id,faculty_id)); con.commit(); flash('Evaluator removed.')
+                if action == 'assign':
+                    faculty_ids=[int(x) for x in request.form.getlist('faculty_ids') if x]
+                    team_ids=[int(x) for x in request.form.getlist('team_ids') if x]
+                    scope=request.form.get('scope','scheme')
+                    phase_id=request.form.get('phase_id') or None
+                    presentation_id=request.form.get('presentation_id') or None
+                    weight=max(float(request.form.get('weight') or 1),0)
+                    if not faculty_ids: raise ValueError('Select at least one evaluator.')
+                    if not team_ids: raise ValueError('Select at least one team.')
+                    if scope=='phase' and not phase_id: raise ValueError('Select a phase.')
+                    if scope=='presentation' and not presentation_id: raise ValueError('Select a presentation.')
+                    if scope=='scheme': phase_id=None; presentation_id=None
+                    elif scope=='phase': presentation_id=None
+                    # Validate selected objects belong to this scheme/batch.
+                    if phase_id:
+                        execute(cur,"SELECT id FROM evaluation_phases WHERE id=%s AND scheme_id=%s",(int(phase_id),scheme['id']))
+                        if not cur.fetchone(): raise ValueError('Invalid phase selected.')
+                    if presentation_id:
+                        execute(cur,"""SELECT p.id FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE p.id=%s AND ph.scheme_id=%s""",(int(presentation_id),scheme['id']))
+                        if not cur.fetchone(): raise ValueError('Invalid presentation selected.')
+                    for team_id in team_ids:
+                        execute(cur,"SELECT id FROM teams WHERE id=%s AND batch_id=%s",(team_id,batch_id))
+                        if not cur.fetchone(): continue
+                        for faculty_id in faculty_ids:
+                            execute(cur,"SELECT id FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id WHERE f.id=%s AND fb.batch_id=%s",(faculty_id,batch_id))
+                            if not cur.fetchone(): continue
+                            execute(cur,"""DELETE FROM evaluation_team_evaluators
+                                WHERE scheme_id=%s AND team_id=%s AND faculty_id=%s
+                                  AND ((phase_id IS NULL AND %s IS NULL) OR phase_id=%s)
+                                  AND ((presentation_id IS NULL AND %s IS NULL) OR presentation_id=%s)""",
+                                (scheme['id'],team_id,faculty_id,phase_id,phase_id,presentation_id,presentation_id))
+                            execute(cur,"""INSERT INTO evaluation_team_evaluators
+                                (scheme_id,team_id,faculty_id,phase_id,presentation_id,weight)
+                                VALUES(%s,%s,%s,%s,%s,%s)""",
+                                (scheme['id'],team_id,faculty_id,phase_id,presentation_id,weight))
+                    con.commit(); flash('Evaluator assignment(s) saved.')
+                elif action == 'remove':
+                    assignment_id=int(request.form['assignment_id'])
+                    execute(cur,"DELETE FROM evaluation_team_evaluators WHERE id=%s AND scheme_id=%s",(assignment_id,scheme['id']))
+                    con.commit(); flash('Evaluator assignment removed.')
             except Exception as e:
                 con.rollback(); flash(f'Could not update evaluator assignment: {e}')
         return redirect(url_for('admin_evaluation_assignments',scheme_id=scheme['id']))
+
     execute(cur,"SELECT id,team_name,leader_department,leader_section FROM teams WHERE batch_id=%s ORDER BY leader_department,leader_section,team_name",(batch_id,)); teams=cur.fetchall()
     execute(cur,"SELECT f.id,f.name,f.department FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id WHERE fb.batch_id=%s ORDER BY f.name",(batch_id,)); faculty=cur.fetchall()
-    execute(cur,"""SELECT ete.team_id,ete.faculty_id,t.team_name,f.name AS faculty_name FROM evaluation_team_evaluators ete JOIN teams t ON t.id=ete.team_id JOIN faculty f ON f.id=ete.faculty_id WHERE ete.scheme_id=%s ORDER BY t.team_name,f.name""",(scheme['id'],)); assignments=cur.fetchall()
+    execute(cur,"SELECT id,name,sort_order FROM evaluation_phases WHERE scheme_id=%s ORDER BY sort_order,id",(scheme['id'],)); phases=cur.fetchall()
+    execute(cur,"""SELECT p.id,p.name,p.max_marks,p.phase_id,ph.name AS phase_name
+        FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id
+        WHERE ph.scheme_id=%s ORDER BY ph.sort_order,p.sort_order,p.id""",(scheme['id'],)); presentations=cur.fetchall()
+    execute(cur,"""SELECT ete.id,ete.team_id,ete.faculty_id,ete.phase_id,ete.presentation_id,ete.weight,
+        t.team_name,t.leader_department,t.leader_section,f.name AS faculty_name,
+        ph.name AS phase_name,pr.name AS presentation_name
+        FROM evaluation_team_evaluators ete
+        JOIN teams t ON t.id=ete.team_id
+        JOIN faculty f ON f.id=ete.faculty_id
+        LEFT JOIN evaluation_phases ph ON ph.id=ete.phase_id
+        LEFT JOIN evaluation_presentations pr ON pr.id=ete.presentation_id
+        WHERE ete.scheme_id=%s AND t.batch_id=%s
+        ORDER BY t.leader_department,t.leader_section,t.team_name,f.name,ph.sort_order NULLS FIRST,pr.sort_order NULLS FIRST""",(scheme['id'],batch_id)); assignments=cur.fetchall()
     if pg_pool: pg_pool.putconn(con)
     else: con.close()
-    return render_template('admin_evaluation_assignments.html',batch=batch,scheme=scheme,teams=teams,faculty=faculty,assignments=assignments,active_page='evaluation')
+    return render_template('admin_evaluation_assignments.html',batch=batch,scheme=scheme,teams=teams,faculty=faculty,phases=phases,presentations=presentations,assignments=assignments,active_page='evaluation')
 
 @app.route("/student/evaluations")
 def student_evaluations():
