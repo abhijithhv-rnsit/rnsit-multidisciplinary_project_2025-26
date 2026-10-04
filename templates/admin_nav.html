@@ -115,11 +115,12 @@
   content: " ▾";
   font-size: .72rem;
 }
+.admin-nav-menu { position: relative; }
 .admin-dropdown {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  z-index: 2000;
+  z-index: 3000;
   min-width: 220px;
   background: #fff;
   border: 1px solid rgba(0,0,0,.15);
@@ -165,3 +166,27 @@
   .admin-batch-form select { flex:1; max-width:none; }
 }
 </style>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const menus = document.querySelectorAll(".admin-nav-menu");
+  menus.forEach(function (menu) {
+    menu.addEventListener("toggle", function () {
+      if (menu.open) {
+        menus.forEach(function (other) {
+          if (other !== menu) other.removeAttribute("open");
+        });
+      }
+    });
+  });
+
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest(".admin-nav-menu")) {
+      menus.forEach(function (menu) {
+        menu.removeAttribute("open");
+      });
+    }
+  });
+});
+</script>
+
