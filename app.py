@@ -4317,6 +4317,27 @@ def admin_students():
         params.extend([f"%{search}%",f"%{search}%",f"%{search}%"])
     where_sql=" WHERE "+" AND ".join(where)
 
+    # Download a blank Excel template for bulk student upload.
+    # This endpoint only creates a file in memory and does not modify database records.
+    if request.args.get("download") == "template":
+        template_df = pd.DataFrame(columns=["USN", "Email", "Name", "Department", "Section"])
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            template_df.to_excel(writer, index=False, sheet_name="Students")
+        output.seek(0)
+
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="student_upload_template.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     if request.args.get("export")=="excel":
         execute(cur,f"""
             SELECT usn,email,name,department,section,must_reset_password,created_at
@@ -7243,5 +7264,4 @@ if __name__ == "__main__":
 
     #port = int(os.environ.get("PORT", 5000))
     #app.run(host="0.0.0.0", port=port)
-
 
