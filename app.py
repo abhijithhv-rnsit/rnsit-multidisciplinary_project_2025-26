@@ -2396,6 +2396,29 @@ def admin_students():
     con = db()
     cur = con.cursor()
 
+    # Download the Excel template for bulk student upload.
+    # This is a read-only operation and does not modify student records.
+    if request.args.get("download") == "template":
+        template_df = pd.DataFrame(columns=[
+            "USN", "Email", "Name", "Department", "Section"
+        ])
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            template_df.to_excel(writer, index=False, sheet_name="Students")
+        output.seek(0)
+
+        if pg_pool:
+            pg_pool.putconn(con)
+        else:
+            con.close()
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="student_upload_template.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     is_dept_admin = session.get("admin_role") == "admin"
     dept_admin_department = session.get("admin_department")
 
