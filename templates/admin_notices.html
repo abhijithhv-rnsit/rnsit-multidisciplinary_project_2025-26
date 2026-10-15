@@ -39,8 +39,8 @@
               <option>CSE-AIML</option>
               <option>CSE-DS</option>
               <option>CSE-CY</option>
-              <option>VLSI</option>
-              <option>CSBS</option>
+              <option value="VLSI">Core</option>
+              <option value="CSBS">CSE Allied</option>
               <option>ECE</option>
               <option>EEE</option>
               <option>ME</option>
@@ -78,7 +78,7 @@
           <div class="text-muted small mb-1">
             {{ n.created_at }}
             {% if n.department %}
-              | Dept: <b>{{ n.department }}</b>
+              | Dept: <b>{{ n.department|department_label }}</b>
             {% else %}
               | All Departments
             {% endif %}

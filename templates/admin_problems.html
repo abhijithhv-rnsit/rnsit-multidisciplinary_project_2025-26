@@ -82,6 +82,7 @@
               <th style="min-width:130px">Type</th>
               <th style="min-width:180px">Domain / Theme</th>
               <th style="width:100px">Max Teams</th>
+              <th style="width:110px">Availability</th>
               <th style="min-width:300px">Problem Description</th>
               <th style="min-width:300px">Problem Details</th>
               <th style="min-width:300px">Expected Outcome</th>
@@ -99,17 +100,28 @@
               <td>{{ p.category }}</td>
               <td class="wrap-text">{{ p.domain_theme }}</td>
               <td>{{ p.max_teams }}</td>
+              <td>
+                {% if p.is_locked %}<span class="badge bg-secondary">Disabled</span>{% else %}<span class="badge bg-success">Enabled</span>{% endif %}
+              </td>
               <td class="wrap-text">{{ p.problem_description }}</td>
               <td class="wrap-text">{{ p.problem_details }}</td>
               <td class="wrap-text">{{ p.expected_outcome }}</td>
               {% if view_batch.status == 'active' and session.get('admin_role') == 'super_admin' %}
               <td>
-                <form method="post" action="/admin/problems/delete/{{ p.id }}"
-                      onsubmit="return confirmDeleteProblem({{ p.title|tojson }});">
-                  <button type="submit" class="btn btn-sm btn-outline-danger">
-                    🗑 Delete
-                  </button>
-                </form>
+                <div class="d-grid gap-1">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin_download_problem', problem_id=p.id) }}">⬇ Download</a>
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_edit_problem', problem_id=p.id) }}">✏️ Modify</a>
+                  <form method="post" action="{{ url_for('admin_toggle_problem', problem_id=p.id) }}">
+                    <button type="submit" class="btn btn-sm {{ 'btn-outline-success' if p.is_locked else 'btn-outline-warning' }} w-100"
+                            onclick="return confirm('Change availability for this problem?')">
+                      {{ 'Enable' if p.is_locked else 'Disable' }}
+                    </button>
+                  </form>
+                  <form method="post" action="/admin/problems/delete/{{ p.id }}"
+                        onsubmit="return confirmDeleteProblem({{ p.title|tojson }});">
+                    <button type="submit" class="btn btn-sm btn-outline-danger w-100">🗑 Delete</button>
+                  </form>
+                </div>
               </td>
               {% endif %}
             </tr>

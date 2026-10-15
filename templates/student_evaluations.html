@@ -4,6 +4,6 @@
 
 {% block content %}
 <div class="container py-2">
-<h2>My Project Evaluations</h2><p>{{team.team_name}} · {{team.leader_department}} / {{team.leader_section}}</p>{% if not rows %}<div class="alert alert-info">Evaluation results have not been released to you yet.</div>{% else %}<table class="table table-bordered bg-white"><thead><tr><th>Phase</th><th>Presentation</th><th>Marks</th>{% if scheme.show_remarks %}<th>Remarks</th>{% endif %}</tr></thead><tbody>{% for r in rows %}<tr><td>{{r.phase_name}}</td><td>{{r.presentation_name or 'Phase Total'}}</td><td>{{r.marks}}</td>{% if scheme.show_remarks %}<td>{{r.remarks or ''}}</td>{% endif %}</tr>{% endfor %}</tbody></table>{% endif %}
+<h2>My Project Evaluations</h2><p>{{team.team_name}} · {{ team.leader_department|department_label }} / {{team.leader_section}}</p>{% if not rows %}<div class="alert alert-info">Evaluation results have not been released to you yet.</div>{% else %}<table class="table table-bordered bg-white"><thead><tr><th>Phase</th><th>Presentation</th><th>Marks</th>{% if scheme.show_remarks %}<th>Remarks</th>{% endif %}</tr></thead><tbody>{% for r in rows %}<tr><td>{{r.phase_name}}</td><td>{{r.presentation_name or 'Phase Total'}}</td><td>{{r.marks}}</td>{% if scheme.show_remarks %}<td>{{r.remarks or ''}}</td>{% endif %}</tr>{% endfor %}</tbody></table>{% endif %}
 </div>
 {% endblock %}

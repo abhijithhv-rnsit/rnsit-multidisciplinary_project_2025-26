@@ -59,7 +59,7 @@
         <input type="hidden" name="action" value="bulk_upload">
 
         {% if session.admin_role == "admin" %}
-          <input type="hidden" name="department" value="{{ session.admin_department }}">
+          <input type="hidden" name="department" value="{{ session.admin_department|department_label }}">
         {% endif %}
 
         <div class="row g-2 align-items-end">
@@ -121,8 +121,8 @@
                 {% endfor %}
               </select>
             {% else %}
-              <input type="hidden" name="department" value="{{ session.admin_department }}">
-              <input type="text" class="form-control" value="{{ session.admin_department }}" disabled>
+              <input type="hidden" name="department" value="{{ session.admin_department|department_label }}">
+              <input type="text" class="form-control" value="{{ session.admin_department|department_label }}" disabled>
             {% endif %}
 
           </div>
@@ -145,7 +145,7 @@
   <form method="get" action="/admin/students" class="card shadow-sm p-3 mb-3">
 
     {% if session.admin_role == "admin" %}
-      <input type="hidden" name="dept" value="{{ session.admin_department }}">
+      <input type="hidden" name="dept" value="{{ session.admin_department|department_label }}">
     {% endif %}
 
     <!-- ADDED -->
@@ -272,7 +272,7 @@
                 <td class="fw-semibold">{{ s.usn }}</td>
                 <td>{{ s.email }}</td>
                 <td>{{ s.name or "-" }}</td>
-                <td>{{ s.department or "-" }}</td>
+                <td>{{ (s.department or "-")|department_label }}</td>
                 <td>{{ s.section or "-" }}</td>
                 <td>
                   {% if s.must_reset_password == 1 %}
@@ -291,7 +291,7 @@
                           data-usn="{{ s.usn }}"
                           data-email="{{ s.email }}"
                           data-name="{{ s.name }}"
-                          data-department="{{ s.department }}"
+                          data-department="{{ s.department|department_label }}"
                           data-section="{{ s.section }}">
                     Edit
                   </button>

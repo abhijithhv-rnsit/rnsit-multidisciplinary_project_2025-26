@@ -34,7 +34,7 @@
         <td>{{ loop.index }}</td>
         <td><strong>{{ team.team_name }}</strong></td>
         <td>{{ team.leader_name }}</td>
-        <td>{{ team.leader_department }}</td>
+        <td>{{ team.leader_department|department_label }}</td>
         <td>{{ team.leader_section }}</td>
         <td>{{ team.problem_title or '-' }}</td>
         <td>

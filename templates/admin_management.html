@@ -98,7 +98,7 @@
               <td>{{ a.name }}</td>
               <td>{{ a.email }}</td>
               <td>{{ a.role }}</td>
-              <td>{{ a.department or "-" }}</td>
+              <td>{{ (a.department or "-")|department_label }}</td>
               <td>{{ a.created_at }}</td>
 
               <td class="d-flex gap-2 flex-wrap">
@@ -112,7 +112,7 @@
                         data-id="{{ a.id }}"
                         data-name="{{ a.name }}"
                         data-email="{{ a.email }}"
-                        data-department="{{ a.department }}">
+                        data-department="{{ a.department|department_label }}">
                   Edit
                 </button>
 

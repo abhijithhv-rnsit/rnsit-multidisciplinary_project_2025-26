@@ -36,7 +36,7 @@
         <tr>
           <td>{{ f.name }}</td>
           <td>{{ f.email }}</td>
-          <td>{{ f.department }}</td>
+          <td>{{ f.department|department_label }}</td>
           <td>
             <a class="btn btn-danger btn-sm"
                href="/admin/faculty/delete/{{ f.id }}"

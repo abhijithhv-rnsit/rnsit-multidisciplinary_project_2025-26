@@ -86,7 +86,7 @@
               {% for f in faculty %}
               <div class="form-check">
                 <input class="form-check-input faculty-check" type="checkbox" name="faculty_ids" value="{{ f.id }}" id="f{{ f.id }}">
-                <label class="form-check-label" for="f{{ f.id }}">{{ f.name }}{% if f.department %} — {{ f.department }}{% endif %}</label>
+                <label class="form-check-label" for="f{{ f.id }}">{{ f.name }}{% if f.department %} — {{ f.department|department_label }}{% endif %}</label>
               </div>
               {% else %}<div class="text-muted">No faculty mapped to this batch.</div>{% endfor %}
             </div>
@@ -105,7 +105,7 @@
               {% for t in teams %}
               <div class="form-check">
                 <input class="form-check-input team-check" type="checkbox" name="team_ids" value="{{ t.id }}" id="t{{ t.id }}">
-                <label class="form-check-label" for="t{{ t.id }}">{{ t.team_name }} — {{ t.leader_department }} / {{ t.leader_section }}</label>
+                <label class="form-check-label" for="t{{ t.id }}">{{ t.team_name }} — {{ t.leader_department|department_label }} / {{ t.leader_section }}</label>
               </div>
               {% else %}<div class="text-muted">No teams are registered in this batch.</div>{% endfor %}
             </div>
@@ -128,7 +128,7 @@
         <tbody>
         {% for a in assignments %}
           <tr>
-            <td>{{ a.team_name }}</td><td>{{ a.leader_department }}</td><td>{{ a.leader_section }}</td><td>{{ a.faculty_name }}</td>
+            <td>{{ a.team_name }}</td><td>{{ a.leader_department|department_label }}</td><td>{{ a.leader_section }}</td><td>{{ a.faculty_name }}</td>
             <td>{% if a.presentation_name %}Presentation: {{ a.phase_name }} — {{ a.presentation_name }}{% elif a.phase_name %}Phase: {{ a.phase_name }}{% else %}Entire Scheme{% endif %}</td>
             <td>{{ a.weight }}</td>
             <td>

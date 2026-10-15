@@ -88,7 +88,7 @@
           {% for f in faculty_list %}
             <option value="{{ f['id'] }}"
               {% if faculty_filter and faculty_filter != "NOT_ASSIGNED" and faculty_filter|int == f['id'] %}selected{% endif %}>
-              {{ f['name'] }} ({{ f['department'] }})
+              {{ f['name'] }} ({{ f['department']|department_label }})
             </option>
           {% endfor %}
         </select>
@@ -120,7 +120,7 @@
         <select class="form-select" id="bulkFaculty">
           <option value="">-- Select Faculty --</option>
           {% for f in faculty_list %}
-            <option value="{{ f['id'] }}">{{ f['name'] }} ({{ f['department'] }})</option>
+            <option value="{{ f['id'] }}">{{ f['name'] }} ({{ f['department']|department_label }})</option>
           {% endfor %}
         </select>
         
@@ -185,7 +185,7 @@
 
             <td class="fw-semibold">{{ t['leader_usn'] }}</td>
 
-            <td>{{ t['leader_department'] }}</td>
+            <td>{{ t['leader_department']|department_label }}</td>
 
             <td>
               <select class="form-select form-select-sm"
@@ -194,7 +194,7 @@
                 {% for f in faculty_list %}
                   <option value="{{ f['id'] }}"
                     {% if t['assigned_faculty_id'] == f['id'] %}selected{% endif %}>
-                    {{ f['name'] }} ({{ f['department'] }})
+                    {{ f['name'] }} ({{ f['department']|department_label }})
                   </option>
                 {% endfor %}
               </select>

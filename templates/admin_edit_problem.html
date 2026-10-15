@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Modify Problem Statement</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+{% include "admin_nav.html" %}
+<div class="container mt-4 mb-5">
+  <div class="card shadow-sm border-0">
+    <div class="card-body p-4">
+      <h4 class="fw-bold mb-1">Modify Problem Statement</h4>
+      <p class="text-muted">{{ view_batch.batch_name }} — {{ view_batch.academic_year }}</p>
+      {% with messages = get_flashed_messages() %}{% if messages %}<div class="alert alert-info">{{ messages[0] }}</div>{% endif %}{% endwith %}
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-3"><label class="form-label">Year</label><input class="form-control" name="year" value="{{ problem.year or '' }}" required></div>
+          <div class="col-md-9"><label class="form-label">Problem Statement / Title</label><input class="form-control" name="title" value="{{ problem.title or '' }}" required></div>
+          <div class="col-md-4"><label class="form-label">Type</label><input class="form-control" name="category" value="{{ problem.category or '' }}" required></div>
+          <div class="col-md-8"><label class="form-label">Domain / Theme</label><input class="form-control" name="domain_theme" value="{{ problem.domain_theme or '' }}"></div>
+          <div class="col-md-3"><label class="form-label">Maximum Teams</label><input type="number" min="1" class="form-control" name="max_teams" value="{{ problem.max_teams or 1 }}" required></div>
+          <div class="col-12"><label class="form-label">Problem Description</label><textarea class="form-control" rows="4" name="problem_description">{{ problem.problem_description or '' }}</textarea></div>
+          <div class="col-12"><label class="form-label">Problem Details</label><textarea class="form-control" rows="6" name="problem_details">{{ problem.problem_details or '' }}</textarea></div>
+          <div class="col-12"><label class="form-label">Expected Outcome</label><textarea class="form-control" rows="4" name="expected_outcome">{{ problem.expected_outcome or '' }}</textarea></div>
+        </div>
+        <div class="d-flex gap-2 mt-4"><button class="btn btn-primary" type="submit">Save Changes</button><a class="btn btn-outline-secondary" href="{{ url_for('admin_problems') }}">Cancel</a></div>
+      </form>
+    </div>
+  </div>
+</div>
+</body>
+</html>

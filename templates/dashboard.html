@@ -31,7 +31,7 @@
       <!-- 🔐 ROLE CONTEXT (ONLY ADDITION) -->
       {% if session.admin_role == "admin" %}
         <div class="text-muted small">
-          Department: <b>{{ session.admin_department }}</b>
+          Department: <b>{{ session.admin_department|department_label }}</b>
         </div>
       {% else %}
         <div class="text-muted small">

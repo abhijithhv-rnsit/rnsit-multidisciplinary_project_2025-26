@@ -31,7 +31,7 @@
 
         {% if session.admin_role == "admin" %}
           <div class="text-muted small">
-            Guide Allocation Report – Department: <b>{{ session.admin_department }}</b>
+            Guide Allocation Report – Department: <b>{{ session.admin_department|department_label }}</b>
           </div>
         {% else %}
           <div class="text-muted small">
@@ -42,7 +42,7 @@
 
       <div class="d-flex gap-2 flex-wrap">
         {% if session.admin_role == "admin" %}
-          <a href="/admin/export-teams?dept={{ session.admin_department }}"
+          <a href="/admin/export-teams?dept={{ session.admin_department|department_label }}"
              class="btn btn-success btn-sm">
             ⬇ Export Guide Allocation Report (Excel)
           </a>
@@ -115,7 +115,7 @@
             <tr class="team-row {% if r.faculty_text == 'Not Assigned' %}not-assigned{% else %}assigned{% endif %}">
 
               <td class="fw-semibold">{{ r.team_name }}</td>
-              <td>{{ r.leader_department }}</td>
+              <td>{{ r.leader_department|department_label }}</td>
               <td>{{ r.leader_section }}</td>
 
               <td class="wrap-text">{{ r.problem_title }}</td>
@@ -158,8 +158,8 @@
     <option value="CSE-AIML">CSE-AIML</option>
     <option value="CSE-DS">CSE-DS</option>
     <option value="CSE-CY">CSE-CY</option>
-    <option value="VLSI">VLSI</option>
-    <option value="CSBS">CSBS</option>
+    <option value="VLSI">Core</option>
+    <option value="CSBS">CSE Allied</option>
     <option value="ECE">ECE</option>
     <option value="EEE">EEE</option>
     <option value="ME">ME</option>
