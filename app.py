@@ -9,6 +9,7 @@ import sqlite3, pandas as pd, os
 
 import os
 import io
+import re
 import pandas as pd
 import random, string
 from flask import send_file
@@ -16,6 +17,37 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash
 
 from psycopg2 import pool
+
+def _upload_value(value, lower=False, upper=False):
+    """Normalize Excel cells without turning empty cells into the string 'nan'."""
+    try:
+        if pd.isna(value): return ""
+    except (TypeError, ValueError): pass
+    value = str(value).strip()
+    return value.lower() if lower else value.upper() if upper else value
+
+
+def _upload_report(upload_type, total_rows, success_count, skipped_rows, extra_sheets=None):
+    output = io.BytesIO()
+    summary = pd.DataFrame([{"Upload Section": upload_type, "Input Rows": int(total_rows),
+                             "Successfully Processed": int(success_count), "Skipped Rows": int(len(skipped_rows))}])
+    skipped_df = pd.DataFrame(skipped_rows)
+    if skipped_df.empty: skipped_df = pd.DataFrame(columns=["Excel Row", "Error Reason"])
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        summary.to_excel(writer, index=False, sheet_name="Summary")
+        skipped_df.to_excel(writer, index=False, sheet_name="Skipped Records")
+        for sheet_name, rows in (extra_sheets or {}).items():
+            pd.DataFrame(rows).to_excel(writer, index=False, sheet_name=sheet_name[:31])
+    output.seek(0)
+    return output
+
+
+def _send_upload_report(upload_type, total_rows, success_count, skipped_rows, extra_sheets=None, year=None):
+    report = _upload_report(upload_type, total_rows, success_count, skipped_rows, extra_sheets)
+    safe_type = re.sub(r"[^a-z0-9]+", "_", upload_type.lower()).strip("_")
+    suffix = f"_{year}" if year else ""
+    return send_file(report, as_attachment=True, download_name=f"{safe_type}_upload_report{suffix}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
@@ -3953,22 +3985,33 @@ def admin_faculty_management():
                     missing=[c for c in ["Name","Email","Department"] if c not in df.columns]
                     if missing: flash("Missing column(s): "+", ".join(missing))
                     else:
-                        created=associated=skipped=0
-                        for _,r in df.iterrows():
-                            name=str(r["Name"]).strip(); email=str(r["Email"]).strip().lower(); dept=admin_dept if admin_role=="admin" else str(r["Department"]).strip()
-                            if not name or not email or not dept: skipped+=1; continue
+                        created=associated=0
+                        skipped_rows=[]
+                        for idx,r in df.iterrows():
+                            excel_row=int(idx)+2
+                            name=_upload_value(r["Name"]); email=_upload_value(r["Email"], lower=True); dept=admin_dept if admin_role=="admin" else _upload_value(r["Department"])
+                            if not name or not email or not dept:
+                                skipped_rows.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Missing Name, Email, or Department"}); continue
+                            if "@" not in email or email.startswith("@") or email.endswith("@"):
+                                skipped_rows.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Invalid email address"}); continue
                             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
                             if f:
                                 fid=f["id"]
                                 execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
-                                if cur.fetchone(): skipped+=1; continue
+                                if cur.fetchone():
+                                    skipped_rows.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Faculty already belongs to selected batch"}); continue
                                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); associated+=1
                             else:
                                 password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
-                                execute(cur,"""INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)""",(name,email,password_hash,dept))
+                                execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,dept))
                                 execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
                                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created+=1
-                        con.commit(); flash(f"Batch {view_batch['academic_year']} faculty upload completed. New: {created}, Existing faculty linked: {associated}, Skipped: {skipped}")
+                        con.commit()
+                        flash(f"Batch {view_batch['academic_year']} faculty upload completed. New: {created}, Existing faculty linked: {associated}, Skipped: {len(skipped_rows)}. Report downloaded.")
+                        report=_upload_report("Faculty",len(df),created+associated,skipped_rows)
+                        if pg_pool: pg_pool.putconn(con)
+                        else: con.close()
+                        return send_file(report,as_attachment=True,download_name=f"faculty_upload_report_{view_batch['academic_year']}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         elif action=="manual_add":
             name=request.form.get("name").strip(); email=request.form.get("email").strip().lower(); department=admin_dept if admin_role=="admin" else request.form.get("department")
@@ -4033,28 +4076,27 @@ def admin_faculty_bulk_upload():
             else: con.close()
             flash("Missing column(s): "+", ".join(missing)); return redirect(request.url)
         created=[]; associated=[]; skipped=[]
-        for _,r in df.iterrows():
-            name=str(r["Name"]).strip(); email=str(r["Email"]).strip().lower(); dept=str(r["Department"]).strip()
-            if not name or not email or not dept: skipped.append((name,email,dept,"Missing data")); continue
+        for idx,r in df.iterrows():
+            excel_row=int(idx)+2
+            name=_upload_value(r["Name"]); email=_upload_value(r["Email"], lower=True); dept=_upload_value(r["Department"])
+            if not name or not email or not dept:
+                skipped.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Missing Name, Email, or Department"}); continue
+            if "@" not in email or email.startswith("@") or email.endswith("@"):
+                skipped.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Invalid email address"}); continue
             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
             if f:
                 fid=f["id"]; execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
-                if cur.fetchone(): skipped.append((name,email,dept,"Already in selected batch")); continue
+                if cur.fetchone(): skipped.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Faculty already belongs to selected batch"}); continue
                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); associated.append((name,email,dept,"Existing faculty linked")); continue
             raw_password=generate_random_password(10); password_hash=generate_password_hash(raw_password)
             execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,dept))
             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
-            execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created.append((name,email,dept,raw_password))
+            execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created.append({"Name":name,"Email":email,"Department":dept,"Generated Password":raw_password})
         con.commit()
         if pg_pool: pg_pool.putconn(con)
         else: con.close()
-        if created:
-            out_df=pd.DataFrame(created,columns=["Name","Email","Department","Generated Password"])
-            out_file=f"faculty_generated_passwords_{view_batch['academic_year']}.xlsx"; out_df.to_excel(out_file,index=False)
-            flash(f"Faculty upload completed. New: {len(created)}, Existing linked: {len(associated)}, Skipped: {len(skipped)}")
-            return send_file(out_file,as_attachment=True)
-        flash(f"Faculty upload completed. New: 0, Existing linked: {len(associated)}, Skipped: {len(skipped)}")
-        return redirect(url_for("admin_faculty_bulk_upload"))
+        flash(f"Faculty upload completed. New: {len(created)}, Existing linked: {len(associated)}, Skipped: {len(skipped)}. Report downloaded.")
+        return _send_upload_report("Faculty",len(df),len(created)+len(associated),skipped,{"Generated Passwords":created},view_batch['academic_year'])
 
     if pg_pool: pg_pool.putconn(con)
     else: con.close()
@@ -4192,34 +4234,31 @@ def admin_students():
             skipped = []
             password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
 
-            for _, r in df.iterrows():
-                usn = str(r["USN"]).strip().upper()
-                email = str(r["Email"]).strip().lower()
-                name = str(r["Name"]).strip()
-                dept = dept_admin_department if is_dept_admin else str(r["Department"]).strip()
-                sec = str(r["Section"]).strip()
-
-                if not usn or not email or not name or not dept:
-                    skipped.append((usn, email, "Missing data"))
+            for idx, r in df.iterrows():
+                excel_row = int(idx) + 2
+                usn = _upload_value(r["USN"], upper=True)
+                email = _upload_value(r["Email"], lower=True)
+                name = _upload_value(r["Name"])
+                dept = dept_admin_department if is_dept_admin else _upload_value(r["Department"])
+                sec = _upload_value(r["Section"])
+                if not usn or not email or not name or not dept or not sec:
+                    skipped.append({"Excel Row":excel_row,"USN":usn,"Email":email,"Name":name,"Department":dept,"Section":sec,"Error Reason":"Missing USN, Email, Name, Department, or Section"})
                     continue
-
+                if "@" not in email or email.startswith("@") or email.endswith("@"):
+                    skipped.append({"Excel Row":excel_row,"USN":usn,"Email":email,"Name":name,"Department":dept,"Section":sec,"Error Reason":"Invalid email address"})
+                    continue
                 execute(cur,"SELECT id FROM students WHERE usn=? OR email=?", (usn, email))
                 existing = cur.fetchone()
                 if existing:
-                    skipped.append((usn, email, "USN or email already exists"))
+                    skipped.append({"Excel Row":excel_row,"USN":usn,"Email":email,"Name":name,"Department":dept,"Section":sec,"Error Reason":"USN or email already exists"})
                     continue
-
-                execute(cur,"""
-                    INSERT INTO students(
-                        usn,email,password_hash,name,department,section,
-                        must_reset_password,batch_id
-                    )
-                    VALUES (?,?,?,?,?,?,1,?)
-                """, (usn, email, password_hash, name, dept, sec, batch_id))
+                execute(cur,"""INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password,batch_id) VALUES (?,?,?,?,?,?,1,?)""", (usn,email,password_hash,name,dept,sec,batch_id))
                 created += 1
-
             con.commit()
-            flash(f"Batch {view_batch['academic_year']} upload completed. Created: {created}, Skipped: {len(skipped)}")
+            flash(f"Batch {view_batch['academic_year']} student upload completed. Created: {created}, Skipped: {len(skipped)}. Report downloaded.")
+            if pg_pool: pg_pool.putconn(con)
+            else: con.close()
+            return _send_upload_report("Students",len(df),created,skipped,year=view_batch['academic_year'])
 
         elif action == "manual_add":
             usn = request.form["usn"].strip().upper()
@@ -5649,17 +5688,25 @@ def admin_upload():
             return redirect(request.url)
 
         added = 0
-        skipped = 0
+        skipped_rows = []
 
-        for _, r in df.iterrows():
-
-            year = str(r["Year"]).strip()
-            title = str(r["Problem Statement"]).strip()
-            category = str(r["Type"]).strip()
-            domain_theme = str(r["Domain/Theme"]).strip()
-            problem_description = str(r["Problem Description"]).strip()
-            problem_details = str(r["Problem Details"]).strip()
-            expected_outcome = str(r["Expected Outcome"]).strip()
+        for idx, r in df.iterrows():
+            excel_row = int(idx) + 2
+            year = _upload_value(r["Year"])
+            title = _upload_value(r["Problem Statement"])
+            category = _upload_value(r["Type"])
+            domain_theme = _upload_value(r["Domain/Theme"])
+            problem_description = _upload_value(r["Problem Description"])
+            problem_details = _upload_value(r["Problem Details"])
+            expected_outcome = _upload_value(r["Expected Outcome"])
+            missing_fields = [label for label, value in [
+                ("Year", year), ("Problem Statement", title), ("Type", category),
+                ("Domain/Theme", domain_theme), ("Problem Description", problem_description),
+                ("Problem Details", problem_details), ("Expected Outcome", expected_outcome)
+            ] if not value]
+            if missing_fields:
+                skipped_rows.append({"Excel Row":excel_row,"Year":year,"Problem Statement":title,"Type":category,"Domain/Theme":domain_theme,"Problem Description":problem_description,"Problem Details":problem_details,"Expected Outcome":expected_outcome,"Error Reason":"Missing required value(s): " + ", ".join(missing_fields)})
+                continue
 
             # ✅ FIXED: PostgreSQL placeholder
             execute(cur, """
@@ -5668,7 +5715,7 @@ def admin_upload():
             """, (year, title, active_batch_id))
 
             if list(cur.fetchone().values())[0] > 0:
-                skipped += 1
+                skipped_rows.append({"Excel Row":excel_row,"Year":year,"Problem Statement":title,"Type":category,"Domain/Theme":domain_theme,"Error Reason":"Duplicate problem statement already exists in this batch"})
                 continue
 
             # ✅ FIXED: PostgreSQL placeholder
@@ -5698,9 +5745,8 @@ def admin_upload():
         else:
             con.close()
 
-        flash(f"{added} new problems added ✅ | {skipped} skipped (duplicates)")
-
-        return redirect(url_for("admin_upload"))
+        flash(f"Problem upload completed. Added: {added}, Skipped: {len(skipped_rows)}. Report downloaded.")
+        return _send_upload_report("Problem Statements",len(df),added,skipped_rows,year="active_batch")
 
     return render_template("admin_upload.html", active_page="upload")
 
