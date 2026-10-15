@@ -4725,6 +4725,7 @@ def index():
 def register(pid):
 
     from datetime import datetime
+    clear_saved_form = session.pop("clear_registration_form_pid", None) == pid
 
     if not session.get("student_usn"):
         flash("Please login as student to register a team.")
@@ -4908,59 +4909,73 @@ def register(pid):
                 return redirect(request.url)
             used_emails.add(email)
 
-        # ---------------- INSERT TEAM ----------------
-        execute(cur, """
-            INSERT INTO teams(
+        try:
+            # ---------------- INSERT TEAM ----------------
+            execute(cur, """
+                INSERT INTO teams(
+                    team_name,
+                    leader_name,
+                    leader_usn,
+                    leader_email,
+                    leader_phone,
+                    leader_department,
+                    assigned_department,
+                    leader_section,
+                    problem_id,
+                    batch_id,
+                    created_at
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
+            """, (
                 team_name,
                 leader_name,
                 leader_usn,
                 leader_email,
                 leader_phone,
                 leader_department,
-                assigned_department,
+                leader_department,   # IMPORTANT SYNC
                 leader_section,
-                problem_id,
-                batch_id,
-                created_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING id
-        """, (
-            team_name,
-            leader_name,
-            leader_usn,
-            leader_email,
-            leader_phone,
-            leader_department,
-            leader_department,   # IMPORTANT SYNC
-            leader_section,
-            pid,
-            active_batch_id,
-            datetime.now()
-        ))
+                pid,
+                active_batch_id,
+                datetime.now()
+            ))
 
-        team_id = cur.fetchone()["id"]
+            team_id = cur.fetchone()["id"]
 
-        # ---------------- INSERT MEMBERS ----------------
-        for name, usn, email, phone, dept, sec in members:
-            execute(cur, """
-                INSERT INTO team_members(
-                    team_id,
-                    member_name,
-                    usn,
-                    email,
-                    phone,
-                    department,
-                    section
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s)
-            """, (team_id, name, usn, email, phone, dept, sec))
+            # ---------------- INSERT MEMBERS ----------------
+            for name, usn, email, phone, dept, sec in members:
+                execute(cur, """
+                    INSERT INTO team_members(
+                        team_id,
+                        member_name,
+                        usn,
+                        email,
+                        phone,
+                        department,
+                        section
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+                """, (team_id, name, usn, email, phone, dept, sec))
 
-        con.commit()
+            con.commit()
+
+        except Exception:
+            try:
+                con.rollback()
+            except Exception:
+                pass
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Registration could not be completed. Please check the details or confirm that the Team Leader USN is not already registered. Your entered details have been retained.")
+            return redirect(request.url)
 
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
 
+        session["clear_registration_form_pid"] = pid
         flash("Team registered successfully ✅")
         return redirect(url_for("student_my_project"))
 
@@ -4969,7 +4984,7 @@ def register(pid):
     else:
         con.close()
 
-    return render_template("register.html", title=problem_title)
+    return render_template("register.html", title=problem_title, clear_saved_form=clear_saved_form)
 
 @app.route("/admin/unlock-problem/<int:pid>", methods=["POST"])
 def unlock_problem(pid):
