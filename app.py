@@ -31,6 +31,16 @@ DEPARTMENTS = [
 ]
 ACADEMIC_SUPPORT_DEPARTMENTS = DEPARTMENTS + ["PHY", "CHE", "MAT"]
 
+# Display names requested by the department. Stored values remain unchanged so
+# existing registrations, filters, and historical records continue to work.
+DEPARTMENT_DISPLAY_NAMES = {"CSBS": "CSE Allied", "VLSI": "Core"}
+
+@app.template_filter("department_label")
+def department_label(value):
+    if value is None:
+        return value
+    return DEPARTMENT_DISPLAY_NAMES.get(str(value), str(value))
+
 #app.secret_key = "rnsit_admin_secret_2025"
 
 app.secret_key = "rnsit-multidisciplinary-project-2025-26"
@@ -4786,6 +4796,19 @@ def register(pid):
             flash("Team must have between 4 and 6 members (including leader).")
             return redirect(request.url)
 
+        # ---------------- CORE BRANCH RULE ----------------
+        # VLSI is classified as Core for registration validation.
+        # CSBS is CSE Allied and does not satisfy the Core requirement.
+        core_departments = {"VLSI", "ECE", "EEE", "ME", "CV"}
+        team_departments = [leader_department] + [member[4] for member in members]
+        if not any(dept in core_departments for dept in team_departments):
+            if pg_pool:
+                pg_pool.putconn(con)
+            else:
+                con.close()
+            flash("Registration rule: At least 1 team member must be from a Core branch (VLSI, ECE, EEE, ME, or CV).")
+            return redirect(request.url)
+
         # ---------------- DUPLICATE CHECKS ----------------
         execute(cur, "SELECT COUNT(*) FROM teams WHERE leader_usn=%s AND batch_id=%s", (leader_usn, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
@@ -5702,7 +5725,8 @@ def admin_problems():
             max_teams,
             problem_description,
             problem_details,
-            expected_outcome
+            expected_outcome,
+            COALESCE(is_locked, 0) AS is_locked
         FROM problems
         WHERE batch_id=%s
         ORDER BY id
@@ -5721,6 +5745,158 @@ def admin_problems():
         view_batch=view_batch,
         active_page="problems"
     )
+
+
+@app.route("/admin/problems/download/<int:problem_id>")
+def admin_download_problem(problem_id):
+    """Download one uploaded problem statement as a readable text file."""
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+
+    con = db()
+    cur = con.cursor()
+    view_batch = get_admin_view_batch(cur)
+    view_batch_id = view_batch["id"] if view_batch else None
+    if not view_batch_id:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin_problems"))
+
+    execute(cur, """
+        SELECT year, title, category, domain_theme, max_teams,
+               problem_description, problem_details, expected_outcome
+        FROM problems WHERE id=%s AND batch_id=%s
+    """, (problem_id, view_batch_id))
+    problem = cur.fetchone()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    if not problem:
+        flash("Problem statement not found in the selected batch.")
+        return redirect(url_for("admin_problems"))
+
+    content = (
+        f"Problem Statement: {problem['title'] or ''}\n"
+        f"Year: {problem['year'] or ''}\n"
+        f"Type: {problem['category'] or ''}\n"
+        f"Domain / Theme: {problem['domain_theme'] or ''}\n"
+        f"Maximum Teams: {problem['max_teams'] or ''}\n\n"
+        f"Problem Description\n{problem['problem_description'] or ''}\n\n"
+        f"Problem Details\n{problem['problem_details'] or ''}\n\n"
+        f"Expected Outcome\n{problem['expected_outcome'] or ''}\n"
+    )
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", str(problem['title'] or 'problem')).strip("_")[:70] or "problem"
+    output = io.BytesIO(content.encode("utf-8"))
+    return send_file(output, mimetype="text/plain; charset=utf-8", as_attachment=True,
+                     download_name=f"{safe_name}.txt")
+
+
+@app.route("/admin/problems/edit/<int:problem_id>", methods=["GET", "POST"])
+def admin_edit_problem(problem_id):
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    if session.get("admin_role") != "super_admin":
+        flash("Only Super Admin can modify problem statements.")
+        return redirect(url_for("admin_problems"))
+
+    con = db()
+    cur = con.cursor()
+    view_batch = get_admin_view_batch(cur)
+    view_batch_id = view_batch["id"] if view_batch else None
+    if not view_batch_id:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin_problems"))
+    if is_admin_batch_read_only(view_batch):
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Historical batches are read-only. Problem statements cannot be modified.")
+        return redirect(url_for("admin_problems"))
+
+    execute(cur, """SELECT id, year, title, category, domain_theme, max_teams,
+                      problem_description, problem_details, expected_outcome
+                   FROM problems WHERE id=%s AND batch_id=%s""", (problem_id, view_batch_id))
+    problem = cur.fetchone()
+    if not problem:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Problem statement not found in the selected batch.")
+        return redirect(url_for("admin_problems"))
+
+    if request.method == "POST":
+        values = (
+            request.form.get("year", "").strip(),
+            request.form.get("title", "").strip(),
+            request.form.get("category", "").strip(),
+            request.form.get("domain_theme", "").strip(),
+            request.form.get("max_teams", "1").strip() or "1",
+            request.form.get("problem_description", "").strip(),
+            request.form.get("problem_details", "").strip(),
+            request.form.get("expected_outcome", "").strip(),
+            problem_id, view_batch_id
+        )
+        try:
+            execute(cur, """UPDATE problems SET year=%s, title=%s, category=%s,
+                       domain_theme=%s, max_teams=%s, problem_description=%s,
+                       problem_details=%s, expected_outcome=%s
+                       WHERE id=%s AND batch_id=%s""", values)
+            con.commit()
+            flash("Problem statement updated successfully.")
+        except Exception as exc:
+            con.rollback()
+            flash(f"Could not update problem statement: {exc}")
+        finally:
+            if pg_pool: pg_pool.putconn(con)
+            else: con.close()
+        return redirect(url_for("admin_problems"))
+
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    return render_template("admin_edit_problem.html", problem=problem,
+                           view_batch=view_batch, active_page="problems")
+
+
+@app.route("/admin/problems/toggle/<int:problem_id>", methods=["POST"])
+def admin_toggle_problem(problem_id):
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    if session.get("admin_role") != "super_admin":
+        flash("Only Super Admin can enable or disable problem statements.")
+        return redirect(url_for("admin_problems"))
+
+    con = db()
+    cur = con.cursor()
+    view_batch = get_admin_view_batch(cur)
+    view_batch_id = view_batch["id"] if view_batch else None
+    if not view_batch_id:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("No batch is configured.")
+        return redirect(url_for("admin_problems"))
+    if is_admin_batch_read_only(view_batch):
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Historical batches are read-only. Problem availability cannot be changed.")
+        return redirect(url_for("admin_problems"))
+
+    execute(cur, "SELECT id, title, COALESCE(is_locked, 0) AS is_locked FROM problems WHERE id=%s AND batch_id=%s",
+            (problem_id, view_batch_id))
+    problem = cur.fetchone()
+    if not problem:
+        if pg_pool: pg_pool.putconn(con)
+        else: con.close()
+        flash("Problem statement not found in the selected batch.")
+        return redirect(url_for("admin_problems"))
+
+    new_locked = 0 if int(problem["is_locked"] or 0) else 1
+    execute(cur, "UPDATE problems SET is_locked=%s, locked=%s WHERE id=%s AND batch_id=%s",
+            (new_locked, new_locked, problem_id, view_batch_id))
+    con.commit()
+    if pg_pool: pg_pool.putconn(con)
+    else: con.close()
+    flash(f"Problem {'disabled' if new_locked else 'enabled'}: {problem['title']}")
+    return redirect(url_for("admin_problems"))
 
 
 @app.route("/admin/problems/delete/<int:problem_id>", methods=["POST"])
