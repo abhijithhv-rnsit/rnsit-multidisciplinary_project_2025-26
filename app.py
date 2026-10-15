@@ -65,7 +65,7 @@ ACADEMIC_SUPPORT_DEPARTMENTS = DEPARTMENTS + ["PHY", "CHE", "MAT"]
 
 # Display names requested by the department. Stored values remain unchanged so
 # existing registrations, filters, and historical records continue to work.
-DEPARTMENT_DISPLAY_NAMES = {"CSBS": "CSBS (CSE Allied)", "VLSI": "VLSI (Core)"}
+DEPARTMENT_DISPLAY_NAMES = {"CSBS": "CSBS", "VLSI": "VLSI"}
 
 # Branches treated as Core for team-composition validation.
 CORE_DEPARTMENTS = {"VLSI", "ECE", "EEE", "CV", "ME"}
