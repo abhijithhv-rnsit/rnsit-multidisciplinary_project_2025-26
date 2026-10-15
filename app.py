@@ -9,7 +9,6 @@ import sqlite3, pandas as pd, os
 
 import os
 import io
-import re
 import pandas as pd
 import random, string
 from flask import send_file
@@ -49,6 +48,7 @@ def _send_upload_report(upload_type, total_rows, success_count, skipped_rows, ex
     return send_file(report, as_attachment=True, download_name=f"{safe_type}_upload_report{suffix}.xlsx",
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+
 app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
 DEFAULT_STUDENT_PASSWORD = "RNSIT@2026"
@@ -58,29 +58,12 @@ DEFAULT_FACULTY_PASSWORD = "RNSIT@2026"
 # Keep all department validation, filters, uploads and reports aligned with this list.
 DEPARTMENTS = [
     "CSE", "CSE-AIML", "CSE-DS", "CSE-CY",
-    "VLSI", "CSBS",
+    "VLSI", "CSBS",  # VLSI is Core; CSBS is CSE Allied
     "ECE", "EEE", "CV", "ME"
 ]
+CORE_DEPARTMENTS = {"CSE", "CSE-AIML", "CSE-DS", "CSE-CY", "VLSI"}
+CSE_ALLIED_DEPARTMENTS = {"CSBS"}
 ACADEMIC_SUPPORT_DEPARTMENTS = DEPARTMENTS + ["PHY", "CHE", "MAT"]
-
-# Display names requested by the department. Stored values remain unchanged so
-# existing registrations, filters, and historical records continue to work.
-DEPARTMENT_DISPLAY_NAMES = {"CSBS": "CSE Allied", "VLSI": "Core"}
-
-# Branches treated as Core for team-composition validation.
-CORE_DEPARTMENTS = {"VLSI", "ECE", "EEE", "CV", "ME"}
-
-def has_core_member(leader_department, members):
-    """Return True when the leader or any member belongs to a Core branch."""
-    departments = [str(leader_department or "").strip().upper()]
-    departments.extend(str(member[4] or "").strip().upper() for member in members)
-    return any(dept in CORE_DEPARTMENTS for dept in departments)
-
-@app.template_filter("department_label")
-def department_label(value):
-    if value is None:
-        return value
-    return DEPARTMENT_DISPLAY_NAMES.get(str(value), str(value))
 
 #app.secret_key = "rnsit_admin_secret_2025"
 
@@ -3985,33 +3968,22 @@ def admin_faculty_management():
                     missing=[c for c in ["Name","Email","Department"] if c not in df.columns]
                     if missing: flash("Missing column(s): "+", ".join(missing))
                     else:
-                        created=associated=0
-                        skipped_rows=[]
-                        for idx,r in df.iterrows():
-                            excel_row=int(idx)+2
-                            name=_upload_value(r["Name"]); email=_upload_value(r["Email"], lower=True); dept=admin_dept if admin_role=="admin" else _upload_value(r["Department"])
-                            if not name or not email or not dept:
-                                skipped_rows.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Missing Name, Email, or Department"}); continue
-                            if "@" not in email or email.startswith("@") or email.endswith("@"):
-                                skipped_rows.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Invalid email address"}); continue
+                        created=associated=skipped=0
+                        for _,r in df.iterrows():
+                            name=str(r["Name"]).strip(); email=str(r["Email"]).strip().lower(); dept=admin_dept if admin_role=="admin" else str(r["Department"]).strip()
+                            if not name or not email or not dept: skipped+=1; continue
                             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
                             if f:
                                 fid=f["id"]
                                 execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
-                                if cur.fetchone():
-                                    skipped_rows.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Faculty already belongs to selected batch"}); continue
+                                if cur.fetchone(): skipped+=1; continue
                                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); associated+=1
                             else:
                                 password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
-                                execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,dept))
+                                execute(cur,"""INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)""",(name,email,password_hash,dept))
                                 execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
                                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created+=1
-                        con.commit()
-                        flash(f"Batch {view_batch['academic_year']} faculty upload completed. New: {created}, Existing faculty linked: {associated}, Skipped: {len(skipped_rows)}. Report downloaded.")
-                        report=_upload_report("Faculty",len(df),created+associated,skipped_rows)
-                        if pg_pool: pg_pool.putconn(con)
-                        else: con.close()
-                        return send_file(report,as_attachment=True,download_name=f"faculty_upload_report_{view_batch['academic_year']}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        con.commit(); flash(f"Batch {view_batch['academic_year']} faculty upload completed. New: {created}, Existing faculty linked: {associated}, Skipped: {skipped}")
 
         elif action=="manual_add":
             name=request.form.get("name").strip(); email=request.form.get("email").strip().lower(); department=admin_dept if admin_role=="admin" else request.form.get("department")
@@ -4076,27 +4048,28 @@ def admin_faculty_bulk_upload():
             else: con.close()
             flash("Missing column(s): "+", ".join(missing)); return redirect(request.url)
         created=[]; associated=[]; skipped=[]
-        for idx,r in df.iterrows():
-            excel_row=int(idx)+2
-            name=_upload_value(r["Name"]); email=_upload_value(r["Email"], lower=True); dept=_upload_value(r["Department"])
-            if not name or not email or not dept:
-                skipped.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Missing Name, Email, or Department"}); continue
-            if "@" not in email or email.startswith("@") or email.endswith("@"):
-                skipped.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Invalid email address"}); continue
+        for _,r in df.iterrows():
+            name=str(r["Name"]).strip(); email=str(r["Email"]).strip().lower(); dept=str(r["Department"]).strip()
+            if not name or not email or not dept: skipped.append((name,email,dept,"Missing data")); continue
             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
             if f:
                 fid=f["id"]; execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
-                if cur.fetchone(): skipped.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Faculty already belongs to selected batch"}); continue
+                if cur.fetchone(): skipped.append((name,email,dept,"Already in selected batch")); continue
                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); associated.append((name,email,dept,"Existing faculty linked")); continue
             raw_password=generate_random_password(10); password_hash=generate_password_hash(raw_password)
             execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,dept))
             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
-            execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created.append({"Name":name,"Email":email,"Department":dept,"Generated Password":raw_password})
+            execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created.append((name,email,dept,raw_password))
         con.commit()
         if pg_pool: pg_pool.putconn(con)
         else: con.close()
-        flash(f"Faculty upload completed. New: {len(created)}, Existing linked: {len(associated)}, Skipped: {len(skipped)}. Report downloaded.")
-        return _send_upload_report("Faculty",len(df),len(created)+len(associated),skipped,{"Generated Passwords":created},view_batch['academic_year'])
+        if created:
+            out_df=pd.DataFrame(created,columns=["Name","Email","Department","Generated Password"])
+            out_file=f"faculty_generated_passwords_{view_batch['academic_year']}.xlsx"; out_df.to_excel(out_file,index=False)
+            flash(f"Faculty upload completed. New: {len(created)}, Existing linked: {len(associated)}, Skipped: {len(skipped)}")
+            return send_file(out_file,as_attachment=True)
+        flash(f"Faculty upload completed. New: 0, Existing linked: {len(associated)}, Skipped: {len(skipped)}")
+        return redirect(url_for("admin_faculty_bulk_upload"))
 
     if pg_pool: pg_pool.putconn(con)
     else: con.close()
@@ -4234,31 +4207,34 @@ def admin_students():
             skipped = []
             password_hash = generate_password_hash(DEFAULT_STUDENT_PASSWORD)
 
-            for idx, r in df.iterrows():
-                excel_row = int(idx) + 2
-                usn = _upload_value(r["USN"], upper=True)
-                email = _upload_value(r["Email"], lower=True)
-                name = _upload_value(r["Name"])
-                dept = dept_admin_department if is_dept_admin else _upload_value(r["Department"])
-                sec = _upload_value(r["Section"])
-                if not usn or not email or not name or not dept or not sec:
-                    skipped.append({"Excel Row":excel_row,"USN":usn,"Email":email,"Name":name,"Department":dept,"Section":sec,"Error Reason":"Missing USN, Email, Name, Department, or Section"})
+            for _, r in df.iterrows():
+                usn = str(r["USN"]).strip().upper()
+                email = str(r["Email"]).strip().lower()
+                name = str(r["Name"]).strip()
+                dept = dept_admin_department if is_dept_admin else str(r["Department"]).strip()
+                sec = str(r["Section"]).strip()
+
+                if not usn or not email or not name or not dept:
+                    skipped.append((usn, email, "Missing data"))
                     continue
-                if "@" not in email or email.startswith("@") or email.endswith("@"):
-                    skipped.append({"Excel Row":excel_row,"USN":usn,"Email":email,"Name":name,"Department":dept,"Section":sec,"Error Reason":"Invalid email address"})
-                    continue
+
                 execute(cur,"SELECT id FROM students WHERE usn=? OR email=?", (usn, email))
                 existing = cur.fetchone()
                 if existing:
-                    skipped.append({"Excel Row":excel_row,"USN":usn,"Email":email,"Name":name,"Department":dept,"Section":sec,"Error Reason":"USN or email already exists"})
+                    skipped.append((usn, email, "USN or email already exists"))
                     continue
-                execute(cur,"""INSERT INTO students(usn,email,password_hash,name,department,section,must_reset_password,batch_id) VALUES (?,?,?,?,?,?,1,?)""", (usn,email,password_hash,name,dept,sec,batch_id))
+
+                execute(cur,"""
+                    INSERT INTO students(
+                        usn,email,password_hash,name,department,section,
+                        must_reset_password,batch_id
+                    )
+                    VALUES (?,?,?,?,?,?,1,?)
+                """, (usn, email, password_hash, name, dept, sec, batch_id))
                 created += 1
+
             con.commit()
-            flash(f"Batch {view_batch['academic_year']} student upload completed. Created: {created}, Skipped: {len(skipped)}. Report downloaded.")
-            if pg_pool: pg_pool.putconn(con)
-            else: con.close()
-            return _send_upload_report("Students",len(df),created,skipped,year=view_batch['academic_year'])
+            flash(f"Batch {view_batch['academic_year']} upload completed. Created: {created}, Skipped: {len(skipped)}")
 
         elif action == "manual_add":
             usn = request.form["usn"].strip().upper()
@@ -4844,15 +4820,6 @@ def register(pid):
             flash("Team must have between 4 and 6 members (including leader).")
             return redirect(request.url)
 
-        # At least one team member, including the leader, must be from a Core branch.
-        if not has_core_member(leader_department, members):
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("At least one team member must belong to a Core branch (VLSI, ECE, EEE, CV, or ME).")
-            return redirect(request.url)
-
         # ---------------- DUPLICATE CHECKS ----------------
         execute(cur, "SELECT COUNT(*) FROM teams WHERE leader_usn=%s AND batch_id=%s", (leader_usn, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
@@ -5123,10 +5090,6 @@ def admin_edit_team(team_id):
         team_size = 1 + len(members_new)
         if team_size < 4 or team_size > 6:
             flash("Team size must be between 4 and 6.")
-            return redirect(request.url)
-
-        if not has_core_member(leader_department, members_new):
-            flash("At least one team member must belong to a Core branch (VLSI, ECE, EEE, CV, or ME).")
             return redirect(request.url)
 
         # ---------------- INSERT MEMBERS ----------------
@@ -5780,8 +5743,7 @@ def admin_problems():
             max_teams,
             problem_description,
             problem_details,
-            expected_outcome,
-            COALESCE(is_locked, 0) AS is_locked
+            expected_outcome
         FROM problems
         WHERE batch_id=%s
         ORDER BY id
@@ -5800,158 +5762,6 @@ def admin_problems():
         view_batch=view_batch,
         active_page="problems"
     )
-
-
-@app.route("/admin/problems/download/<int:problem_id>")
-def admin_download_problem(problem_id):
-    """Download one uploaded problem statement as a readable text file."""
-    if not session.get("admin_logged_in"):
-        return redirect(url_for("admin"))
-
-    con = db()
-    cur = con.cursor()
-    view_batch = get_admin_view_batch(cur)
-    view_batch_id = view_batch["id"] if view_batch else None
-    if not view_batch_id:
-        if pg_pool: pg_pool.putconn(con)
-        else: con.close()
-        flash("No batch is configured.")
-        return redirect(url_for("admin_problems"))
-
-    execute(cur, """
-        SELECT year, title, category, domain_theme, max_teams,
-               problem_description, problem_details, expected_outcome
-        FROM problems WHERE id=%s AND batch_id=%s
-    """, (problem_id, view_batch_id))
-    problem = cur.fetchone()
-    if pg_pool: pg_pool.putconn(con)
-    else: con.close()
-    if not problem:
-        flash("Problem statement not found in the selected batch.")
-        return redirect(url_for("admin_problems"))
-
-    content = (
-        f"Problem Statement: {problem['title'] or ''}\n"
-        f"Year: {problem['year'] or ''}\n"
-        f"Type: {problem['category'] or ''}\n"
-        f"Domain / Theme: {problem['domain_theme'] or ''}\n"
-        f"Maximum Teams: {problem['max_teams'] or ''}\n\n"
-        f"Problem Description\n{problem['problem_description'] or ''}\n\n"
-        f"Problem Details\n{problem['problem_details'] or ''}\n\n"
-        f"Expected Outcome\n{problem['expected_outcome'] or ''}\n"
-    )
-    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", str(problem['title'] or 'problem')).strip("_")[:70] or "problem"
-    output = io.BytesIO(content.encode("utf-8"))
-    return send_file(output, mimetype="text/plain; charset=utf-8", as_attachment=True,
-                     download_name=f"{safe_name}.txt")
-
-
-@app.route("/admin/problems/edit/<int:problem_id>", methods=["GET", "POST"])
-def admin_edit_problem(problem_id):
-    if not session.get("admin_logged_in"):
-        return redirect(url_for("admin"))
-    if session.get("admin_role") != "super_admin":
-        flash("Only Super Admin can modify problem statements.")
-        return redirect(url_for("admin_problems"))
-
-    con = db()
-    cur = con.cursor()
-    view_batch = get_admin_view_batch(cur)
-    view_batch_id = view_batch["id"] if view_batch else None
-    if not view_batch_id:
-        if pg_pool: pg_pool.putconn(con)
-        else: con.close()
-        flash("No batch is configured.")
-        return redirect(url_for("admin_problems"))
-    if is_admin_batch_read_only(view_batch):
-        if pg_pool: pg_pool.putconn(con)
-        else: con.close()
-        flash("Historical batches are read-only. Problem statements cannot be modified.")
-        return redirect(url_for("admin_problems"))
-
-    execute(cur, """SELECT id, year, title, category, domain_theme, max_teams,
-                      problem_description, problem_details, expected_outcome
-                   FROM problems WHERE id=%s AND batch_id=%s""", (problem_id, view_batch_id))
-    problem = cur.fetchone()
-    if not problem:
-        if pg_pool: pg_pool.putconn(con)
-        else: con.close()
-        flash("Problem statement not found in the selected batch.")
-        return redirect(url_for("admin_problems"))
-
-    if request.method == "POST":
-        values = (
-            request.form.get("year", "").strip(),
-            request.form.get("title", "").strip(),
-            request.form.get("category", "").strip(),
-            request.form.get("domain_theme", "").strip(),
-            request.form.get("max_teams", "1").strip() or "1",
-            request.form.get("problem_description", "").strip(),
-            request.form.get("problem_details", "").strip(),
-            request.form.get("expected_outcome", "").strip(),
-            problem_id, view_batch_id
-        )
-        try:
-            execute(cur, """UPDATE problems SET year=%s, title=%s, category=%s,
-                       domain_theme=%s, max_teams=%s, problem_description=%s,
-                       problem_details=%s, expected_outcome=%s
-                       WHERE id=%s AND batch_id=%s""", values)
-            con.commit()
-            flash("Problem statement updated successfully.")
-        except Exception as exc:
-            con.rollback()
-            flash(f"Could not update problem statement: {exc}")
-        finally:
-            if pg_pool: pg_pool.putconn(con)
-            else: con.close()
-        return redirect(url_for("admin_problems"))
-
-    if pg_pool: pg_pool.putconn(con)
-    else: con.close()
-    return render_template("admin_edit_problem.html", problem=problem,
-                           view_batch=view_batch, active_page="problems")
-
-
-@app.route("/admin/problems/toggle/<int:problem_id>", methods=["POST"])
-def admin_toggle_problem(problem_id):
-    if not session.get("admin_logged_in"):
-        return redirect(url_for("admin"))
-    if session.get("admin_role") != "super_admin":
-        flash("Only Super Admin can enable or disable problem statements.")
-        return redirect(url_for("admin_problems"))
-
-    con = db()
-    cur = con.cursor()
-    view_batch = get_admin_view_batch(cur)
-    view_batch_id = view_batch["id"] if view_batch else None
-    if not view_batch_id:
-        if pg_pool: pg_pool.putconn(con)
-        else: con.close()
-        flash("No batch is configured.")
-        return redirect(url_for("admin_problems"))
-    if is_admin_batch_read_only(view_batch):
-        if pg_pool: pg_pool.putconn(con)
-        else: con.close()
-        flash("Historical batches are read-only. Problem availability cannot be changed.")
-        return redirect(url_for("admin_problems"))
-
-    execute(cur, "SELECT id, title, COALESCE(is_locked, 0) AS is_locked FROM problems WHERE id=%s AND batch_id=%s",
-            (problem_id, view_batch_id))
-    problem = cur.fetchone()
-    if not problem:
-        if pg_pool: pg_pool.putconn(con)
-        else: con.close()
-        flash("Problem statement not found in the selected batch.")
-        return redirect(url_for("admin_problems"))
-
-    new_locked = 0 if int(problem["is_locked"] or 0) else 1
-    execute(cur, "UPDATE problems SET is_locked=%s, locked=%s WHERE id=%s AND batch_id=%s",
-            (new_locked, new_locked, problem_id, view_batch_id))
-    con.commit()
-    if pg_pool: pg_pool.putconn(con)
-    else: con.close()
-    flash(f"Problem {'disabled' if new_locked else 'enabled'}: {problem['title']}")
-    return redirect(url_for("admin_problems"))
 
 
 @app.route("/admin/problems/delete/<int:problem_id>", methods=["POST"])
