@@ -127,7 +127,7 @@ Columns required: <b>Name</b>, <b>Email</b>, <b>Department</b>
 
 {% else %}
 
-<input type="hidden" name="department" value="{{session.admin_department|department_label}}">
+<input type="hidden" name="department" value="{{session.admin_department}}">
 <input type="text" class="form-control" value="{{session.admin_department|department_label}}" disabled>
 
 {% endif %}
@@ -316,7 +316,7 @@ data-bs-target="#editModal"
 data-id="{{f.id}}"
 data-name="{{f.name}}"
 data-email="{{f.email}}"
-data-department="{{ f.department|department_label }}">
+data-department="{{ f.department }}">
 Edit
 </button>
 

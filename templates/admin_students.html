@@ -59,7 +59,7 @@
         <input type="hidden" name="action" value="bulk_upload">
 
         {% if session.admin_role == "admin" %}
-          <input type="hidden" name="department" value="{{ session.admin_department|department_label }}">
+          <input type="hidden" name="department" value="{{ session.admin_department }}">
         {% endif %}
 
         <div class="row g-2 align-items-end">
@@ -121,7 +121,7 @@
                 {% endfor %}
               </select>
             {% else %}
-              <input type="hidden" name="department" value="{{ session.admin_department|department_label }}">
+              <input type="hidden" name="department" value="{{ session.admin_department }}">
               <input type="text" class="form-control" value="{{ session.admin_department|department_label }}" disabled>
             {% endif %}
 
@@ -145,7 +145,7 @@
   <form method="get" action="/admin/students" class="card shadow-sm p-3 mb-3">
 
     {% if session.admin_role == "admin" %}
-      <input type="hidden" name="dept" value="{{ session.admin_department|department_label }}">
+      <input type="hidden" name="dept" value="{{ session.admin_department }}">
     {% endif %}
 
     <!-- ADDED -->
@@ -291,7 +291,7 @@
                           data-usn="{{ s.usn }}"
                           data-email="{{ s.email }}"
                           data-name="{{ s.name }}"
-                          data-department="{{ s.department|department_label }}"
+                          data-department="{{ s.department }}"
                           data-section="{{ s.section }}">
                     Edit
                   </button>

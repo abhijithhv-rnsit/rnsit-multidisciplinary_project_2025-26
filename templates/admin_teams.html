@@ -42,7 +42,7 @@
 
       <div class="d-flex gap-2 flex-wrap">
         {% if session.admin_role == "admin" %}
-          <a href="/admin/export-teams?dept={{ session.admin_department|department_label }}"
+          <a href="/admin/export-teams?dept={{ session.admin_department }}"
              class="btn btn-success btn-sm">
             ⬇ Export Guide Allocation Report (Excel)
           </a>
