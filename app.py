@@ -35,6 +35,15 @@ ACADEMIC_SUPPORT_DEPARTMENTS = DEPARTMENTS + ["PHY", "CHE", "MAT"]
 # existing registrations, filters, and historical records continue to work.
 DEPARTMENT_DISPLAY_NAMES = {"CSBS": "CSE Allied", "VLSI": "Core"}
 
+# Branches treated as Core for team-composition validation.
+CORE_DEPARTMENTS = {"VLSI", "ECE", "EEE", "CV", "ME"}
+
+def has_core_member(leader_department, members):
+    """Return True when the leader or any member belongs to a Core branch."""
+    departments = [str(leader_department or "").strip().upper()]
+    departments.extend(str(member[4] or "").strip().upper() for member in members)
+    return any(dept in CORE_DEPARTMENTS for dept in departments)
+
 @app.template_filter("department_label")
 def department_label(value):
     if value is None:
@@ -4796,17 +4805,13 @@ def register(pid):
             flash("Team must have between 4 and 6 members (including leader).")
             return redirect(request.url)
 
-        # ---------------- CORE BRANCH RULE ----------------
-        # VLSI is classified as Core for registration validation.
-        # CSBS is CSE Allied and does not satisfy the Core requirement.
-        core_departments = {"VLSI", "ECE", "EEE", "ME", "CV"}
-        team_departments = [leader_department] + [member[4] for member in members]
-        if not any(dept in core_departments for dept in team_departments):
+        # At least one team member, including the leader, must be from a Core branch.
+        if not has_core_member(leader_department, members):
             if pg_pool:
                 pg_pool.putconn(con)
             else:
                 con.close()
-            flash("Registration rule: At least 1 team member must be from a Core branch (VLSI, ECE, EEE, ME, or CV).")
+            flash("At least one team member must belong to a Core branch (VLSI, ECE, EEE, CV, or ME).")
             return redirect(request.url)
 
         # ---------------- DUPLICATE CHECKS ----------------
@@ -5079,6 +5084,10 @@ def admin_edit_team(team_id):
         team_size = 1 + len(members_new)
         if team_size < 4 or team_size > 6:
             flash("Team size must be between 4 and 6.")
+            return redirect(request.url)
+
+        if not has_core_member(leader_department, members_new):
+            flash("At least one team member must belong to a Core branch (VLSI, ECE, EEE, CV, or ME).")
             return redirect(request.url)
 
         # ---------------- INSERT MEMBERS ----------------
