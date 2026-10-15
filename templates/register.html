@@ -66,7 +66,7 @@
         <div class="alert alert-warning mb-2">
           <b>Rules:</b><br>
           ✅ Team size must be <b>6</b> members (including Team Leader)<br>
-          ✅ <b>1-2 members</b> must be from <b>ECE / VLSI/EEE / ME / CV</b><br>
+          ✅ <b>1-2 members</b> must be from <b>ECE / VLSI / EEE / ME / CV</b><br>
           ✅ 4–6 team members including the leader; at least one member must be from a Core branch<br>
         </div>
 
@@ -230,6 +230,40 @@
 </footer>
 
 <script>
+
+  // Preserve every entered form value across server-side validation/database errors.
+  (function () {
+    const form = document.getElementById("regForm");
+    const storageKey = "rnsit_registration_form_" + window.location.pathname;
+    const clearSaved = {{ "true" if clear_saved_form else "false" }};
+    if (clearSaved) {
+      sessionStorage.removeItem(storageKey);
+    }
+    function saveForm() {
+      const values = {};
+      form.querySelectorAll("input, select, textarea").forEach((el) => {
+        if (!el.name) return;
+        values[el.name] = (el.type === "checkbox" || el.type === "radio")
+          ? el.checked : el.value;
+      });
+      sessionStorage.setItem(storageKey, JSON.stringify(values));
+    }
+    if (!clearSaved) {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(storageKey) || "{}");
+        form.querySelectorAll("input, select, textarea").forEach((el) => {
+          if (!el.name || !(el.name in saved)) return;
+          if (el.type === "checkbox" || el.type === "radio") el.checked = saved[el.name];
+          else el.value = saved[el.name];
+        });
+      } catch (e) {}
+    }
+    form.addEventListener("input", saveForm);
+    form.addEventListener("change", saveForm);
+    form.addEventListener("submit", saveForm);
+    if (clearSaved) sessionStorage.removeItem(storageKey);
+  })();
+
   function showClientError(msg) {
     const box = document.getElementById("clientErrorBox");
     box.innerText = msg;
