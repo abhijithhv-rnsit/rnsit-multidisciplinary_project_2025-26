@@ -6049,77 +6049,61 @@ def admin_delete_problem(problem_id):
 
 @app.route("/admin/problems/delete-all", methods=["POST"])
 def admin_delete_all_problems():
-
+    """Delete all problems and their associated team registrations for the selected active batch."""
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
     if session.get("admin_role") != "super_admin":
-        flash("Only Super Admin can delete problem statements.")
+        flash("Only Super Admin can delete problem statements and registrations.")
         return redirect(url_for("admin_problems"))
 
     con = db()
     cur = con.cursor()
+    try:
+        view_batch = get_admin_view_batch(cur)
+        view_batch_id = view_batch["id"] if view_batch else None
 
-    view_batch = get_admin_view_batch(cur)
-    view_batch_id = view_batch["id"] if view_batch else None
+        if not view_batch_id:
+            flash("No batch is configured.")
+            return redirect(url_for("admin_problems"))
 
-    if not view_batch_id:
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-        flash("No batch is configured.")
-        return redirect(url_for("admin_problems"))
+        if is_admin_batch_read_only(view_batch):
+            flash("Historical batches are read-only. Their problems and registrations cannot be deleted.")
+            return redirect(url_for("admin_problems"))
 
-    if is_admin_batch_read_only(view_batch):
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
-        flash("Historical batches are read-only. Problems cannot be deleted.")
-        return redirect(url_for("admin_problems"))
+        execute(cur, "SELECT COUNT(*) AS cnt FROM problems WHERE batch_id=%s", (view_batch_id,))
+        problem_count = int(cur.fetchone()["cnt"] or 0)
+        execute(cur, "SELECT COUNT(*) AS cnt FROM teams WHERE batch_id=%s", (view_batch_id,))
+        team_count = int(cur.fetchone()["cnt"] or 0)
 
-    # Safety rule: bulk deletion is allowed only when the selected batch has
-    # no registered teams. This prevents orphaned team records.
-    execute(cur, """
-        SELECT COUNT(*) AS cnt
-        FROM teams
-        WHERE batch_id=%s
-    """, (view_batch_id,))
-    team_count = cur.fetchone()["cnt"]
+        if problem_count == 0 and team_count == 0:
+            flash("No problem statements or team registrations found in the selected batch.")
+            return redirect(url_for("admin_problems"))
 
-    if team_count and int(team_count) > 0:
-        if pg_pool:
-            pg_pool.putconn(con)
-        else:
-            con.close()
+        # Delete team records first so their dependent member, project, submission,
+        # chat, progress and evaluation records can be removed by database cascades.
+        # The transaction ensures neither teams nor problems are partially deleted.
+        execute(cur, "DELETE FROM teams WHERE batch_id=%s", (view_batch_id,))
+        execute(cur, "DELETE FROM problems WHERE batch_id=%s", (view_batch_id,))
+        con.commit()
         flash(
-            f"Cannot delete all problems because {team_count} registered team(s) exist in this batch. "
-            "Remove/complete the batch data first."
+            f"Deleted {problem_count} problem statement(s) and {team_count} team registration(s) "
+            f"from {view_batch['academic_year']}."
         )
         return redirect(url_for("admin_problems"))
-
-    execute(cur, "SELECT COUNT(*) AS cnt FROM problems WHERE batch_id=%s", (view_batch_id,))
-    problem_count = cur.fetchone()["cnt"]
-
-    if not problem_count or int(problem_count) == 0:
+    except Exception as e:
+        try:
+            con.rollback()
+        except Exception:
+            pass
+        app.logger.exception("Delete All Problems failed for selected batch")
+        flash("Delete All Problems failed. No changes were committed. Check the application logs for details.")
+        return redirect(url_for("admin_problems"))
+    finally:
         if pg_pool:
             pg_pool.putconn(con)
         else:
             con.close()
-        flash("No problems found in the selected batch.")
-        return redirect(url_for("admin_problems"))
-
-    execute(cur, "DELETE FROM problems WHERE batch_id=%s", (view_batch_id,))
-    con.commit()
-
-    if pg_pool:
-        pg_pool.putconn(con)
-    else:
-        con.close()
-
-    flash(f"All {problem_count} problem statement(s) deleted from {view_batch['academic_year']}.")
-    return redirect(url_for("admin_problems"))
 
 
 @app.route("/admin/export/problems")
