@@ -3885,6 +3885,22 @@ def admin_faculty_management():
     batch_id=view_batch["id"]
     read_only=is_admin_batch_read_only(view_batch)
 
+    # One-time Batch 2 initialization: make every existing faculty account
+    # available in Batch 2 by default. A marker prevents disabled faculty from
+    # being re-enabled on every subsequent page load.
+    if view_batch.get("academic_year") == "2026-27" and not read_only:
+        execute(cur, """CREATE TABLE IF NOT EXISTS faculty_batch_defaults_applied (
+            batch_id INTEGER PRIMARY KEY REFERENCES batches(id) ON DELETE CASCADE,
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        execute(cur, "SELECT 1 FROM faculty_batch_defaults_applied WHERE batch_id=?", (batch_id,))
+        if not cur.fetchone():
+            execute(cur, """INSERT INTO faculty_batches(faculty_id,batch_id)
+                SELECT f.id, ? FROM faculty f
+                ON CONFLICT (faculty_id,batch_id) DO NOTHING""", (batch_id,))
+            execute(cur, "INSERT INTO faculty_batch_defaults_applied(batch_id) VALUES (?) ON CONFLICT (batch_id) DO NOTHING", (batch_id,))
+            con.commit()
+
     admin_role=session.get("admin_role"); admin_dept=session.get("admin_department")
     search=request.args.get("search","").strip().lower(); dept_filter=request.args.get("dept","").strip()
     page=int(request.args.get("page",1)); per_page=int(request.args.get("per_page",25))
@@ -3970,6 +3986,30 @@ def admin_faculty_management():
                 flash("Faculty is assigned to teams in this batch and cannot be deleted.")
             else:
                 execute(cur,"DELETE FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id)); con.commit(); flash("Faculty removed from selected batch ✅")
+
+        elif action in ("bulk_enable_batch", "bulk_disable_batch"):
+            faculty_ids=list(dict.fromkeys(request.form.getlist("faculty_id")))
+            if not faculty_ids:
+                flash("Select at least one faculty member first.")
+            else:
+                placeholders=",".join(["%s"]*len(faculty_ids))
+                if action=="bulk_enable_batch":
+                    execute(cur, f"""INSERT INTO faculty_batches(faculty_id,batch_id)
+                        SELECT f.id, %s FROM faculty f WHERE f.id IN ({placeholders})
+                        ON CONFLICT (faculty_id,batch_id) DO NOTHING""", [batch_id]+faculty_ids)
+                    con.commit()
+                    flash(f"Selected faculty enabled for this batch. Existing accounts and other-batch memberships were preserved.")
+                else:
+                    execute(cur, f"""SELECT COUNT(DISTINCT tf.faculty_id)
+                        FROM team_faculty tf JOIN teams t ON t.id=tf.team_id
+                        WHERE t.batch_id=%s AND tf.faculty_id IN ({placeholders})""", [batch_id]+faculty_ids)
+                    assigned=list(cur.fetchone().values())[0]
+                    if assigned:
+                        flash(f"Cannot disable selection: {assigned} selected faculty member(s) have team assignments in this batch. Remove/reassign those assignments first.")
+                    else:
+                        execute(cur, f"DELETE FROM faculty_batches WHERE batch_id=%s AND faculty_id IN ({placeholders})", [batch_id]+faculty_ids)
+                        con.commit()
+                        flash("Selected faculty disabled for this batch only. Accounts and other-batch memberships were preserved.")
 
         elif action=="bulk_reset_password":
             faculty_ids=request.form.getlist("faculty_id")
