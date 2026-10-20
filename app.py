@@ -27,6 +27,26 @@ def _upload_value(value, lower=False, upper=False):
     return value.lower() if lower else value.upper() if upper else value
 
 
+# Canonical department labels for student records. Match aliases case-insensitively
+# while leaving all other department values unchanged.
+STUDENT_DEPARTMENT_ALIASES = {
+    "CY": "CSE-CY",
+    "AIML": "CSE-AIML",
+    "CS-DS": "CSE-DS",
+    "CS-BS": "CSBS",
+}
+
+def normalize_student_department(value):
+    value = _upload_value(value)
+    return STUDENT_DEPARTMENT_ALIASES.get(value.strip().upper(), value.strip())
+
+def normalize_existing_student_departments(cur):
+    """Idempotently normalize legacy department labels without changing student rows."""
+    for old_value, canonical_value in STUDENT_DEPARTMENT_ALIASES.items():
+        execute(cur, "UPDATE students SET department=? WHERE UPPER(TRIM(COALESCE(department,'')))=?",
+                (canonical_value, old_value))
+
+
 def _upload_report(upload_type, total_rows, success_count, skipped_rows, extra_sheets=None):
     output = io.BytesIO()
     summary = pd.DataFrame([{"Upload Section": upload_type, "Input Rows": int(total_rows),
@@ -4236,6 +4256,11 @@ def admin_students():
     con = db()
     cur = con.cursor()
 
+    # One-time-in-effect (idempotent) data cleanup: preserves IDs, credentials,
+    # batch membership, and all other student data while correcting legacy labels.
+    normalize_existing_student_departments(cur)
+    con.commit()
+
     view_batch = get_admin_view_batch(cur)
     if not view_batch:
         if pg_pool:
@@ -4290,7 +4315,7 @@ def admin_students():
                 usn = _upload_value(r["USN"], upper=True)
                 email = _upload_value(r["Email"], lower=True)
                 name = _upload_value(r["Name"])
-                dept = dept_admin_department if is_dept_admin else _upload_value(r["Department"])
+                dept = dept_admin_department if is_dept_admin else normalize_student_department(r["Department"])
                 sec = _upload_value(r["Section"])
                 if not usn or not email or not name or not dept or not sec:
                     skipped.append({"Excel Row":excel_row,"USN":usn,"Email":email,"Name":name,"Department":dept,"Section":sec,"Error Reason":"Missing USN, Email, Name, Department, or Section"})
@@ -4315,7 +4340,7 @@ def admin_students():
             usn = request.form["usn"].strip().upper()
             email = request.form["email"].strip().lower()
             name = request.form.get("name","").strip()
-            dept = dept_admin_department if is_dept_admin else request.form.get("department")
+            dept = dept_admin_department if is_dept_admin else normalize_student_department(request.form.get("department"))
             sec = request.form.get("section","").strip()
 
             execute(cur,"SELECT COUNT(*) FROM students WHERE usn=? OR email=?", (usn, email))
@@ -4335,7 +4360,7 @@ def admin_students():
             usn = request.form.get("usn").strip().upper()
             email = request.form.get("email").strip().lower()
             name = request.form.get("name").strip()
-            department = request.form.get("department").strip()
+            department = normalize_student_department(request.form.get("department"))
             section = request.form.get("section").strip()
             if is_dept_admin:
                 department = dept_admin_department
