@@ -3451,24 +3451,9 @@ def faculty_login():
         """, (email, active_batch_id))
         faculty = cur.fetchone()
 
-        # if not found, check admins table
-        if not faculty:
-            execute(cur,"""
-                SELECT id,name,email,password_hash,department 
-                FROM admins 
-                WHERE email=%s
-            """, (email,))
-            admin = cur.fetchone()
-
-            if admin:
-                faculty = {
-                    "id": admin["id"],
-                    "name": admin["name"],
-                    "email": admin["email"],
-                    "password_hash": admin["password_hash"],
-                    "department": admin["department"],
-                    "must_reset_password": 0
-                }
+        # Faculty login authenticates only faculty accounts. Admin credentials are
+        # authenticated separately through the admin login route; a person who
+        # holds both roles must have a faculty record linked to this batch.
 
         if pg_pool:
             pg_pool.putconn(con)
@@ -3920,7 +3905,7 @@ def admin_faculty_management():
         else: con.close()
         return send_file(path,as_attachment=True)
 
-    where=["fb.batch_id=?"]; params=[batch_id]
+    where=["1=1"]; params=[]
     if dept_filter: where.append("f.department=?"); params.append(dept_filter)
     if search:
         where.append("(LOWER(f.name) LIKE ? OR LOWER(f.email) LIKE ?)"); params.extend([f"%{search}%",f"%{search}%"])
@@ -3929,9 +3914,9 @@ def admin_faculty_management():
     if request.args.get("export")=="excel":
         execute(cur,f"""
             SELECT f.name,f.email,f.department
-            FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id
+            FROM faculty f LEFT JOIN faculty_batches fb ON fb.faculty_id=f.id AND fb.batch_id=?
             {where_sql} {order_sql}
-        """,params)
+        """,[batch_id]+params)
         rows=cur.fetchall(); df=pd.DataFrame(rows)
         path=f"faculty_{view_batch['academic_year']}.xlsx"; df.to_excel(path,index=False)
         if pg_pool: pg_pool.putconn(con)
@@ -3946,12 +3931,36 @@ def admin_faculty_management():
             flash("Historical batch is read-only. Select the active batch to make changes.")
             return redirect(url_for("admin_faculty_management"))
 
-        if action=="edit_faculty":
-            fid=request.form.get("fid"); name=request.form.get("name").strip(); email=request.form.get("email").strip().lower(); department=admin_dept if admin_role=="admin" else request.form.get("department")
-            execute(cur,"SELECT id FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
-            if not cur.fetchone(): flash("Faculty does not belong to selected batch.")
+        if action=="toggle_batch_membership":
+            fid=request.form.get("fid")
+            enabled=request.form.get("enabled")=="1"
+            execute(cur,"SELECT id FROM faculty WHERE id=?",(fid,))
+            if not cur.fetchone():
+                flash("Faculty account was not found.")
+            elif enabled:
+                execute(cur,"SELECT 1 FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
+                if cur.fetchone():
+                    flash("Faculty is already enabled for this batch.")
+                else:
+                    execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id))
+                    con.commit()
+                    flash("Faculty enabled for the selected batch. Existing account reused.")
             else:
-                execute(cur,"UPDATE faculty SET name=?,email=?,department=? WHERE id=?",(name,email,department,fid)); con.commit(); flash("Faculty updated successfully ✅")
+                execute(cur,"SELECT COUNT(*) FROM team_faculty tf JOIN teams t ON t.id=tf.team_id WHERE tf.faculty_id=? AND t.batch_id=?",(fid,batch_id))
+                assigned=list(cur.fetchone().values())[0]
+                if assigned:
+                    flash("This faculty member is assigned to teams in this batch. Remove/reassign those team assignments first.")
+                else:
+                    execute(cur,"DELETE FROM faculty_batches WHERE faculty_id=? AND batch_id=?",(fid,batch_id))
+                    con.commit()
+                    flash("Faculty disabled for the selected batch. Account and other-batch records were retained.")
+
+        elif action=="edit_faculty":
+            fid=request.form.get("fid"); name=request.form.get("name").strip(); email=request.form.get("email").strip().lower(); department=admin_dept if admin_role=="admin" else request.form.get("department")
+            execute(cur,"SELECT id FROM faculty WHERE id=?",(fid,))
+            if not cur.fetchone(): flash("Faculty account was not found.")
+            else:
+                execute(cur,"UPDATE faculty SET name=?,email=?,department=? WHERE id=?",(name,email,department,fid)); con.commit(); flash("Faculty account updated successfully across batches ✅")
 
         elif action=="delete_faculty":
             fid=request.form.get("fid")
@@ -4029,9 +4038,11 @@ def admin_faculty_management():
         else: con.close()
         return redirect(url_for("admin_faculty_management"))
 
-    execute(cur,f"SELECT COUNT(*) FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id {where_sql}",params)
+    execute(cur,f"SELECT COUNT(*) FROM faculty f {where_sql}",params)
     total_rows=list(cur.fetchone().values())[0]; total_pages=max(1,(total_rows+per_page-1)//per_page)
-    execute(cur,f"""SELECT f.id,f.name,f.email,f.department FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id {where_sql} {order_sql} LIMIT ? OFFSET ?""",params+[per_page,offset])
+    execute(cur,f"""SELECT f.id,f.name,f.email,f.department,
+        CASE WHEN EXISTS (SELECT 1 FROM faculty_batches fb WHERE fb.faculty_id=f.id AND fb.batch_id=?) THEN 1 ELSE 0 END AS batch_enabled
+        FROM faculty f {where_sql} {order_sql} LIMIT ? OFFSET ?""",[batch_id]+params+[per_page,offset])
     faculty=cur.fetchall()
     if pg_pool: pg_pool.putconn(con)
     else: con.close()
@@ -6740,16 +6751,6 @@ def admin_assignments():
                 skipped += 1
                 continue
 
-            # 🔒 FACULTY MUST BE LINKED TO THE SELECTED BATCH.
-            # Shared faculty can guide multiple batches through faculty_batches.
-            execute(cur, """
-                SELECT 1 FROM faculty_batches
-                WHERE faculty_id=%s AND batch_id=%s
-            """, (faculty_id, active_batch_id))
-            if not cur.fetchone():
-                skipped += 1
-                continue
-
             # 🔒 CHECK CURRENT LOAD OF FACULTY
             execute(cur, """
                 SELECT COUNT(*)
@@ -6801,21 +6802,20 @@ def admin_assignments():
     offset = (page - 1) * per_page
 
     # ---------------- FACULTY LIST ----------------
-    # Show only faculty linked to the currently selected batch. Faculty who
-    # work across batches remain reusable by linking the same account to each
-    # batch in Faculty Management / bulk upload.
-    faculty_where = ["fb.batch_id=%s"]
-    faculty_params = [active_batch_id]
     if session.get("admin_role") == "admin":
-        faculty_where.append("f.department=%s")
-        faculty_params.append(session.get("admin_department"))
-    execute(cur, f"""
-        SELECT DISTINCT f.id, f.name, f.email, f.department
-        FROM faculty f
-        JOIN faculty_batches fb ON fb.faculty_id=f.id
-        WHERE {' AND '.join(faculty_where)}
-        ORDER BY f.name
-    """, faculty_params)
+        execute(cur, """
+            SELECT id, name, email, department
+            FROM faculty
+            WHERE department=%s
+            ORDER BY name
+        """, (session.get("admin_department"),))
+    else:
+        execute(cur, """
+            SELECT id, name, email, department
+            FROM faculty
+            ORDER BY name
+        """)
+
     faculty_list = cur.fetchall()
 
     # ---------------- PROBLEM LIST ----------------
