@@ -228,6 +228,20 @@ onclick="document.getElementById('bulkAction').value='bulk_reset_password'">
 </button>
 
 <button type="submit"
+class="btn btn-success btn-sm"
+{% if read_only %}disabled{% endif %}
+onclick="document.getElementById('bulkAction').value='bulk_enable_batch'">
+✓ Enable Selected for Batch
+</button>
+
+<button type="submit"
+class="btn btn-outline-danger btn-sm"
+{% if read_only %}disabled{% endif %}
+onclick="document.getElementById('bulkAction').value='bulk_disable_batch'; return confirm('Disable the selected faculty for this batch only? Existing accounts and other-batch memberships will be preserved.')">
+⏸ Disable Selected for Batch
+</button>
+
+<button type="submit"
 class="btn btn-danger btn-sm"
 onclick="document.getElementById('bulkAction').value='bulk_delete'">
 🗑 Delete Selected
@@ -280,6 +294,7 @@ Department
 </a>
 </th>
 
+<th>Batch Status</th>
 <th>Actions</th>
 
 </tr>
