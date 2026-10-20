@@ -78,7 +78,7 @@ class="btn btn-outline-primary btn-sm">
 </div>
 
 <div class="text-muted small mt-2">
-Columns required: <b>Name</b>, <b>Email</b>, <b>Department</b>
+Existing email addresses reuse the existing faculty account and link it to this batch; only new email addresses create accounts. Use “Disable for Batch” to retain a faculty account while making the faculty unavailable for this batch.<br>Columns required: <b>Name</b>, <b>Email</b>, <b>Department</b>
 </div>
 
 </form>
@@ -306,8 +306,19 @@ value="{{f.id}}">
 <td>{{f.email}}</td>
 
 <td>{{ f.department|department_label }}</td>
-
+<td>{% if f.batch_enabled %}<span class="badge bg-success">Enabled</span>{% else %}<span class="badge bg-secondary">Not linked / Disabled</span>{% endif %}</td>
 <td>
+
+<form method="post" class="d-inline">
+<input type="hidden" name="action" value="toggle_batch_membership">
+<input type="hidden" name="fid" value="{{f.id}}">
+<input type="hidden" name="enabled" value="{% if f.batch_enabled %}0{% else %}1{% endif %}">
+{% if f.batch_enabled %}
+<button type="submit" class="btn btn-sm btn-outline-danger" {% if read_only %}disabled{% endif %} onclick="return confirm('Disable {{f.name}} for this batch only? The faculty account and other batch memberships will remain.')">Disable for Batch</button>
+{% else %}
+<button type="submit" class="btn btn-sm btn-outline-success" {% if read_only %}disabled{% endif %}>Enable for Batch</button>
+{% endif %}
+</form>
 
 <button type="button"
 class="btn btn-sm btn-primary"
