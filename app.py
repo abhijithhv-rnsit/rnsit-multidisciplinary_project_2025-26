@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pytz
 import psycopg2.extras
 import sqlite3, pandas as pd, os
+import logging
 
 import os
 import io
@@ -73,6 +74,8 @@ app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
 DEFAULT_STUDENT_PASSWORD = "RNSIT@2026"
 DEFAULT_FACULTY_PASSWORD = "RNSIT@2026"
+# Hash the shared initial password once per worker; do not run scrypt per uploaded row.
+DEFAULT_FACULTY_PASSWORD_HASH = generate_password_hash(DEFAULT_FACULTY_PASSWORD, method="pbkdf2:sha256:600000")
 
 # Central department master for Batch 2 and future batches.
 # Keep all department validation, filters, uploads and reports aligned with this list.
@@ -132,19 +135,44 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 pg_pool = None
 
 if DATABASE_URL:
-    from urllib.parse import urlparse
-    url = urlparse(DATABASE_URL)
-
+    # Pass the complete URL to libpq so sslmode and other connection parameters
+    # are preserved. Keep the per-worker pool modest on Render's memory limits.
     pg_pool = psycopg2.pool.SimpleConnectionPool(
-        minconn=5,
-        maxconn=50,
-        dbname=url.path[1:],
-        user=url.username,
-        password=url.password,
-        host=url.hostname,
-        port=url.port,
-        cursor_factory=psycopg2.extras.RealDictCursor  # now REALLY works
+        minconn=1,
+        maxconn=10,
+        dsn=DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor,
+        connect_timeout=15,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3,
     )
+
+
+def release_db_connection(con):
+    """Return a clean connection to the pool; discard broken connections."""
+    if con is None:
+        return
+    if pg_pool:
+        try:
+            # Roll back any uncommitted/failed transaction before reusing it.
+            con.rollback()
+            pg_pool.putconn(con)
+        except Exception:
+            logging.exception("Could not safely return PostgreSQL connection; discarding it")
+            try:
+                pg_pool.putconn(con, close=True)
+            except Exception:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+    else:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 def db():
     global pg_pool
@@ -186,7 +214,7 @@ except:
     pass
 
 if pg_pool:
-    pg_pool.putconn(con)
+    release_db_connection(con)
 else:
     con.close()
 
@@ -394,7 +422,7 @@ def ensure_batch_system():
 
         if con:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
 
@@ -459,7 +487,7 @@ def ensure_admin_batch_system():
 
     finally:
         if con:
-            pg_pool.putconn(con)
+            release_db_connection(con)
 
 ensure_admin_batch_system()
 
@@ -650,7 +678,7 @@ def ensure_batch_membership_system():
     finally:
         if con:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
 
@@ -676,7 +704,7 @@ try:
     con.commit()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -699,7 +727,7 @@ try:
     con.commit()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -851,7 +879,7 @@ def ensure_evaluation_system():
         if con: con.rollback()
         print("Evaluation migration failed:", e)
     finally:
-        if con: pg_pool.putconn(con)
+        if con: release_db_connection(con)
 
 ensure_evaluation_system()
 
@@ -931,7 +959,7 @@ def ensure_submission_system():
         if con: con.rollback()
         print('Submission system migration failed:', e)
     finally:
-        if con: pg_pool.putconn(con)
+        if con: release_db_connection(con)
 
 ensure_submission_system()
 
@@ -977,7 +1005,7 @@ def admin_evaluation_settings():
     con=db(); cur=con.cursor()
     batch, batch_id = evaluation_batch_context(cur)
     if not batch_id:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("No batch selected."); return redirect(url_for("admin"))
     if request.method == "POST":
@@ -1146,7 +1174,7 @@ def admin_evaluation_settings():
                     cids=[c["id"] for c in criteria]
                     placeholders=','.join(['%s']*len(cids))
                     execute(cur,f"SELECT * FROM evaluation_rubrics WHERE criterion_id IN ({placeholders}) ORDER BY sort_order,id",tuple(cids)); rubrics=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template("admin_evaluation_settings.html",batch=batch,schemes=schemes,scheme=scheme,phases=phases,presentations=presentations,criteria=criteria,rubrics=rubrics,active_page="evaluation")
 
@@ -1185,7 +1213,7 @@ def admin_evaluation_dashboard():
     if scheme:
         execute(cur,"SELECT id,name FROM evaluation_phases WHERE scheme_id=%s ORDER BY sort_order,id",(scheme['id'],)); phases=cur.fetchall()
         execute(cur,"""SELECT p.id,p.name,ph.name AS phase_name FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE ph.scheme_id=%s ORDER BY ph.sort_order,p.sort_order""",(scheme['id'],)); presentations=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template("admin_evaluation_dashboard.html",batch=batch,scheme=scheme,rows=rows,departments=departments,sections=sections,faculty=faculty,phases=phases,presentations=presentations,filters=filters,active_page="evaluation")
 
@@ -1196,7 +1224,7 @@ def admin_evaluation_export():
     con=db(); cur=con.cursor(); batch,batch_id=evaluation_batch_context(cur)
     scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get("scheme_id")) if batch_id else None
     if not scheme:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Create an evaluation scheme before exporting."); return redirect(url_for("admin_evaluation_settings"))
     # Apply all dashboard filters to the detailed export.
@@ -1251,7 +1279,7 @@ def admin_evaluation_export():
         student_summary.to_excel(writer,index=False,sheet_name='Student Summary')
     out.seek(0)
     filename=f"evaluation_{batch['academic_year']}_{scheme['name'].replace(' ','_')}.xlsx"
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return send_file(out,download_name=filename,as_attachment=True,mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
@@ -1269,7 +1297,7 @@ def faculty_evaluations():
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -1305,7 +1333,7 @@ def faculty_evaluations():
     teams = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -1326,11 +1354,11 @@ def faculty_evaluation(team_id):
         UNION SELECT 1 FROM evaluation_team_evaluators ete
         WHERE ete.team_id=%s AND ete.faculty_id=%s AND ete.scheme_id=%s""",(team_id,faculty_id,team_id,faculty_id,scheme_id_for_access)); assigned=cur.fetchone()
     if not team or not assigned:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Access denied."); return redirect(url_for('faculty_dashboard'))
     if not scheme:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Evaluation scheme is not configured yet."); return redirect(url_for('faculty_dashboard'))
     if request.method=='POST':
@@ -1382,7 +1410,7 @@ def faculty_evaluation(team_id):
     execute(cur,"""SELECT r.* FROM evaluation_rubrics r JOIN evaluation_criteria c ON c.id=r.criterion_id JOIN evaluation_presentations p ON p.id=c.presentation_id JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE ph.scheme_id=%s ORDER BY r.sort_order,r.id""",(scheme['id'],)); rubrics=cur.fetchall()
     execute(cur,"""SELECT usn,member_name AS name,department,section FROM team_members WHERE team_id=%s UNION SELECT leader_usn,leader_name,leader_department,leader_section FROM teams WHERE id=%s""",(team_id,team_id)); members=cur.fetchall()
     execute(cur,"""SELECT e.*,ph.name AS phase_name,pr.name AS presentation_name FROM evaluation_entries e JOIN evaluation_phases ph ON ph.id=e.phase_id LEFT JOIN evaluation_presentations pr ON pr.id=e.presentation_id WHERE e.scheme_id=%s AND e.team_id=%s AND e.evaluator_id=%s ORDER BY ph.sort_order,pr.sort_order""",(scheme['id'],team_id,faculty_id)); entries=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template('faculty_evaluation.html',team=team,scheme=scheme,phases=phases,presentations=presentations,criteria=criteria,rubrics=rubrics,members=members,entries=entries)
 
@@ -1399,7 +1427,7 @@ def admin_evaluation_assignments():
     # This gives the administrator a clear setup message instead of redirecting
     # immediately back to Evaluation Settings.
     if request.method=='POST' and not scheme:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('Create an evaluation scheme first, then configure evaluator assignments.')
         return redirect(url_for('admin_evaluation_assignments'))
@@ -1455,13 +1483,13 @@ def admin_evaluation_assignments():
         return redirect(url_for('admin_evaluation_assignments',scheme_id=scheme['id']))
 
     if not batch_id:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('No batch is selected.')
         return redirect(url_for('admin'))
 
     if not scheme:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return render_template(
             'admin_evaluation_assignments.html',
@@ -1491,7 +1519,7 @@ def admin_evaluation_assignments():
         LEFT JOIN evaluation_presentations pr ON pr.id=ete.presentation_id
         WHERE ete.scheme_id=%s AND t.batch_id=%s
         ORDER BY t.leader_department,t.leader_section,t.team_name,f.name,ph.sort_order NULLS FIRST,pr.sort_order NULLS FIRST""",(scheme['id'],batch_id)); assignments=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template('admin_evaluation_assignments.html',batch=batch,scheme=scheme,teams=teams,faculty=faculty,phases=phases,presentations=presentations,assignments=assignments,active_page='evaluation')
 
@@ -1501,7 +1529,7 @@ def student_evaluations():
     usn=session['student_usn']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
     execute(cur,"""SELECT t.id,t.team_name,t.leader_department,t.leader_section FROM teams t WHERE t.batch_id=%s AND (t.leader_usn=%s OR EXISTS(SELECT 1 FROM team_members m WHERE m.team_id=t.id AND m.usn=%s)) LIMIT 1""",(batch_id,usn,usn)); team=cur.fetchone()
     if not team: 
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('You are not part of a registered team.'); return redirect(url_for('student_home'))
     scheme=get_selected_evaluation_scheme(cur,batch_id)
@@ -1511,7 +1539,7 @@ def student_evaluations():
         execute(cur,"""SELECT e.*,ph.name AS phase_name,pr.name AS presentation_name,f.name AS evaluator
             FROM evaluation_entries e JOIN evaluation_phases ph ON ph.id=e.phase_id LEFT JOIN evaluation_presentations pr ON pr.id=e.presentation_id
             JOIN faculty f ON f.id=e.evaluator_id WHERE e.scheme_id=%s AND e.team_id=%s AND e.status='submitted' ORDER BY ph.sort_order,pr.sort_order""",(scheme['id'],team['id'])); rows=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template('student_evaluations.html',team=team,scheme=scheme,rows=rows)
 
@@ -1580,7 +1608,7 @@ def fix_db_now():
 
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
     return "DB fixed ✅"
@@ -1599,7 +1627,7 @@ def add_chat_cascade_once():
     con.commit()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -1619,7 +1647,7 @@ def ensure_students_table():
     """)
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
  
@@ -1644,7 +1672,7 @@ def add_column_if_not_exists(table, column, column_type):
         con.commit()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -1711,7 +1739,7 @@ def debug_team_faculty():
     execute(cur,"SELECT * FROM team_faculty")
     rows = cur.fetchall()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
     return str([dict(r) for r in rows])
@@ -1756,7 +1784,7 @@ def add_cascade_once():
     con.commit()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -1824,7 +1852,7 @@ def admin_submission_settings():
         return redirect(url_for('admin'))
     con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
     if not batch:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('No batch is selected.'); return redirect(url_for('admin'))
     batch_id=batch['id']; read_only=is_admin_batch_read_only(batch)
@@ -1860,11 +1888,11 @@ def admin_submission_settings():
             elif action=='delete':
                 sid=request.form.get('id')
                 execute(cur,'DELETE FROM submission_configs WHERE id=? AND batch_id=?',(sid,batch_id)); con.commit(); flash('Submission configuration deleted.')
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return redirect(url_for('admin_submission_settings'))
     execute(cur,'SELECT * FROM submission_configs WHERE batch_id=? ORDER BY sort_order,id',(batch_id,)); configs=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template('admin_submission_settings.html',batch=batch,configs=configs,read_only=read_only,active_page='submissions')
 
@@ -1875,12 +1903,12 @@ def student_reports():
         return redirect(url_for('student_login'))
     usn=session['student_usn']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
     if not batch_id:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('No active batch is configured.'); return redirect(url_for('student_login'))
     team=_current_team_for_student(cur,usn,batch_id)
     if not team:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('You are not part of any registered team.'); return redirect(url_for('student_home'))
     team_id=team['id']
@@ -1912,11 +1940,11 @@ def student_reports():
                             execute(cur,'UPDATE report_submissions SET is_current=FALSE WHERE config_id=? AND team_id=? AND is_current=TRUE',(config_id,team_id))
                             execute(cur,"""INSERT INTO report_submissions(config_id,batch_id,team_id,student_usn,version_no,filename,content_type,file_size,file_data,status,review_status,submitted_at,is_current) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,TRUE)""",(config_id,batch_id,team_id,usn,ver,filename,file.content_type or 'application/octet-stream',len(data),psycopg2.Binary(data),'Submitted','Pending',now))
                             con.commit(); flash(f"{cfg['title']} submitted successfully (Version {ver}).")
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return redirect(url_for('student_reports'))
     configs=_team_submission_summary(cur,team_id,batch_id)
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template('student_reports.html',configs=configs,active_page='submissions')
 
@@ -1926,11 +1954,11 @@ def student_report_download(submission_id):
     if not session.get('student_usn'): return redirect(url_for('student_login'))
     con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur); team=_current_team_for_student(cur,session['student_usn'],batch_id) if batch_id else None
     if not team:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('Access denied.'); return redirect(url_for('student_reports'))
     execute(cur,'SELECT filename,content_type,file_data FROM report_submissions WHERE id=? AND team_id=? AND batch_id=?',(submission_id,team['id'],batch_id)); row=cur.fetchone()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     if not row: flash('Submission not found.'); return redirect(url_for('student_reports'))
     return send_file(io.BytesIO(bytes(row['file_data'])),download_name=row['filename'],as_attachment=True,mimetype=row['content_type'] or 'application/octet-stream')
@@ -1942,12 +1970,12 @@ def faculty_review_report(submission_id):
     fid=session['faculty_id']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
     execute(cur,"""SELECT rs.id,rs.team_id FROM report_submissions rs JOIN team_faculty tf ON tf.team_id=rs.team_id JOIN teams t ON t.id=rs.team_id WHERE rs.id=? AND tf.faculty_id=? AND t.batch_id=?""",(submission_id,fid,batch_id)); row=cur.fetchone()
     if not row:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('Access denied.'); return redirect(url_for('faculty_dashboard'))
     status=request.form.get('review_status','Reviewed'); remark=request.form.get('faculty_remark','').strip()
     execute(cur,'UPDATE report_submissions SET review_status=?,faculty_remark=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?',(status,remark,fid,submission_id)); con.commit()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     flash('Report review saved successfully.'); return redirect(url_for('faculty_team_details',team_id=row['team_id']))
 
@@ -1957,7 +1985,7 @@ def faculty_report_download(submission_id):
     if not session.get('faculty_id'): return redirect(url_for('faculty_login'))
     con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur); fid=session['faculty_id']
     execute(cur,"""SELECT rs.filename,rs.content_type,rs.file_data FROM report_submissions rs JOIN team_faculty tf ON tf.team_id=rs.team_id JOIN teams t ON t.id=rs.team_id WHERE rs.id=? AND tf.faculty_id=? AND t.batch_id=?""",(submission_id,fid,batch_id)); row=cur.fetchone()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     if not row: flash('Access denied.'); return redirect(url_for('faculty_dashboard'))
     return send_file(io.BytesIO(bytes(row['file_data'])),download_name=row['filename'],as_attachment=True,mimetype=row['content_type'] or 'application/octet-stream')
@@ -1968,7 +1996,7 @@ def admin_project_status():
     if not session.get('admin_logged_in'): return redirect(url_for('admin'))
     con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
     if not batch:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('No batch is selected.'); return redirect(url_for('admin'))
     batch_id=batch['id']
@@ -2037,10 +2065,10 @@ def admin_project_status():
             })
         out=io.BytesIO()
         pd.DataFrame(data).to_excel(out,index=False,engine='openpyxl'); out.seek(0)
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return send_file(out,download_name=f'project_status_{batch["academic_year"]}.xlsx',as_attachment=True,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template('admin_project_status.html',batch=batch,rows=rows,configs=configs,departments=departments,sections=sections,faculty=faculty,filters={'department':dept,'section':section,'faculty_id':faculty_id,'status':status_filter},active_page='project_status')
 
@@ -2051,12 +2079,12 @@ def admin_submission_download(submission_id):
         return redirect(url_for('admin'))
     con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
     if not batch:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('No batch is selected.'); return redirect(url_for('admin_project_status'))
     execute(cur,"""SELECT rs.filename,rs.content_type,rs.file_data,rs.batch_id FROM report_submissions rs WHERE rs.id=? AND rs.batch_id=?""",(submission_id,batch['id']))
     row=cur.fetchone()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     if not row:
         flash('Submission not found for the selected batch.'); return redirect(url_for('admin_project_status'))
@@ -2082,7 +2110,7 @@ def admin_reports():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2154,7 +2182,7 @@ def admin_reports():
     student_projects = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -2184,7 +2212,7 @@ def export_team_size():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2235,7 +2263,7 @@ def export_total_students():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2286,7 +2314,7 @@ def export_student_mapping():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2361,7 +2389,7 @@ def student_signup():
             active_batch_id = get_active_batch_id(cur)
             if not active_batch_id:
                 if pg_pool:
-                    pg_pool.putconn(con)
+                    release_db_connection(con)
                 else:
                     con.close()
                 flash("No active batch is configured")
@@ -2373,14 +2401,14 @@ def student_signup():
             )
             con.commit()
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Account created successfully. Please login.")
             return redirect(url_for("student_login"))
         except:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("USN or Email already registered")
@@ -2392,24 +2420,26 @@ def student_login():
         usn = request.form["usn"].strip().upper()
         password = request.form["password"]
 
-        con = db()
-        cur = con.cursor()
+        con = None
+        try:
+            con = db()
+            cur = con.cursor()
+            active_batch_id = get_active_batch_id(cur)
+            if not active_batch_id:
+                release_db_connection(con)
+                flash("No active batch is configured")
+                return redirect(request.url)
 
-        active_batch_id = get_active_batch_id(cur)
-        if not active_batch_id:
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("No active batch is configured")
+            execute(cur, "SELECT * FROM students WHERE usn=? AND batch_id=?", (usn, active_batch_id))
+            student = cur.fetchone()
+        except Exception:
+            logging.exception("Student login database lookup failed for USN=%s", usn)
+            if con is not None:
+                release_db_connection(con)
+            flash("Login is temporarily unavailable due to a database connection issue. Please try again shortly.")
             return redirect(request.url)
-
-        execute(cur, "SELECT * FROM students WHERE usn=? AND batch_id=?", (usn, active_batch_id))
-        student = cur.fetchone()
-        if pg_pool:
-            pg_pool.putconn(con)
         else:
-            con.close()
+            release_db_connection(con)
 
         if not student:
             flash("Student not found")
@@ -2448,7 +2478,7 @@ def student_home():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2475,7 +2505,7 @@ def student_home():
         data.append((p, count))
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -2509,7 +2539,7 @@ def student_problems():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2533,7 +2563,7 @@ def student_problems():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2565,7 +2595,7 @@ def student_problems():
         data.append((p, registered_count))
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -2589,7 +2619,7 @@ def student_my_registration():
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2624,7 +2654,7 @@ def student_my_registration():
         row = cur.fetchone()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -2644,7 +2674,7 @@ def fix_project_references():
 
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -2663,7 +2693,7 @@ def student_my_project():
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2694,7 +2724,7 @@ def student_my_project():
     # ---------------- 3) NO TEAM ----------------
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -2739,7 +2769,7 @@ def student_my_project():
 
     # ---------------- CLOSE DB ----------------
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -2766,7 +2796,7 @@ def student_project_details():
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2788,7 +2818,7 @@ def student_project_details():
 
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("You are not part of any registered team.")
@@ -2810,7 +2840,7 @@ def student_project_details():
         project_references = request.form.get("project_references", "").strip()
 
         if details and details.get('status') in ('Reviewed','Approved'):
-            if pg_pool: pg_pool.putconn(con)
+            if pg_pool: release_db_connection(con)
             else: con.close()
             flash('Synopsis has already been reviewed and cannot be edited.')
             return redirect(url_for('student_project_details'))
@@ -2828,14 +2858,14 @@ def student_project_details():
 
         con.commit()
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Project details saved successfully ✅")
         return redirect(url_for("student_project_details"))
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
     return render_template("student_project_details.html", details=details)
@@ -2869,7 +2899,7 @@ def student_synopsis_pdf():
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -2906,7 +2936,7 @@ def student_synopsis_pdf():
 
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("You are not registered under any project yet.")
@@ -2941,7 +2971,7 @@ def student_synopsis_pdf():
     pd = cur.fetchone()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -3160,7 +3190,7 @@ def student_weekly_progress():
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -3182,7 +3212,7 @@ def student_weekly_progress():
 
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("You are not part of any registered team.")
@@ -3240,7 +3270,7 @@ def student_weekly_progress():
         if not progress:
             flash("Progress cannot be empty.")
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             return redirect(request.url)
@@ -3254,7 +3284,7 @@ def student_weekly_progress():
         if cur.fetchone()["cnt"] > 0:
             flash(f"Week {auto_week_no} progress already submitted.")
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             return redirect(url_for("student_weekly_progress"))
@@ -3267,7 +3297,7 @@ def student_weekly_progress():
         con.commit()
         flash(f"Weekly progress submitted for Week {auto_week_no} ✅")
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         return redirect(url_for("student_weekly_progress"))
@@ -3281,7 +3311,7 @@ def student_weekly_progress():
     """, (team_id,))
     rows = cur.fetchall()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -3354,7 +3384,7 @@ def student_edit_weekly_progress(progress_id):
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -3376,7 +3406,7 @@ def student_edit_weekly_progress(progress_id):
 
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("You are not part of any registered team.")
@@ -3393,7 +3423,7 @@ def student_edit_weekly_progress(progress_id):
 
     if not progress_row:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Progress record not found.")
@@ -3402,7 +3432,7 @@ def student_edit_weekly_progress(progress_id):
     # Only allow edit if Pending
     if progress_row["status"] != "Pending":
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("You cannot edit this progress after faculty review.")
@@ -3415,7 +3445,7 @@ def student_edit_weekly_progress(progress_id):
         if not new_progress:
             flash("Progress cannot be empty.")
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             return redirect(request.url)
@@ -3428,7 +3458,7 @@ def student_edit_weekly_progress(progress_id):
 
         con.commit()
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -3436,7 +3466,7 @@ def student_edit_weekly_progress(progress_id):
         return redirect(url_for("student_weekly_progress"))
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
     return render_template("student_edit_weekly_progress.html", p=progress_row)
@@ -3457,7 +3487,7 @@ def faculty_login():
         active_batch_id = get_active_batch_id(cur)
         if not active_batch_id:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("No active batch is configured.")
@@ -3476,7 +3506,7 @@ def faculty_login():
         # holds both roles must have a faculty record linked to this batch.
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -3535,7 +3565,7 @@ def faculty_change_password():
 
         if not faculty:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Faculty not found.")
@@ -3543,7 +3573,7 @@ def faculty_change_password():
 
         if not check_password_hash(faculty["password_hash"], current_password):
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Current password is incorrect.")
@@ -3559,7 +3589,7 @@ def faculty_change_password():
 
         con.commit()
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -3602,7 +3632,7 @@ def faculty_dashboard():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -3640,7 +3670,7 @@ def faculty_dashboard():
     pending_count = list(cur.fetchone().values())[0]
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -3675,7 +3705,7 @@ def faculty_team_details(team_id):
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -3693,7 +3723,7 @@ def faculty_team_details(team_id):
 
     if list(cur.fetchone().values())[0] == 0:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Access denied")
@@ -3757,7 +3787,7 @@ def faculty_team_details(team_id):
     report_submissions=cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -3792,7 +3822,7 @@ def admin_assign_faculty():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -3801,7 +3831,7 @@ def admin_assign_faculty():
 
     if request.method == "POST" and is_admin_batch_read_only(view_batch):
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Historical batch is read-only. Select the active batch to make changes.")
@@ -3859,7 +3889,7 @@ def admin_assign_faculty():
             flash("Faculty assigned successfully")
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -3898,7 +3928,7 @@ def admin_faculty_management():
     con=db(); cur=con.cursor()
     view_batch=get_admin_view_batch(cur)
     if not view_batch:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("No batch is configured.")
         return redirect(url_for("admin"))
@@ -3937,7 +3967,7 @@ def admin_faculty_management():
     if request.args.get("download")=="template":
         df=pd.DataFrame(columns=["Name","Email","Department"])
         path="faculty_template.xlsx"; df.to_excel(path,index=False)
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return send_file(path,as_attachment=True)
 
@@ -3955,14 +3985,14 @@ def admin_faculty_management():
         """,[batch_id]+params)
         rows=cur.fetchall(); df=pd.DataFrame(rows)
         path=f"faculty_{view_batch['academic_year']}.xlsx"; df.to_excel(path,index=False)
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return send_file(path,as_attachment=True)
 
     if request.method=="POST":
         action=request.form.get("action")
         if read_only:
-            if pg_pool: pg_pool.putconn(con)
+            if pg_pool: release_db_connection(con)
             else: con.close()
             flash("Historical batch is read-only. Select the active batch to make changes.")
             return redirect(url_for("admin_faculty_management"))
@@ -4034,7 +4064,7 @@ def admin_faculty_management():
         elif action=="bulk_reset_password":
             faculty_ids=request.form.getlist("faculty_id")
             if faculty_ids:
-                placeholders=",".join(["%s"]*len(faculty_ids)); password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+                placeholders=",".join(["%s"]*len(faculty_ids)); password_hash=DEFAULT_FACULTY_PASSWORD_HASH
                 execute(cur,f"""UPDATE faculty SET password_hash=%s,must_reset_password=1 WHERE id IN ({placeholders}) AND id IN (SELECT faculty_id FROM faculty_batches WHERE batch_id=%s)""",[password_hash]+faculty_ids+[batch_id]); con.commit(); flash("Passwords reset successfully 🔁")
 
         elif action=="bulk_delete":
@@ -4071,20 +4101,20 @@ def admin_faculty_management():
                                     skipped_rows.append({"Excel Row":excel_row,"Name":name,"Email":email,"Department":dept,"Error Reason":"Faculty already belongs to selected batch"}); continue
                                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); associated+=1
                             else:
-                                password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+                                password_hash=DEFAULT_FACULTY_PASSWORD_HASH
                                 execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,dept))
                                 execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
                                 execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created+=1
                         con.commit()
                         flash(f"Batch {view_batch['academic_year']} faculty upload completed. New: {created}, Existing faculty linked: {associated}, Skipped: {len(skipped_rows)}. Report downloaded.")
                         report=_upload_report("Faculty",len(df),created+associated,skipped_rows)
-                        if pg_pool: pg_pool.putconn(con)
+                        if pg_pool: release_db_connection(con)
                         else: con.close()
                         return send_file(report,as_attachment=True,download_name=f"faculty_upload_report_{view_batch['academic_year']}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         elif action=="manual_add":
             name=request.form.get("name").strip(); email=request.form.get("email").strip().lower(); department=admin_dept if admin_role=="admin" else request.form.get("department")
-            password_hash=generate_password_hash(DEFAULT_FACULTY_PASSWORD)
+            password_hash=DEFAULT_FACULTY_PASSWORD_HASH
             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); f=cur.fetchone()
             if f:
                 fid=f["id"]
@@ -4094,7 +4124,7 @@ def admin_faculty_management():
             else:
                 execute(cur,"INSERT INTO faculty(name,email,password_hash,department,must_reset_password) VALUES (?,?,?,?,1)",(name,email,password_hash,department)); execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]; execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); con.commit(); flash("Faculty created successfully ✅")
 
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return redirect(url_for("admin_faculty_management"))
 
@@ -4104,7 +4134,7 @@ def admin_faculty_management():
         CASE WHEN EXISTS (SELECT 1 FROM faculty_batches fb WHERE fb.faculty_id=f.id AND fb.batch_id=?) THEN 1 ELSE 0 END AS batch_enabled
         FROM faculty f {where_sql} {order_sql} LIMIT ? OFFSET ?""",[batch_id]+params+[per_page,offset])
     faculty=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template("admin_faculty_management.html",faculty=faculty,departments_list=departments_list,search=search,dept_filter=dept_filter,page=page,total_pages=total_pages,total_rows=total_rows,per_page=per_page,sort_by=sort_by,order=order,active_page="faculty",view_batch=view_batch,read_only=read_only)
 
@@ -4116,12 +4146,12 @@ def admin_faculty_bulk_upload():
     con=db(); cur=con.cursor()
     view_batch=get_admin_view_batch(cur)
     if not view_batch:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("No batch is configured.")
         return redirect(url_for("admin"))
     if is_admin_batch_read_only(view_batch):
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Historical batch is read-only. Select the active batch to upload faculty.")
         return redirect(url_for("admin_faculty_management"))
@@ -4130,20 +4160,20 @@ def admin_faculty_bulk_upload():
     if request.method=="POST":
         file=request.files.get("file")
         if not file:
-            if pg_pool: pg_pool.putconn(con)
+            if pg_pool: release_db_connection(con)
             else: con.close()
             flash("Please upload an Excel file.")
             return redirect(request.url)
         try: df=pd.read_excel(file)
         except Exception:
-            if pg_pool: pg_pool.putconn(con)
+            if pg_pool: release_db_connection(con)
             else: con.close()
             flash("Invalid file. Please upload a valid Excel file.")
             return redirect(request.url)
         required_cols=["Name","Email","Department"]
         missing=[c for c in required_cols if c not in df.columns]
         if missing:
-            if pg_pool: pg_pool.putconn(con)
+            if pg_pool: release_db_connection(con)
             else: con.close()
             flash("Missing column(s): "+", ".join(missing)); return redirect(request.url)
         created=[]; associated=[]; skipped=[]
@@ -4164,12 +4194,12 @@ def admin_faculty_bulk_upload():
             execute(cur,"SELECT id FROM faculty WHERE email=?",(email,)); fid=cur.fetchone()["id"]
             execute(cur,"INSERT INTO faculty_batches(faculty_id,batch_id) VALUES (?,?)",(fid,batch_id)); created.append({"Name":name,"Email":email,"Department":dept,"Generated Password":raw_password})
         con.commit()
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash(f"Faculty upload completed. New: {len(created)}, Existing linked: {len(associated)}, Skipped: {len(skipped)}. Report downloaded.")
         return _send_upload_report("Faculty",len(df),len(created)+len(associated),skipped,{"Generated Passwords":created},view_batch['academic_year'])
 
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template("admin_faculty_bulk_upload.html",active_page="faculty",view_batch=view_batch,read_only=False)
 
@@ -4198,7 +4228,7 @@ def admin_add_faculty():
         except:
             flash("Faculty email already exists")
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -4222,7 +4252,7 @@ def admin_faculty_list():
     """, (batch_id,))
     faculty = cur.fetchall()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -4241,7 +4271,7 @@ def admin_delete_faculty(fid):
 
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -4264,7 +4294,7 @@ def admin_students():
     view_batch = get_admin_view_batch(cur)
     if not view_batch:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No batch is configured.")
@@ -4282,7 +4312,7 @@ def admin_students():
 
         if read_only:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Historical batch is read-only. Select the active batch to make changes.")
@@ -4332,7 +4362,7 @@ def admin_students():
                 created += 1
             con.commit()
             flash(f"Batch {view_batch['academic_year']} student upload completed. Created: {created}, Skipped: {len(skipped)}. Report downloaded.")
-            if pg_pool: pg_pool.putconn(con)
+            if pg_pool: release_db_connection(con)
             else: con.close()
             return _send_upload_report("Students",len(df),created,skipped,year=view_batch['academic_year'])
 
@@ -4422,7 +4452,7 @@ def admin_students():
                 flash("No students selected ❗")
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         return redirect(url_for("admin_students"))
@@ -4461,7 +4491,7 @@ def admin_students():
         output.seek(0)
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -4484,7 +4514,7 @@ def admin_students():
             pd.DataFrame(data).to_excel(writer,index=False,sheet_name="Students")
             pd.DataFrame([{"Batch":view_batch["batch_name"],"Academic Year":view_batch["academic_year"],"Status":view_batch["status"],"Total Students":len(data)}]).to_excel(writer,index=False,sheet_name="Batch Info")
         output.seek(0)
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         return send_file(output,download_name=f"students_{view_batch['academic_year']}.xlsx",as_attachment=True,mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
@@ -4496,7 +4526,7 @@ def admin_students():
         FROM students {where_sql} {order_sql} LIMIT ? OFFSET ?
     """,params+[per_page,offset])
     students=cur.fetchall()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template("admin_students.html",students=students,departments_list=departments_list,search=search,dept_filter=dept_filter,page=page,total_pages=total_pages,total_rows=total_rows,per_page=per_page,sort_by=sort_by,order=order,active_page="students",view_batch=view_batch,read_only=read_only)
 @app.route("/student/change-password", methods=["GET", "POST"])
@@ -4525,7 +4555,7 @@ def student_change_password():
         active_batch_id = get_active_batch_id(cur)
         if not active_batch_id:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("No active batch is configured.")
@@ -4536,7 +4566,7 @@ def student_change_password():
 
         if not student:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Student not found.")
@@ -4544,7 +4574,7 @@ def student_change_password():
 
         if not check_password_hash(student["password_hash"], current_password):
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Current password is incorrect.")
@@ -4560,7 +4590,7 @@ def student_change_password():
 
         con.commit()
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -4584,7 +4614,7 @@ def admin_deadline():
         )
         con.commit()
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Registration deadline updated successfully")
@@ -4595,7 +4625,7 @@ def admin_deadline():
     )
     row = cur.fetchone()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -4647,7 +4677,7 @@ def admin_project_settings():
         flash("Project settings saved successfully ✅")
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -4665,7 +4695,7 @@ def admin_project_settings():
     total_weeks = get_setting("total_weeks", "16")
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -4683,12 +4713,12 @@ def faculty_review_synopsis(team_id):
     fid=session['faculty_id']; con=db(); cur=con.cursor(); batch_id=get_active_batch_id(cur)
     execute(cur,"""SELECT pd.team_id FROM project_details pd JOIN team_faculty tf ON tf.team_id=pd.team_id JOIN teams t ON t.id=pd.team_id WHERE pd.team_id=? AND tf.faculty_id=? AND t.batch_id=?""",(team_id,fid,batch_id)); row=cur.fetchone()
     if not row:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash('Access denied.'); return redirect(url_for('faculty_dashboard'))
     status=request.form.get('status','Reviewed'); remark=request.form.get('faculty_remark','').strip()
     execute(cur,"UPDATE project_details SET status=?,faculty_remark=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE team_id=?",(status,remark,fid,team_id)); con.commit()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     flash('Synopsis review saved successfully.'); return redirect(url_for('faculty_team_details',team_id=team_id))
 
@@ -4709,7 +4739,7 @@ def faculty_review_progress(progress_id):
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -4727,7 +4757,7 @@ def faculty_review_progress(progress_id):
     row = cur.fetchone()
     if not row:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Access denied")
@@ -4744,7 +4774,7 @@ def faculty_review_progress(progress_id):
 
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -4766,7 +4796,7 @@ def index():
         execute(cur,"SELECT COUNT(*) FROM teams WHERE problem_id=?", (p[0],))
         data.append((p, list(cur.fetchone().values())[0]))
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
     from datetime import datetime
@@ -4777,7 +4807,7 @@ def index():
     execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
     row = cur.fetchone()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -4816,7 +4846,7 @@ def register(pid):
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -4846,7 +4876,7 @@ def register(pid):
 
     if not prob:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Invalid problem selected.")
@@ -4859,7 +4889,7 @@ def register(pid):
     # 🔒 ADMIN LOCK CHECK
     if locked == 1:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("This problem is temporarily locked by admin. Please choose another problem.")
@@ -4871,7 +4901,7 @@ def register(pid):
 
     if already_registered >= 1:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Registration closed for this project (1 team already registered).")
@@ -4891,7 +4921,7 @@ def register(pid):
 
         if not team_name or not leader_name or not leader_usn or not leader_email:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Please fill all required Team Leader details.")
@@ -4915,7 +4945,7 @@ def register(pid):
 
         if team_size < 4 or team_size > 6:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Team must have between 4 and 6 members (including leader).")
@@ -4924,7 +4954,7 @@ def register(pid):
         # At least one team member, including the leader, must be from a Core branch.
         if not has_core_member(leader_department, members):
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("At least one team member must belong to a Core branch (VLSI, ECE, EEE, CV, or ME).")
@@ -4934,7 +4964,7 @@ def register(pid):
         execute(cur, "SELECT COUNT(*) FROM teams WHERE leader_usn=%s AND batch_id=%s", (leader_usn, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Team Leader USN already registered.")
@@ -4948,7 +4978,7 @@ def register(pid):
         """, (leader_usn, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("This USN already exists as team member.")
@@ -4957,7 +4987,7 @@ def register(pid):
         execute(cur, "SELECT COUNT(*) FROM teams WHERE LOWER(leader_email)=LOWER(%s) AND batch_id=%s", (leader_email, active_batch_id))
         if list(cur.fetchone().values())[0] > 0:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Email already used as Team Leader.")
@@ -4969,7 +4999,7 @@ def register(pid):
         for name, usn, email, phone, dept, sec in members:
             if usn in used_usns:
                 if pg_pool:
-                    pg_pool.putconn(con)
+                    release_db_connection(con)
                 else:
                     con.close()
                 flash(f"Duplicate USN: {usn}")
@@ -4978,7 +5008,7 @@ def register(pid):
 
             if email and email in used_emails:
                 if pg_pool:
-                    pg_pool.putconn(con)
+                    release_db_connection(con)
                 else:
                     con.close()
                 flash(f"Duplicate Email: {email}")
@@ -5035,19 +5065,17 @@ def register(pid):
             con.commit()
 
         except Exception:
+            logging.exception("Team registration failed for problem_id=%s, batch_id=%s, leader_usn=%s", pid, active_batch_id, leader_usn)
             try:
                 con.rollback()
             except Exception:
-                pass
-            if pg_pool:
-                pg_pool.putconn(con)
-            else:
-                con.close()
-            flash("Registration could not be completed. Please check the details or confirm that the Team Leader USN is not already registered. Your entered details have been retained.")
+                logging.exception("Rollback failed after team registration error")
+            release_db_connection(con)
+            flash("Registration could not be completed. Please check the details or try again. Your entered details have been retained.")
             return redirect(request.url)
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -5056,7 +5084,7 @@ def register(pid):
         return redirect(url_for("student_my_project"))
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -5074,7 +5102,7 @@ def unlock_problem(pid):
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -5082,7 +5110,7 @@ def unlock_problem(pid):
 
     if is_admin_batch_read_only(view_batch):
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Historical batch is read-only. Select the active batch to make changes.")
@@ -5103,7 +5131,7 @@ def unlock_problem(pid):
 
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -5123,7 +5151,7 @@ def admin_edit_team(team_id):
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -5135,7 +5163,7 @@ def admin_edit_team(team_id):
 
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Invalid team.")
@@ -5153,7 +5181,7 @@ def admin_edit_team(team_id):
 
         if is_admin_batch_read_only(view_batch):
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Historical batch is read-only. Select the active batch to make changes.")
@@ -5231,7 +5259,7 @@ def admin_edit_team(team_id):
         con.commit()
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -5239,7 +5267,7 @@ def admin_edit_team(team_id):
         return redirect(url_for("admin_teams"))
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -5265,7 +5293,7 @@ def admin_home():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -5309,7 +5337,7 @@ def admin_home():
     notices = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -5344,7 +5372,7 @@ def admin():
         admin_batches = cur.fetchall()
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -5406,7 +5434,7 @@ def admin_select_batch():
 
     if not batch:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Invalid batch selected.")
@@ -5420,7 +5448,7 @@ def admin_select_batch():
     admin_batches = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -5470,7 +5498,7 @@ def admin_change_password():
 
         con.commit()
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -5523,7 +5551,7 @@ def admin_management():
 
     if not selected_batch:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No batch is configured.")
@@ -5540,7 +5568,7 @@ def admin_management():
         # through a historical batch context.
         if read_only:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Historical batch is read-only. Select the active batch to manage admins.")
@@ -5687,7 +5715,7 @@ def admin_management():
             flash("Invalid admin action.")
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -5705,7 +5733,7 @@ def admin_management():
     admins = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -5762,7 +5790,7 @@ def admin_upload():
 
         if not active_batch_id:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
 
@@ -5772,7 +5800,7 @@ def admin_upload():
         selected_batch = get_admin_view_batch(cur)
         if selected_batch and selected_batch["id"] != active_batch_id:
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Problem uploads are allowed only for the active batch. Select Batch 2 – 2026-27 first.")
@@ -5832,7 +5860,7 @@ def admin_upload():
         con.commit()
 
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -5855,7 +5883,7 @@ def admin_problems():
 
     if not view_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No batch is configured.")
@@ -5881,7 +5909,7 @@ def admin_problems():
     problems = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -5904,7 +5932,7 @@ def admin_download_problem(problem_id):
     view_batch = get_admin_view_batch(cur)
     view_batch_id = view_batch["id"] if view_batch else None
     if not view_batch_id:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("No batch is configured.")
         return redirect(url_for("admin_problems"))
@@ -5915,7 +5943,7 @@ def admin_download_problem(problem_id):
         FROM problems WHERE id=%s AND batch_id=%s
     """, (problem_id, view_batch_id))
     problem = cur.fetchone()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     if not problem:
         flash("Problem statement not found in the selected batch.")
@@ -5950,12 +5978,12 @@ def admin_edit_problem(problem_id):
     view_batch = get_admin_view_batch(cur)
     view_batch_id = view_batch["id"] if view_batch else None
     if not view_batch_id:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("No batch is configured.")
         return redirect(url_for("admin_problems"))
     if is_admin_batch_read_only(view_batch):
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Historical batches are read-only. Problem statements cannot be modified.")
         return redirect(url_for("admin_problems"))
@@ -5965,7 +5993,7 @@ def admin_edit_problem(problem_id):
                    FROM problems WHERE id=%s AND batch_id=%s""", (problem_id, view_batch_id))
     problem = cur.fetchone()
     if not problem:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Problem statement not found in the selected batch.")
         return redirect(url_for("admin_problems"))
@@ -5993,11 +6021,11 @@ def admin_edit_problem(problem_id):
             con.rollback()
             flash(f"Could not update problem statement: {exc}")
         finally:
-            if pg_pool: pg_pool.putconn(con)
+            if pg_pool: release_db_connection(con)
             else: con.close()
         return redirect(url_for("admin_problems"))
 
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     return render_template("admin_edit_problem.html", problem=problem,
                            view_batch=view_batch, active_page="problems")
@@ -6016,12 +6044,12 @@ def admin_toggle_problem(problem_id):
     view_batch = get_admin_view_batch(cur)
     view_batch_id = view_batch["id"] if view_batch else None
     if not view_batch_id:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("No batch is configured.")
         return redirect(url_for("admin_problems"))
     if is_admin_batch_read_only(view_batch):
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Historical batches are read-only. Problem availability cannot be changed.")
         return redirect(url_for("admin_problems"))
@@ -6030,7 +6058,7 @@ def admin_toggle_problem(problem_id):
             (problem_id, view_batch_id))
     problem = cur.fetchone()
     if not problem:
-        if pg_pool: pg_pool.putconn(con)
+        if pg_pool: release_db_connection(con)
         else: con.close()
         flash("Problem statement not found in the selected batch.")
         return redirect(url_for("admin_problems"))
@@ -6039,7 +6067,7 @@ def admin_toggle_problem(problem_id):
     execute(cur, "UPDATE problems SET is_locked=%s, locked=%s WHERE id=%s AND batch_id=%s",
             (new_locked, new_locked, problem_id, view_batch_id))
     con.commit()
-    if pg_pool: pg_pool.putconn(con)
+    if pg_pool: release_db_connection(con)
     else: con.close()
     flash(f"Problem {'disabled' if new_locked else 'enabled'}: {problem['title']}")
     return redirect(url_for("admin_problems"))
@@ -6063,7 +6091,7 @@ def admin_delete_problem(problem_id):
 
     if not view_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No batch is configured.")
@@ -6071,7 +6099,7 @@ def admin_delete_problem(problem_id):
 
     if is_admin_batch_read_only(view_batch):
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Historical batches are read-only. Problem statement cannot be deleted.")
@@ -6087,7 +6115,7 @@ def admin_delete_problem(problem_id):
 
     if not problem:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Problem statement not found in the selected batch.")
@@ -6103,7 +6131,7 @@ def admin_delete_problem(problem_id):
 
     if team_count and int(team_count) > 0:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash(
@@ -6115,7 +6143,7 @@ def admin_delete_problem(problem_id):
     con.commit()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -6177,7 +6205,7 @@ def admin_delete_all_problems():
         return redirect(url_for("admin_problems"))
     finally:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -6200,7 +6228,7 @@ def admin_export_problems():
 
     if not view_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No batch is configured.")
@@ -6257,7 +6285,7 @@ def admin_export_problems():
     filename = f"rnsit_problems_{academic_year}.xlsx"
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -6279,7 +6307,7 @@ def admin_teams():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -6291,7 +6319,7 @@ def admin_teams():
 
         if is_admin_batch_read_only(view_batch):
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Historical batch is read-only. Select the active batch to make changes.")
@@ -6406,7 +6434,7 @@ def admin_teams():
     members_rows = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -6476,7 +6504,7 @@ def admin_export_teams():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -6529,7 +6557,7 @@ def admin_export_teams():
     members_rows = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -6585,7 +6613,7 @@ def dashboard():
 
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
 
@@ -6682,7 +6710,7 @@ def dashboard():
     faculty_data = [(r[list(r.keys())[0]], r[list(r.keys())[1]]) for r in cur.fetchall()]
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -6711,7 +6739,7 @@ def export():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -6745,7 +6773,7 @@ def export():
     """
     df = pd.read_sql(query, con, params=[active_batch_id])
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -6778,7 +6806,7 @@ def admin_assignments():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -6789,7 +6817,7 @@ def admin_assignments():
 
         if is_admin_batch_read_only(view_batch):
             if pg_pool:
-                pg_pool.putconn(con)
+                release_db_connection(con)
             else:
                 con.close()
             flash("Historical batch is read-only. Select the active batch to make changes.")
@@ -6962,7 +6990,7 @@ def admin_assignments():
     teams = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -7002,7 +7030,7 @@ def export_assignments():
     active_batch_id = view_batch["id"] if view_batch else None
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -7078,7 +7106,7 @@ def export_assignments():
 
     df = pd.read_sql(base_query, con, params=params)
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -7104,7 +7132,7 @@ def student_chat():
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -7126,7 +7154,7 @@ def student_chat():
 
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("You are not part of any registered team.")
@@ -7145,7 +7173,7 @@ def student_chat():
 
     if not faculty:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Faculty guide not assigned yet. Chat will be available after assignment.")
@@ -7171,7 +7199,7 @@ def student_chat():
     messages = cur.fetchall()
 
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -7220,7 +7248,7 @@ def admin_notices():
 
     notices = cur.fetchall()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -7248,7 +7276,7 @@ def student_notices():
 
     notices = cur.fetchall()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -7277,7 +7305,7 @@ def faculty_notices():
 
     notices = cur.fetchall()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -7296,7 +7324,7 @@ def delete_notice(nid):
     execute(cur,"DELETE FROM notices WHERE id=?", (nid,))
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
@@ -7316,7 +7344,7 @@ def faculty_chat(team_id):
     active_batch_id = get_active_batch_id(cur)
     if not active_batch_id:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("No active batch is configured.")
@@ -7335,7 +7363,7 @@ def faculty_chat(team_id):
 
     if not team:
         if pg_pool:
-            pg_pool.putconn(con)
+            release_db_connection(con)
         else:
             con.close()
         flash("Unauthorized access.")
@@ -7562,7 +7590,7 @@ if __name__ == "__main__":
 
     con.commit()
     if pg_pool:
-        pg_pool.putconn(con)
+        release_db_connection(con)
     else:
         con.close()
 
