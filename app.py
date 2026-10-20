@@ -6740,6 +6740,16 @@ def admin_assignments():
                 skipped += 1
                 continue
 
+            # 🔒 FACULTY MUST BE LINKED TO THE SELECTED BATCH.
+            # Shared faculty can guide multiple batches through faculty_batches.
+            execute(cur, """
+                SELECT 1 FROM faculty_batches
+                WHERE faculty_id=%s AND batch_id=%s
+            """, (faculty_id, active_batch_id))
+            if not cur.fetchone():
+                skipped += 1
+                continue
+
             # 🔒 CHECK CURRENT LOAD OF FACULTY
             execute(cur, """
                 SELECT COUNT(*)
@@ -6791,20 +6801,21 @@ def admin_assignments():
     offset = (page - 1) * per_page
 
     # ---------------- FACULTY LIST ----------------
+    # Show only faculty linked to the currently selected batch. Faculty who
+    # work across batches remain reusable by linking the same account to each
+    # batch in Faculty Management / bulk upload.
+    faculty_where = ["fb.batch_id=%s"]
+    faculty_params = [active_batch_id]
     if session.get("admin_role") == "admin":
-        execute(cur, """
-            SELECT id, name, email, department
-            FROM faculty
-            WHERE department=%s
-            ORDER BY name
-        """, (session.get("admin_department"),))
-    else:
-        execute(cur, """
-            SELECT id, name, email, department
-            FROM faculty
-            ORDER BY name
-        """)
-
+        faculty_where.append("f.department=%s")
+        faculty_params.append(session.get("admin_department"))
+    execute(cur, f"""
+        SELECT DISTINCT f.id, f.name, f.email, f.department
+        FROM faculty f
+        JOIN faculty_batches fb ON fb.faculty_id=f.id
+        WHERE {' AND '.join(faculty_where)}
+        ORDER BY f.name
+    """, faculty_params)
     faculty_list = cur.fetchall()
 
     # ---------------- PROBLEM LIST ----------------
