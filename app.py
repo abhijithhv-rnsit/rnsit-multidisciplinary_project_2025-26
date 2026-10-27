@@ -2511,6 +2511,49 @@ def student_home():
 
     return render_template("student_home.html", problems=data)
 
+def registration_window_status(cur):
+    """Return (allowed, message) using the configured registration window in India time."""
+    tz = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(tz)
+
+    values = {}
+    for key in ("registration_open", "registration_start", "registration_deadline"):
+        execute(cur, "SELECT value FROM settings WHERE key=%s", (key,))
+        row = cur.fetchone()
+        values[key] = row["value"] if row and row.get("value") is not None else ""
+
+    if values["registration_open"] != "1":
+        return False, "Student registration is currently closed by the administrator."
+
+    start_text = (values["registration_start"] or "").strip()
+    if start_text:
+        try:
+            start = datetime.fromisoformat(start_text)
+            if start.tzinfo is None:
+                start = tz.localize(start)
+            else:
+                start = start.astimezone(tz)
+            if now < start:
+                return False, "Registration has not started yet. Please try again after the scheduled start time."
+        except (ValueError, TypeError):
+            return False, "The registration start date/time is invalid. Please contact the administrator."
+
+    deadline_text = (values["registration_deadline"] or "").strip()
+    if deadline_text:
+        try:
+            deadline = datetime.fromisoformat(deadline_text)
+            if deadline.tzinfo is None:
+                deadline = tz.localize(deadline)
+            else:
+                deadline = deadline.astimezone(tz)
+            if now > deadline:
+                return False, "Registration closed. The deadline has passed."
+        except (ValueError, TypeError):
+            return False, "The registration deadline is invalid. Please contact the administrator."
+
+    return True, ""
+
+
 @app.route("/student/problems")
 def student_problems():
     if not session.get("student_usn"):
@@ -2521,18 +2564,9 @@ def student_problems():
     con = db()
     cur = con.cursor()
 
-    # ---------------- DEADLINE CHECK ----------------
-    registration_closed = False
-    execute(cur,"SELECT value FROM settings WHERE key='registration_deadline'")
-    row = cur.fetchone()
-
-    if row and row["value"]:
-        try:
-            deadline = datetime.fromisoformat(row["value"])
-            if datetime.now() > deadline:
-                registration_closed = True
-        except:
-            registration_closed = False
+    # ---------------- REGISTRATION WINDOW CHECK ----------------
+    registration_allowed, registration_message = registration_window_status(cur)
+    registration_closed = not registration_allowed
 
     # ---------------- ACTIVE BATCH ----------------
     active_batch_id = get_active_batch_id(cur)
@@ -4860,17 +4894,15 @@ def register(pid):
         flash("No active batch is configured.")
         return redirect(url_for("student_problems"))
 
-    execute(cur, "SELECT value FROM settings WHERE key='registration_deadline'")
-    row = cur.fetchone()
-
-    if row and row.get("value"):
-        try:
-            deadline = datetime.fromisoformat(row["value"])
-            if datetime.now() > deadline:
-                flash("Registration closed. Deadline has passed.")
-                return redirect(url_for("student_problems"))
-        except:
-            pass
+    # Enforce registration switch, start time, and deadline on the server for both GET and POST.
+    registration_allowed, registration_message = registration_window_status(cur)
+    if not registration_allowed:
+        if pg_pool:
+            release_db_connection(con)
+        else:
+            con.close()
+        flash(registration_message)
+        return redirect(url_for("student_problems"))
 
     # ---------------- GET PROBLEM DETAILS ----------------
     execute(cur, """
