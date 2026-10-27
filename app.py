@@ -2023,7 +2023,7 @@ def admin_project_status():
         execute(cur,"SELECT COUNT(*) AS c FROM weekly_progress WHERE team_id=%s",(tid,)); wp_total=cur.fetchone()['c']
         execute(cur,"SELECT COUNT(*) AS c FROM weekly_progress WHERE team_id=%s AND status IN ('Reviewed','Approved')",(tid,)); wp_reviewed=cur.fetchone()['c']
         execute(cur,"SELECT COUNT(*) AS c FROM weekly_progress WHERE team_id=%s AND status='Pending'",(tid,)); wp_pending=cur.fetchone()['c']
-        execute(cur,"SELECT status,faculty_remark FROM project_details WHERE team_id=%s",(tid,)); syn=cur.fetchone()
+        execute(cur,"SELECT status,faculty_remark,reviewed_by,submitted_at FROM project_details WHERE team_id=%s",(tid,)); syn=cur.fetchone()
         execute(cur,"""SELECT sc.submission_type,sc.required,rs.review_status,rs.status FROM submission_configs sc LEFT JOIN report_submissions rs ON rs.config_id=sc.id AND rs.team_id=%s AND rs.is_current=TRUE WHERE sc.batch_id=%s AND sc.active=TRUE""",(tid,batch_id)); subrows=cur.fetchall()
         submitted=sum(1 for r in subrows if r['status'])
         reviewed=sum(1 for r in subrows if r['review_status'] in ('Reviewed','Approved'))
