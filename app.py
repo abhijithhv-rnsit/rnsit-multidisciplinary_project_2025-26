@@ -4642,56 +4642,57 @@ def admin_project_settings():
     con = db()
     cur = con.cursor()
 
-    if request.method == "POST":
-        project_start_date = request.form.get("project_start_date", "").strip()
-        registration_deadline = request.form.get("registration_deadline", "").strip()
-        total_weeks = request.form.get("total_weeks", "16").strip()
-
-        # ✅ PostgreSQL UPSERT instead of INSERT OR REPLACE
-
-        if project_start_date:
-            execute(cur, """
-                INSERT INTO settings(key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value
-            """, ("project_start_date", project_start_date))
-
-        if registration_deadline:
-            execute(cur, """
-                INSERT INTO settings(key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value
-            """, ("registration_deadline", registration_deadline))
-
-        if total_weeks:
-            execute(cur, """
-                INSERT INTO settings(key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value
-            """, ("total_weeks", total_weeks))
-
-        con.commit()
-        flash("Project settings saved successfully ✅")
-
-        if pg_pool:
-            release_db_connection(con)
-        else:
-            con.close()
-
-        return redirect(url_for("admin_project_settings"))
-
-    # -------- Fetch existing values --------
+    def save_setting(key, value):
+        # Store blank values too, so clearing an optional field removes its old value.
+        execute(cur, """
+            INSERT INTO settings(key, value)
+            VALUES (%s, %s)
+            ON CONFLICT (key)
+            DO UPDATE SET value = EXCLUDED.value
+        """, (key, value or ""))
 
     def get_setting(key, default=""):
         execute(cur, "SELECT value FROM settings WHERE key=%s", (key,))
         row = cur.fetchone()
-        return row["value"] if row and row["value"] else default
+        return row["value"] if row and row["value"] is not None else default
 
-    project_start_date = get_setting("project_start_date", "")
+    if request.method == "POST":
+        registration_open = "1" if request.form.get("registration_open") == "1" else "0"
+        registration_start = request.form.get("registration_start", "").strip()
+        registration_deadline = request.form.get("registration_deadline", "").strip()
+        project_start_date = request.form.get("project_start_date", "").strip()
+        total_weeks = request.form.get("total_weeks", "16").strip() or "16"
+
+        try:
+            weeks = int(total_weeks)
+            if not 1 <= weeks <= 52:
+                raise ValueError
+        except ValueError:
+            if pg_pool:
+                release_db_connection(con)
+            else:
+                con.close()
+            flash("Total Weeks must be between 1 and 52.")
+            return redirect(url_for("admin_project_settings"))
+
+        save_setting("registration_open", registration_open)
+        save_setting("registration_start", registration_start)
+        save_setting("registration_deadline", registration_deadline)
+        save_setting("project_start_date", project_start_date)
+        save_setting("total_weeks", str(weeks))
+
+        con.commit()
+        flash("Project settings saved successfully.")
+        if pg_pool:
+            release_db_connection(con)
+        else:
+            con.close()
+        return redirect(url_for("admin_project_settings"))
+
+    registration_open = get_setting("registration_open", "0") == "1"
+    registration_start = get_setting("registration_start", "")
     registration_deadline = get_setting("registration_deadline", "")
+    project_start_date = get_setting("project_start_date", "")
     total_weeks = get_setting("total_weeks", "16")
 
     if pg_pool:
@@ -4702,9 +4703,15 @@ def admin_project_settings():
     return render_template(
         "admin_project_settings.html",
         active_page="project_settings",
-        project_start_date=project_start_date,
+        registration_open=registration_open,
+        registration_start=registration_start,
         registration_deadline=registration_deadline,
-        total_weeks=total_weeks
+        project_start_date=project_start_date,
+        total_weeks=total_weeks,
+        view_batch=None,
+        read_only=False,
+        registration_message=None,
+        registration_closed=False,
     )
 
 @app.route('/faculty/review-synopsis/<int:team_id>', methods=['POST'])
