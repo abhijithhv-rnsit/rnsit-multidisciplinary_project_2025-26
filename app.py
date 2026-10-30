@@ -4990,14 +4990,7 @@ def register(pid):
             flash("Team must have between 4 and 6 members (including leader).")
             return redirect(request.url)
 
-        # At least one team member, including the leader, must be from a Core branch.
-        if not has_core_member(leader_department, members):
-            if pg_pool:
-                release_db_connection(con)
-            else:
-                con.close()
-            flash("At least one team member must belong to a Core branch (VLSI, ECE, EEE, CV, or ME).")
-            return redirect(request.url)
+        # Cross-branch requirement relaxed: any department combination is allowed.
 
         # ---------------- DUPLICATE CHECKS ----------------
         execute(cur, "SELECT COUNT(*) FROM teams WHERE leader_usn=%s AND batch_id=%s", (leader_usn, active_batch_id))
@@ -5283,9 +5276,7 @@ def admin_edit_team(team_id):
             flash("Team size must be between 4 and 6.")
             return redirect(request.url)
 
-        if not has_core_member(leader_department, members_new):
-            flash("At least one team member must belong to a Core branch (VLSI, ECE, EEE, CV, or ME).")
-            return redirect(request.url)
+        # Cross-branch requirement relaxed for admin edits as well.
 
         # ---------------- INSERT MEMBERS ----------------
         for m in members_new:
