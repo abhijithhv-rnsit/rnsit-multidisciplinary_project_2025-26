@@ -132,12 +132,14 @@ import psycopg2.extras
 #from psycopg2.extras import RealDictCursor
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# A threaded pool is required because each Gunicorn worker serves multiple
+# request threads. SimpleConnectionPool is not thread-safe.
 pg_pool = None
+_temp_pg_connections = set()
+_temp_pg_connections_lock = __import__("threading").Lock()
 
 if DATABASE_URL:
-    # Pass the complete URL to libpq so sslmode and other connection parameters
-    # are preserved. Keep the per-worker pool modest on Render's memory limits.
-    pg_pool = psycopg2.pool.SimpleConnectionPool(
+    pg_pool = psycopg2.pool.ThreadedConnectionPool(
         minconn=1,
         maxconn=10,
         dsn=DATABASE_URL,
@@ -151,48 +153,96 @@ if DATABASE_URL:
 
 
 def release_db_connection(con):
-    """Return a clean connection to the pool; discard broken connections."""
+    """Safely release a PostgreSQL connection; discard closed/broken ones."""
     if con is None:
         return
-    if pg_pool:
+
+    # Connections created as a temporary fallback are not members of pg_pool.
+    with _temp_pg_connections_lock:
+        is_temporary = id(con) in _temp_pg_connections
+        if is_temporary:
+            _temp_pg_connections.discard(id(con))
+
+    if is_temporary or not pg_pool:
         try:
-            # Roll back any uncommitted/failed transaction before reusing it.
-            con.rollback()
-            pg_pool.putconn(con)
-        except Exception:
-            logging.exception("Could not safely return PostgreSQL connection; discarding it")
-            try:
-                pg_pool.putconn(con, close=True)
-            except Exception:
+            if not getattr(con, "closed", 1):
                 try:
-                    con.close()
+                    con.rollback()
                 except Exception:
                     pass
-    else:
+            con.close()
+        except Exception:
+            logging.exception("Could not close temporary PostgreSQL connection")
+        return
+
+    # psycopg2: closed == 0 means usable; non-zero means already closed.
+    if getattr(con, "closed", 1):
+        try:
+            pg_pool.putconn(con, close=True)
+        except Exception:
+            try:
+                con.close()
+            except Exception:
+                pass
+        return
+
+    try:
+        con.rollback()
+    except Exception:
+        logging.warning("PostgreSQL connection failed during rollback; discarding it", exc_info=True)
+        try:
+            pg_pool.putconn(con, close=True)
+        except Exception:
+            try:
+                con.close()
+            except Exception:
+                pass
+        return
+
+    try:
+        pg_pool.putconn(con)
+    except Exception:
+        logging.exception("Could not return PostgreSQL connection; closing it")
         try:
             con.close()
         except Exception:
             pass
 
-def db():
-    global pg_pool
 
+def db():
+    """Get a pooled PostgreSQL connection, with a tracked safe fallback."""
     if pg_pool:
         try:
             conn = pg_pool.getconn()
+            if getattr(conn, "closed", 1):
+                try:
+                    pg_pool.putconn(conn, close=True)
+                except Exception:
+                    pass
+                conn = pg_pool.getconn()
             conn.autocommit = False
             return conn
+        except psycopg2.pool.PoolError as e:
+            # Keep the application responsive during short bursts. The fallback
+            # uses the same RealDictCursor contract and is always closed, never
+            # returned to the pool.
+            logging.warning("PostgreSQL pool exhausted; opening a temporary connection")
+            conn = psycopg2.connect(
+                DATABASE_URL,
+                cursor_factory=psycopg2.extras.RealDictCursor,
+                connect_timeout=15,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=3,
+            )
+            with _temp_pg_connections_lock:
+                _temp_pg_connections.add(id(conn))
+            return conn
+    conn = sqlite3.connect("database.db")
+    conn.row_factory = sqlite3.Row
+    return conn
 
-        except Exception as e:
-            print("⚠️ Pool exhausted, creating temporary connection:", e)
-
-            # fallback connection (prevents crash)
-            return psycopg2.connect(DATABASE_URL)
-
-    else:
-        conn = sqlite3.connect("database.db")
-        conn.row_factory = sqlite3.Row
-        return conn
 # -------- AUTO DB FIX (runs once on startup) --------
 con = db()
 cur = con.cursor()
@@ -1002,6 +1052,9 @@ def _validate_evaluation_structure(cur, phase_id):
 def admin_evaluation_settings():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
+    if session.get("admin_role") != "super_admin":
+        flash("Access denied. Evaluation Module is available only to Super Admins.")
+        return redirect(url_for("admin_home"))
     con=db(); cur=con.cursor()
     batch, batch_id = evaluation_batch_context(cur)
     if not batch_id:
@@ -1181,7 +1234,11 @@ def admin_evaluation_settings():
 
 @app.route("/admin/evaluation-dashboard")
 def admin_evaluation_dashboard():
-    if not session.get("admin_logged_in"): return redirect(url_for("admin"))
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    if session.get("admin_role") != "super_admin":
+        flash("Access denied. Evaluation Module is available only to Super Admins.")
+        return redirect(url_for("admin_home"))
     con=db(); cur=con.cursor(); batch,batch_id=evaluation_batch_context(cur)
     if not batch_id: return redirect(url_for("admin"))
     scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get("scheme_id"))
@@ -1220,7 +1277,11 @@ def admin_evaluation_dashboard():
 
 @app.route("/admin/evaluation/export")
 def admin_evaluation_export():
-    if not session.get("admin_logged_in"): return redirect(url_for("admin"))
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    if session.get("admin_role") != "super_admin":
+        flash("Access denied. Evaluation Module is available only to Super Admins.")
+        return redirect(url_for("admin_home"))
     con=db(); cur=con.cursor(); batch,batch_id=evaluation_batch_context(cur)
     scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get("scheme_id")) if batch_id else None
     if not scheme:
@@ -1420,6 +1481,9 @@ def faculty_evaluation(team_id):
 def admin_evaluation_assignments():
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
+    if session.get("admin_role") != "super_admin":
+        flash("Access denied. Evaluation Module is available only to Super Admins.")
+        return redirect(url_for("admin_home"))
     con=db(); cur=con.cursor()
     batch,batch_id=evaluation_batch_context(cur)
     scheme=get_selected_evaluation_scheme(cur,batch_id,request.args.get('scheme_id')) if batch_id else None
