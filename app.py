@@ -1991,9 +1991,22 @@ def faculty_report_download(submission_id):
     return send_file(io.BytesIO(bytes(row['file_data'])),download_name=row['filename'],as_attachment=True,mimetype=row['content_type'] or 'application/octet-stream')
 
 
+def _admin_report_access():
+    """Allow super admins and department admins; department admins are scoped to their own department."""
+    if not session.get("admin_logged_in"):
+        return False, None
+    role = session.get("admin_role")
+    if role == "super_admin":
+        return True, None
+    if role == "admin" and session.get("admin_department"):
+        return True, session.get("admin_department")
+    return False, None
+
+
 @app.route('/admin/project-status')
 def admin_project_status():
-    if not session.get('admin_logged_in'): return redirect(url_for('admin'))
+    allowed, dept_scope = _admin_report_access()
+    if not allowed: return redirect(url_for('admin'))
     con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
     if not batch:
         if pg_pool: release_db_connection(con)
@@ -2002,17 +2015,29 @@ def admin_project_status():
     batch_id=batch['id']
     dept=request.args.get('department','').strip(); section=request.args.get('section','').strip(); faculty_id=request.args.get('faculty_id','').strip(); status_filter=request.args.get('status','').strip()
     where=['t.batch_id=%s']; params=[batch_id]
-    if dept: where.append('t.leader_department=%s'); params.append(dept)
+    if dept_scope:
+        dept = dept_scope
+        where.append('t.leader_department=%s'); params.append(dept_scope)
+    elif dept:
+        where.append('t.leader_department=%s'); params.append(dept)
     if section: where.append('t.leader_section=%s'); params.append(section)
     if faculty_id: where.append('tf.faculty_id=%s'); params.append(faculty_id)
     execute(cur,f"""SELECT t.id,t.team_name,t.leader_name,t.leader_usn,t.leader_department,t.leader_section,COALESCE(f.name,'Unassigned') AS faculty_name
         FROM teams t LEFT JOIN team_faculty tf ON tf.team_id=t.id LEFT JOIN faculty f ON f.id=tf.faculty_id WHERE {' AND '.join(where)} ORDER BY t.leader_department,t.leader_section,t.team_name""",params)
     teams=cur.fetchall(); rows=[]
-    execute(cur,'SELECT id,name FROM faculty ORDER BY name'); faculty=cur.fetchall()
+    if dept_scope:
+        execute(cur,'SELECT id,name FROM faculty WHERE department=%s ORDER BY name',(dept_scope,))
+    else:
+        execute(cur,'SELECT id,name FROM faculty ORDER BY name')
+    faculty=cur.fetchall()
     # Use the central department master so the filter shows all departments
     # even before any Batch 2 teams have been registered.
     departments = DEPARTMENTS
-    execute(cur,'SELECT DISTINCT leader_section FROM teams WHERE batch_id=%s AND leader_section IS NOT NULL ORDER BY leader_section',(batch_id,)); sections=[r['leader_section'] for r in cur.fetchall()]
+    if dept_scope:
+        execute(cur,'SELECT DISTINCT leader_section FROM teams WHERE batch_id=%s AND leader_department=%s AND leader_section IS NOT NULL ORDER BY leader_section',(batch_id,dept_scope))
+    else:
+        execute(cur,'SELECT DISTINCT leader_section FROM teams WHERE batch_id=%s AND leader_section IS NOT NULL ORDER BY leader_section',(batch_id,))
+    sections=[r['leader_section'] for r in cur.fetchall()]
     execute(cur,'SELECT id,title,submission_type,required,review_required FROM submission_configs WHERE batch_id=%s AND active=TRUE ORDER BY sort_order,id',(batch_id,)); configs=cur.fetchall()
     execute(cur,"SELECT COUNT(*) AS c FROM evaluation_schemes WHERE batch_id=%s",(batch_id,)); scheme_exists=cur.fetchone()['c']>0
     required_eval=0
@@ -2075,14 +2100,20 @@ def admin_project_status():
 
 @app.route('/admin/submission-download/<int:submission_id>')
 def admin_submission_download(submission_id):
-    if not session.get('admin_logged_in'):
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for('admin'))
     con=db(); cur=con.cursor(); batch=get_admin_view_batch(cur)
     if not batch:
         if pg_pool: release_db_connection(con)
         else: con.close()
         flash('No batch is selected.'); return redirect(url_for('admin_project_status'))
-    execute(cur,"""SELECT rs.filename,rs.content_type,rs.file_data,rs.batch_id FROM report_submissions rs WHERE rs.id=? AND rs.batch_id=?""",(submission_id,batch['id']))
+    if dept_scope:
+        execute(cur,"""SELECT rs.filename,rs.content_type,rs.file_data,rs.batch_id
+            FROM report_submissions rs JOIN teams t ON t.id=rs.team_id
+            WHERE rs.id=? AND rs.batch_id=? AND t.leader_department=?""",(submission_id,batch['id'],dept_scope))
+    else:
+        execute(cur,"""SELECT rs.filename,rs.content_type,rs.file_data,rs.batch_id FROM report_submissions rs WHERE rs.id=? AND rs.batch_id=?""",(submission_id,batch['id']))
     row=cur.fetchone()
     if pg_pool: release_db_connection(con)
     else: con.close()
@@ -2099,8 +2130,9 @@ def admin_report_submissions():
 
 @app.route("/admin/reports")
 def admin_reports():
-    """Reports index: each report opens on its own page."""
-    if not session.get("admin_logged_in"):
+    """Reports index: super admins see all reports; department admins see their department scope."""
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for("admin"))
 
     con = db()
@@ -2117,12 +2149,13 @@ def admin_reports():
         flash("No active batch is configured.")
         return redirect(url_for("admin"))
 
-    return render_template("admin_reports.html", view_batch=view_batch, active_page="reports")
+    return render_template("admin_reports.html", view_batch=view_batch, active_page="reports", dept_scope=dept_scope)
 
 
 @app.route("/admin/reports/total-students")
 def admin_report_total_students():
-    if not session.get("admin_logged_in"):
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for("admin"))
     con = db(); cur = con.cursor()
     try:
@@ -2131,10 +2164,18 @@ def admin_report_total_students():
         if not batch_id:
             flash("No active batch is configured.")
             return redirect(url_for("admin_reports"))
-        execute(cur, """SELECT COUNT(DISTINCT usn) AS total_students FROM (
-            SELECT leader_usn AS usn FROM teams WHERE batch_id = %s
-            UNION SELECT tm.usn FROM team_members tm JOIN teams t ON tm.team_id = t.id WHERE t.batch_id = %s
-        ) x""", (batch_id, batch_id))
+        if dept_scope:
+            execute(cur, """SELECT COUNT(DISTINCT usn) AS total_students FROM (
+                SELECT t.leader_usn AS usn FROM teams t LEFT JOIN students s ON s.usn=t.leader_usn
+                WHERE t.batch_id=%s AND COALESCE(s.department,t.leader_department)=%s
+                UNION SELECT tm.usn FROM team_members tm JOIN teams t ON tm.team_id=t.id
+                WHERE t.batch_id=%s AND tm.department=%s
+            ) x""", (batch_id, dept_scope, batch_id, dept_scope))
+        else:
+            execute(cur, """SELECT COUNT(DISTINCT usn) AS total_students FROM (
+                SELECT leader_usn AS usn FROM teams WHERE batch_id = %s
+                UNION SELECT tm.usn FROM team_members tm JOIN teams t ON tm.team_id = t.id WHERE t.batch_id = %s
+            ) x""", (batch_id, batch_id))
         total_students = cur.fetchone()["total_students"]
     finally:
         if pg_pool: release_db_connection(con)
@@ -2145,7 +2186,8 @@ def admin_report_total_students():
 
 @app.route("/admin/reports/team-size")
 def admin_report_team_size():
-    if not session.get("admin_logged_in"):
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for("admin"))
     con = db(); cur = con.cursor()
     try:
@@ -2154,12 +2196,20 @@ def admin_report_team_size():
         if not batch_id:
             flash("No active batch is configured.")
             return redirect(url_for("admin_reports"))
-        execute(cur, """SELECT t.id AS team_id, t.team_name, t.leader_name,
-            COUNT(tm.id) + 1 AS total_students
-            FROM teams t LEFT JOIN team_members tm ON t.id = tm.team_id
-            WHERE t.batch_id = %s
-            GROUP BY t.id, t.team_name, t.leader_name
-            ORDER BY total_students DESC, t.team_name""", (batch_id,))
+        if dept_scope:
+            execute(cur, """SELECT t.id AS team_id, t.team_name, t.leader_name,
+                COUNT(tm.id) + 1 AS total_students
+                FROM teams t LEFT JOIN team_members tm ON t.id = tm.team_id
+                WHERE t.batch_id = %s AND t.leader_department = %s
+                GROUP BY t.id, t.team_name, t.leader_name
+                ORDER BY total_students DESC, t.team_name""", (batch_id, dept_scope))
+        else:
+            execute(cur, """SELECT t.id AS team_id, t.team_name, t.leader_name,
+                COUNT(tm.id) + 1 AS total_students
+                FROM teams t LEFT JOIN team_members tm ON t.id = tm.team_id
+                WHERE t.batch_id = %s
+                GROUP BY t.id, t.team_name, t.leader_name
+                ORDER BY total_students DESC, t.team_name""", (batch_id,))
         team_sizes = cur.fetchall()
     finally:
         if pg_pool: release_db_connection(con)
@@ -2170,7 +2220,8 @@ def admin_report_team_size():
 
 @app.route("/admin/reports/student-details")
 def admin_report_student_details():
-    if not session.get("admin_logged_in"):
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for("admin"))
     con = db(); cur = con.cursor()
     try:
@@ -2179,21 +2230,38 @@ def admin_report_student_details():
         if not batch_id:
             flash("No active batch is configured.")
             return redirect(url_for("admin_reports"))
-        execute(cur, """SELECT t.leader_usn AS usn,
-            COALESCE(s.name, t.leader_name) AS name,
-            COALESCE(s.department, t.leader_department) AS department,
-            COALESCE(s.section, t.leader_section) AS section,
-            p.title AS problem_title, t.team_name
-            FROM teams t JOIN problems p ON t.problem_id = p.id
-            LEFT JOIN students s ON s.usn = t.leader_usn
-            WHERE t.batch_id = %s
-            UNION ALL
-            SELECT m.usn, m.member_name AS name, m.department, m.section,
-            p.title AS problem_title, t.team_name
-            FROM team_members m JOIN teams t ON m.team_id = t.id
-            JOIN problems p ON t.problem_id = p.id
-            WHERE t.batch_id = %s
-            ORDER BY usn""", (batch_id, batch_id))
+        if dept_scope:
+            execute(cur, """SELECT t.leader_usn AS usn,
+                COALESCE(s.name, t.leader_name) AS name,
+                COALESCE(s.department, t.leader_department) AS department,
+                COALESCE(s.section, t.leader_section) AS section,
+                p.title AS problem_title, t.team_name
+                FROM teams t JOIN problems p ON t.problem_id = p.id
+                LEFT JOIN students s ON s.usn = t.leader_usn
+                WHERE t.batch_id = %s AND COALESCE(s.department,t.leader_department) = %s
+                UNION ALL
+                SELECT m.usn, m.member_name AS name, m.department, m.section,
+                p.title AS problem_title, t.team_name
+                FROM team_members m JOIN teams t ON m.team_id = t.id
+                JOIN problems p ON t.problem_id = p.id
+                WHERE t.batch_id = %s AND m.department = %s
+                ORDER BY usn""", (batch_id, dept_scope, batch_id, dept_scope))
+        else:
+            execute(cur, """SELECT t.leader_usn AS usn,
+                COALESCE(s.name, t.leader_name) AS name,
+                COALESCE(s.department, t.leader_department) AS department,
+                COALESCE(s.section, t.leader_section) AS section,
+                p.title AS problem_title, t.team_name
+                FROM teams t JOIN problems p ON t.problem_id = p.id
+                LEFT JOIN students s ON s.usn = t.leader_usn
+                WHERE t.batch_id = %s
+                UNION ALL
+                SELECT m.usn, m.member_name AS name, m.department, m.section,
+                p.title AS problem_title, t.team_name
+                FROM team_members m JOIN teams t ON m.team_id = t.id
+                JOIN problems p ON t.problem_id = p.id
+                WHERE t.batch_id = %s
+                ORDER BY usn""", (batch_id, batch_id))
         student_projects = cur.fetchall()
     finally:
         if pg_pool: release_db_connection(con)
@@ -2204,7 +2272,8 @@ def admin_report_student_details():
 @app.route("/admin/export/team-size")
 def export_team_size():
 
-    if not session.get("admin_logged_in"):
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for("admin"))
 
     import pandas as pd
@@ -2224,17 +2293,20 @@ def export_team_size():
         flash("No active batch is configured.")
         return redirect(url_for("admin"))
 
-    execute(cur, """
-        SELECT 
-            t.team_name,
-            t.leader_name,
-            COUNT(tm.id) + 1 AS total_students
-        FROM teams t
-        LEFT JOIN team_members tm ON t.id = tm.team_id
-        WHERE t.batch_id = %s
-        GROUP BY t.team_name, t.leader_name
-        ORDER BY total_students DESC
-    """, (active_batch_id,))
+    if dept_scope:
+        execute(cur, """
+            SELECT t.team_name, t.leader_name, COUNT(tm.id) + 1 AS total_students
+            FROM teams t LEFT JOIN team_members tm ON t.id = tm.team_id
+            WHERE t.batch_id = %s AND t.leader_department = %s
+            GROUP BY t.id, t.team_name, t.leader_name ORDER BY total_students DESC
+        """, (active_batch_id, dept_scope))
+    else:
+        execute(cur, """
+            SELECT t.team_name, t.leader_name, COUNT(tm.id) + 1 AS total_students
+            FROM teams t LEFT JOIN team_members tm ON t.id = tm.team_id
+            WHERE t.batch_id = %s
+            GROUP BY t.id, t.team_name, t.leader_name ORDER BY total_students DESC
+        """, (active_batch_id,))
 
     rows = cur.fetchall()
 
@@ -2255,7 +2327,8 @@ def export_team_size():
 @app.route("/admin/export/total-students")
 def export_total_students():
 
-    if not session.get("admin_logged_in"):
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for("admin"))
 
     import pandas as pd
@@ -2275,21 +2348,23 @@ def export_total_students():
         flash("No active batch is configured.")
         return redirect(url_for("admin"))
 
-    execute(cur, """
-        SELECT COUNT(DISTINCT usn) AS total_students
-        FROM (
-            SELECT leader_usn AS usn
-            FROM teams
-            WHERE batch_id = %s
-
-            UNION
-
-            SELECT tm.usn
-            FROM team_members tm
-            JOIN teams t ON tm.team_id = t.id
-            WHERE t.batch_id = %s
-        ) x
-    """, (active_batch_id, active_batch_id))
+    if dept_scope:
+        execute(cur, """
+            SELECT COUNT(DISTINCT usn) AS total_students FROM (
+                SELECT t.leader_usn AS usn FROM teams t LEFT JOIN students s ON s.usn=t.leader_usn
+                WHERE t.batch_id=%s AND COALESCE(s.department,t.leader_department)=%s
+                UNION SELECT tm.usn FROM team_members tm JOIN teams t ON tm.team_id=t.id
+                WHERE t.batch_id=%s AND tm.department=%s
+            ) x
+        """, (active_batch_id, dept_scope, active_batch_id, dept_scope))
+    else:
+        execute(cur, """
+            SELECT COUNT(DISTINCT usn) AS total_students
+            FROM (
+                SELECT leader_usn AS usn FROM teams WHERE batch_id = %s
+                UNION SELECT tm.usn FROM team_members tm JOIN teams t ON tm.team_id = t.id WHERE t.batch_id = %s
+            ) x
+        """, (active_batch_id, active_batch_id))
 
     total = cur.fetchone()["total_students"]
 
@@ -2306,7 +2381,8 @@ def export_total_students():
 @app.route("/admin/export/student-mapping")
 def export_student_mapping():
 
-    if not session.get("admin_logged_in"):
+    allowed, dept_scope = _admin_report_access()
+    if not allowed:
         return redirect(url_for("admin"))
 
     import pandas as pd
@@ -2326,35 +2402,36 @@ def export_student_mapping():
         flash("No active batch is configured.")
         return redirect(url_for("admin"))
 
-    execute(cur, """
-        SELECT
-            t.leader_usn AS usn,
-            COALESCE(s.name, t.leader_name) AS name,
-            COALESCE(s.department, t.leader_department) AS department,
-            COALESCE(s.section, t.leader_section) AS section,
-            p.title AS problem_title,
-            t.team_name
-        FROM teams t
-        JOIN problems p ON t.problem_id = p.id
-        LEFT JOIN students s ON s.usn = t.leader_usn
-        WHERE t.batch_id = %s
-
-        UNION ALL
-
-        SELECT
-            m.usn,
-            m.member_name AS name,
-            m.department,
-            m.section,
-            p.title AS problem_title,
-            t.team_name
-        FROM team_members m
-        JOIN teams t ON m.team_id = t.id
-        JOIN problems p ON t.problem_id = p.id
-        WHERE t.batch_id = %s
-
-        ORDER BY usn
-    """, (active_batch_id, active_batch_id))
+    if dept_scope:
+        execute(cur, """
+            SELECT t.leader_usn AS usn, COALESCE(s.name,t.leader_name) AS name,
+                   COALESCE(s.department,t.leader_department) AS department,
+                   COALESCE(s.section,t.leader_section) AS section,
+                   p.title AS problem_title, t.team_name
+            FROM teams t JOIN problems p ON t.problem_id=p.id
+            LEFT JOIN students s ON s.usn=t.leader_usn
+            WHERE t.batch_id=%s AND COALESCE(s.department,t.leader_department)=%s
+            UNION ALL
+            SELECT m.usn,m.member_name AS name,m.department,m.section,p.title AS problem_title,t.team_name
+            FROM team_members m JOIN teams t ON m.team_id=t.id JOIN problems p ON t.problem_id=p.id
+            WHERE t.batch_id=%s AND m.department=%s
+            ORDER BY usn
+        """, (active_batch_id, dept_scope, active_batch_id, dept_scope))
+    else:
+        execute(cur, """
+            SELECT t.leader_usn AS usn, COALESCE(s.name,t.leader_name) AS name,
+                   COALESCE(s.department,t.leader_department) AS department,
+                   COALESCE(s.section,t.leader_section) AS section,
+                   p.title AS problem_title, t.team_name
+            FROM teams t JOIN problems p ON t.problem_id=p.id
+            LEFT JOIN students s ON s.usn=t.leader_usn
+            WHERE t.batch_id=%s
+            UNION ALL
+            SELECT m.usn,m.member_name AS name,m.department,m.section,p.title AS problem_title,t.team_name
+            FROM team_members m JOIN teams t ON m.team_id=t.id JOIN problems p ON t.problem_id=p.id
+            WHERE t.batch_id=%s
+            ORDER BY usn
+        """, (active_batch_id, active_batch_id))
 
     rows = cur.fetchall()
 
