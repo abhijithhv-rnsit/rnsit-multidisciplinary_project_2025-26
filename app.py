@@ -2151,27 +2151,27 @@ def admin_reports():
 
     # ================= STUDENT MAPPING =================
     execute(cur, """
-        SELECT 
-            s.usn,
-            s.name,
-            s.department,
+        SELECT
+            t.leader_usn AS usn,
+            COALESCE(s.name, t.leader_name) AS name,
+            COALESCE(s.department, t.leader_department) AS department,
+            COALESCE(s.section, t.leader_section) AS section,
             p.title AS problem_title,
-            t.team_name,
-            'Leader' AS role
+            t.team_name
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
-        JOIN students s ON s.usn = t.leader_usn
+        LEFT JOIN students s ON s.usn = t.leader_usn
         WHERE t.batch_id = %s
 
-        UNION
+        UNION ALL
 
-        SELECT 
+        SELECT
             m.usn,
             m.member_name AS name,
             m.department,
+            m.section,
             p.title AS problem_title,
-            t.team_name,
-            'Member' AS role
+            t.team_name
         FROM team_members m
         JOIN teams t ON m.team_id = t.id
         JOIN problems p ON t.problem_id = p.id
@@ -2321,27 +2321,27 @@ def export_student_mapping():
         return redirect(url_for("admin"))
 
     execute(cur, """
-        SELECT 
-            s.usn,
-            s.name,
-            s.department,
+        SELECT
+            t.leader_usn AS usn,
+            COALESCE(s.name, t.leader_name) AS name,
+            COALESCE(s.department, t.leader_department) AS department,
+            COALESCE(s.section, t.leader_section) AS section,
             p.title AS problem_title,
-            t.team_name,
-            'Leader' AS role
+            t.team_name
         FROM teams t
         JOIN problems p ON t.problem_id = p.id
-        JOIN students s ON s.usn = t.leader_usn
+        LEFT JOIN students s ON s.usn = t.leader_usn
         WHERE t.batch_id = %s
 
-        UNION
+        UNION ALL
 
-        SELECT 
+        SELECT
             m.usn,
             m.member_name AS name,
             m.department,
+            m.section,
             p.title AS problem_title,
-            t.team_name,
-            'Member' AS role
+            t.team_name
         FROM team_members m
         JOIN teams t ON m.team_id = t.id
         JOIN problems p ON t.problem_id = p.id
@@ -2352,14 +2352,20 @@ def export_student_mapping():
 
     rows = cur.fetchall()
 
+    if pg_pool:
+        release_db_connection(con)
+    else:
+        con.close()
+
     data = [{
+        "Sl. No.": index,
+        "Student Name": r["name"],
         "USN": r["usn"],
-        "Name": r["name"],
         "Department": r["department"],
-        "Team": r["team_name"],
-        "Problem": r["problem_title"],
-        "Role": r["role"]
-    } for r in rows]
+        "Section": r["section"] or "",
+        "Team Name": r["team_name"],
+        "Problem Statement Title": r["problem_title"]
+    } for index, r in enumerate(rows, start=1)]
 
     df = pd.DataFrame(data)
 
@@ -2367,7 +2373,7 @@ def export_student_mapping():
     df.to_excel(output, index=False)
     output.seek(0)
 
-    return send_file(output, download_name="student_mapping.xlsx", as_attachment=True)
+    return send_file(output, download_name="project_student_details.xlsx", as_attachment=True)
 @app.route("/student/signup", methods=["GET", "POST"])
 def student_signup():
     ensure_students_table()
