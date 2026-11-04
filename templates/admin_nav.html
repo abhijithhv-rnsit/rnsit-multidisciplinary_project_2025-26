@@ -56,6 +56,7 @@
         </div>
       </details>
 
+      {% if session.get("admin_role") == "super_admin" %}
       <details class="admin-nav-menu">
         <summary>Evaluation</summary>
         <div class="admin-dropdown">
@@ -64,6 +65,7 @@
           <a href="/admin/evaluation-dashboard">Evaluation Dashboard</a>
         </div>
       </details>
+      {% endif %}
 
       <div class="admin-nav-spacer"></div>
 
