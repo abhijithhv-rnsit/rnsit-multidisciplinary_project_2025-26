@@ -38,18 +38,21 @@
           <a href="/admin/notices">Notice Board</a>
           {% if session.get("admin_role") == "super_admin" %}
           <a href="/admin/project-settings">Project Settings</a>
-          <a href="/admin/reports">Reports</a>
           {% endif %}
+          <a href="/admin/reports">{% if session.get("admin_role") == "super_admin" %}Reports{% else %}Department Reports{% endif %}</a>
         </div>
       </details>
 
-      {% if session.get("admin_role") == "super_admin" %}
       <details class="admin-nav-menu">
         <summary>Submissions</summary>
         <div class="admin-dropdown">
+          {% if session.get("admin_role") == "super_admin" %}
           <a href="/admin/submission-settings">Submission Settings</a>
+          {% endif %}
           <a href="/admin/project-status">Project Status</a>
+          {% if session.get("admin_role") == "super_admin" %}
           <a href="/admin/report-submissions">Report Submissions</a>
+          {% endif %}
         </div>
       </details>
 
