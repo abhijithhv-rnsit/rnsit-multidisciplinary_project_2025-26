@@ -2016,8 +2016,11 @@ def admin_project_status():
     dept=request.args.get('department','').strip(); section=request.args.get('section','').strip(); faculty_id=request.args.get('faculty_id','').strip(); status_filter=request.args.get('status','').strip()
     where=['t.batch_id=%s']; params=[batch_id]
     if dept_scope:
+        # Department admins can see a team if its leader OR any registered
+        # team member belongs to their department (important for cross-branch teams).
         dept = dept_scope
-        where.append('t.leader_department=%s'); params.append(dept_scope)
+        where.append("(t.leader_department=%s OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id=t.id AND tm.department=%s))")
+        params.extend([dept_scope, dept_scope])
     elif dept:
         where.append('t.leader_department=%s'); params.append(dept)
     if section: where.append('t.leader_section=%s'); params.append(section)
