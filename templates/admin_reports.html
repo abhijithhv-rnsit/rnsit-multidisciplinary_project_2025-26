@@ -41,34 +41,43 @@
   </table>
 </div>
 
-<!-- STUDENT MAPPING -->
+<!-- PROJECT STUDENT DETAILS -->
 <div class="card p-3 mb-3">
-  <h5>Student Project Mapping</h5>
-  <a href="/admin/export/student-mapping" class="btn btn-sm btn-success mb-2">Download Excel</a>
+  <h5>Project-wise Student Details</h5>
+  <p class="text-muted mb-2">One row per student, including team leaders and members.</p>
+  <a href="/admin/export/student-mapping" class="btn btn-sm btn-success mb-3">Download Excel</a>
 
-  <table class="table table-bordered">
-    <tr>
-      <th>USN</th>
-      <th>Name</th>
-      <th>Dept</th>
-      <th>Team</th>
-      <th>Problem</th>
-      <th>Role</th>
-    </tr>
-
-    {% for s in student_projects %}
-    <tr>
-      <td>{{ s.usn }}</td>
-      <td>{{ s.name }}</td>
-      <td>{{ s.department|department_label }}</td>
-      <td>{{ s.team_name }}</td>
-      <td>{{ s.problem_title }}</td>
-      <td>{{ s.role }}</td>
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="table-responsive">
+    <table class="table table-bordered table-striped table-sm align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Sl. No.</th>
+          <th>Student Name</th>
+          <th>USN</th>
+          <th>Department</th>
+          <th>Section</th>
+          <th>Team Name</th>
+          <th>Problem Statement Title</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in student_projects %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ s.name }}</td>
+          <td>{{ s.usn }}</td>
+          <td>{{ s.department|department_label }}</td>
+          <td>{{ s.section or '-' }}</td>
+          <td>{{ s.team_name }}</td>
+          <td>{{ s.problem_title }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted">No project students found for the selected batch.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
-
 </div>
 </body>
 </html>
