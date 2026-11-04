@@ -2099,101 +2099,107 @@ def admin_report_submissions():
 
 @app.route("/admin/reports")
 def admin_reports():
-
+    """Reports index: each report opens on its own page."""
     if not session.get("admin_logged_in"):
         return redirect(url_for("admin"))
 
     con = db()
     cur = con.cursor()
-
-    view_batch = get_admin_view_batch(cur)
-    active_batch_id = view_batch["id"] if view_batch else None
-    if not active_batch_id:
+    try:
+        view_batch = get_admin_view_batch(cur)
+    finally:
         if pg_pool:
             release_db_connection(con)
         else:
             con.close()
+
+    if not view_batch:
         flash("No active batch is configured.")
         return redirect(url_for("admin"))
 
-    # ================= TEAM SIZE =================
-    execute(cur, """
-        SELECT 
-            t.id AS team_id,
-            t.team_name,
-            t.leader_name,
+    return render_template("admin_reports.html", view_batch=view_batch, active_page="reports")
+
+
+@app.route("/admin/reports/total-students")
+def admin_report_total_students():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    con = db(); cur = con.cursor()
+    try:
+        view_batch = get_admin_view_batch(cur)
+        batch_id = view_batch["id"] if view_batch else None
+        if not batch_id:
+            flash("No active batch is configured.")
+            return redirect(url_for("admin_reports"))
+        execute(cur, """SELECT COUNT(DISTINCT usn) AS total_students FROM (
+            SELECT leader_usn AS usn FROM teams WHERE batch_id = %s
+            UNION SELECT tm.usn FROM team_members tm JOIN teams t ON tm.team_id = t.id WHERE t.batch_id = %s
+        ) x""", (batch_id, batch_id))
+        total_students = cur.fetchone()["total_students"]
+    finally:
+        if pg_pool: release_db_connection(con)
+        else: con.close()
+    return render_template("admin_report_total_students.html", total_students=total_students,
+                           view_batch=view_batch, active_page="reports")
+
+
+@app.route("/admin/reports/team-size")
+def admin_report_team_size():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    con = db(); cur = con.cursor()
+    try:
+        view_batch = get_admin_view_batch(cur)
+        batch_id = view_batch["id"] if view_batch else None
+        if not batch_id:
+            flash("No active batch is configured.")
+            return redirect(url_for("admin_reports"))
+        execute(cur, """SELECT t.id AS team_id, t.team_name, t.leader_name,
             COUNT(tm.id) + 1 AS total_students
-        FROM teams t
-        LEFT JOIN team_members tm ON t.id = tm.team_id
-        WHERE t.batch_id = %s
-        GROUP BY t.id, t.team_name, t.leader_name
-        ORDER BY total_students DESC
-    """, (active_batch_id,))
-    team_sizes = cur.fetchall()
-
-    # ================= TOTAL STUDENTS =================
-    execute(cur, """
-        SELECT COUNT(DISTINCT usn) AS total_students
-        FROM (
-            SELECT leader_usn AS usn
-            FROM teams
-            WHERE batch_id = %s
-
-            UNION
-
-            SELECT tm.usn
-            FROM team_members tm
-            JOIN teams t ON tm.team_id = t.id
+            FROM teams t LEFT JOIN team_members tm ON t.id = tm.team_id
             WHERE t.batch_id = %s
-        ) x
-    """, (active_batch_id, active_batch_id))
-    total_students = cur.fetchone()["total_students"]
+            GROUP BY t.id, t.team_name, t.leader_name
+            ORDER BY total_students DESC, t.team_name""", (batch_id,))
+        team_sizes = cur.fetchall()
+    finally:
+        if pg_pool: release_db_connection(con)
+        else: con.close()
+    return render_template("admin_report_team_size.html", team_sizes=team_sizes,
+                           view_batch=view_batch, active_page="reports")
 
-    # ================= STUDENT MAPPING =================
-    execute(cur, """
-        SELECT
-            t.leader_usn AS usn,
+
+@app.route("/admin/reports/student-details")
+def admin_report_student_details():
+    if not session.get("admin_logged_in"):
+        return redirect(url_for("admin"))
+    con = db(); cur = con.cursor()
+    try:
+        view_batch = get_admin_view_batch(cur)
+        batch_id = view_batch["id"] if view_batch else None
+        if not batch_id:
+            flash("No active batch is configured.")
+            return redirect(url_for("admin_reports"))
+        execute(cur, """SELECT t.leader_usn AS usn,
             COALESCE(s.name, t.leader_name) AS name,
             COALESCE(s.department, t.leader_department) AS department,
             COALESCE(s.section, t.leader_section) AS section,
-            p.title AS problem_title,
-            t.team_name
-        FROM teams t
-        JOIN problems p ON t.problem_id = p.id
-        LEFT JOIN students s ON s.usn = t.leader_usn
-        WHERE t.batch_id = %s
-
-        UNION ALL
-
-        SELECT
-            m.usn,
-            m.member_name AS name,
-            m.department,
-            m.section,
-            p.title AS problem_title,
-            t.team_name
-        FROM team_members m
-        JOIN teams t ON m.team_id = t.id
-        JOIN problems p ON t.problem_id = p.id
-        WHERE t.batch_id = %s
-
-        ORDER BY usn
-    """, (active_batch_id, active_batch_id))
-    student_projects = cur.fetchall()
-
-    if pg_pool:
-        release_db_connection(con)
-    else:
-        con.close()
-
-    return render_template(
-        "admin_reports.html",
-        team_sizes=team_sizes,
-        total_students=total_students,
-        student_projects=student_projects,
-        view_batch=view_batch,
-        active_page="reports"
-    )
+            p.title AS problem_title, t.team_name
+            FROM teams t JOIN problems p ON t.problem_id = p.id
+            LEFT JOIN students s ON s.usn = t.leader_usn
+            WHERE t.batch_id = %s
+            UNION ALL
+            SELECT m.usn, m.member_name AS name, m.department, m.section,
+            p.title AS problem_title, t.team_name
+            FROM team_members m JOIN teams t ON m.team_id = t.id
+            JOIN problems p ON t.problem_id = p.id
+            WHERE t.batch_id = %s
+            ORDER BY usn""", (batch_id, batch_id))
+        student_projects = cur.fetchall()
+    finally:
+        if pg_pool: release_db_connection(con)
+        else: con.close()
+    return render_template("admin_report_student_details.html", student_projects=student_projects,
+                           view_batch=view_batch, active_page="reports")
 
 @app.route("/admin/export/team-size")
 def export_team_size():
