@@ -33,6 +33,23 @@
 
   </div>
 
+  {% if session.get("admin_role") == "admin" %}
+  <!-- Department Admin Project Status shortcut -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card shadow-sm border-0 h-100">
+        <div class="card-body d-flex justify-content-between align-items-center">
+          <div>
+            <h5 class="fw-bold mb-1">Project Status</h5>
+            <p class="text-muted mb-0 small">Monitor submissions, synopsis reviews, weekly progress and evaluation status for {{ session.get("admin_department") }}.</p>
+          </div>
+          <a href="{{ url_for('admin_project_status') }}" class="btn btn-primary">Open Report</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- ================= NOTICE BOARD ================= -->
 
   <div class="card shadow-sm border-0">
