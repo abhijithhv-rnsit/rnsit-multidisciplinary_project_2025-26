@@ -897,6 +897,8 @@ def ensure_evaluation_system():
             "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS weight NUMERIC(10,4) DEFAULT 1",
             "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS phase_id INTEGER NULL REFERENCES evaluation_phases(id) ON DELETE CASCADE",
             "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS presentation_id INTEGER NULL REFERENCES evaluation_presentations(id) ON DELETE CASCADE",
+            "ALTER TABLE evaluation_team_evaluators ADD COLUMN IF NOT EXISTS assignment_source TEXT NOT NULL DEFAULT 'manual'",
+            "CREATE TABLE IF NOT EXISTS evaluation_team_guide_preferences (id SERIAL PRIMARY KEY, scheme_id INTEGER NOT NULL REFERENCES evaluation_schemes(id) ON DELETE CASCADE, team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE, guide_enabled BOOLEAN NOT NULL DEFAULT TRUE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(scheme_id, team_id))",
             "CREATE INDEX IF NOT EXISTS idx_eval_team_eval_scheme_team ON evaluation_team_evaluators(scheme_id, team_id)",
             "CREATE INDEX IF NOT EXISTS idx_eval_team_eval_phase ON evaluation_team_evaluators(scheme_id, phase_id)",
             "CREATE INDEX IF NOT EXISTS idx_eval_team_eval_presentation ON evaluation_team_evaluators(scheme_id, presentation_id)",
@@ -1503,44 +1505,82 @@ def admin_evaluation_assignments():
             action=request.form.get('action','')
             try:
                 if action == 'assign':
-                    faculty_ids=[int(x) for x in request.form.getlist('faculty_ids') if x]
-                    team_ids=[int(x) for x in request.form.getlist('team_ids') if x]
+                    faculty_ids=list(dict.fromkeys(int(x) for x in request.form.getlist('faculty_ids') if x))
+                    team_ids=list(dict.fromkeys(int(x) for x in request.form.getlist('team_ids') if x))
+                    guide_team_ids=set(int(x) for x in request.form.getlist('guide_team_ids') if x)
                     scope=request.form.get('scope','scheme')
                     phase_id=request.form.get('phase_id') or None
                     presentation_id=request.form.get('presentation_id') or None
                     weight=max(float(request.form.get('weight') or 1),0)
-                    if not faculty_ids: raise ValueError('Select at least one evaluator.')
-                    if not team_ids: raise ValueError('Select at least one team.')
+                    if not team_ids: raise ValueError('Select at least one project/team.')
                     if scope=='phase' and not phase_id: raise ValueError('Select a phase.')
                     if scope=='presentation' and not presentation_id: raise ValueError('Select a presentation.')
                     if scope=='scheme': phase_id=None; presentation_id=None
                     elif scope=='phase': presentation_id=None
-                    # Validate selected objects belong to this scheme/batch.
                     if phase_id:
                         execute(cur,"SELECT id FROM evaluation_phases WHERE id=%s AND scheme_id=%s",(int(phase_id),scheme['id']))
                         if not cur.fetchone(): raise ValueError('Invalid phase selected.')
+                        phase_id=int(phase_id)
                     if presentation_id:
-                        execute(cur,"""SELECT p.id FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE p.id=%s AND ph.scheme_id=%s""",(int(presentation_id),scheme['id']))
-                        if not cur.fetchone(): raise ValueError('Invalid presentation selected.')
+                        execute(cur,"SELECT p.id,p.phase_id FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id WHERE p.id=%s AND ph.scheme_id=%s",(int(presentation_id),scheme['id']))
+                        presentation=cur.fetchone()
+                        if not presentation: raise ValueError('Invalid presentation selected.')
+                        presentation_id=int(presentation_id)
+                        if phase_id and int(presentation['phase_id']) != phase_id: raise ValueError('The selected presentation does not belong to the selected phase.')
+                        phase_id=int(presentation['phase_id'])
                     for team_id in team_ids:
+                        guide = None
                         execute(cur,"SELECT id FROM teams WHERE id=%s AND batch_id=%s",(team_id,batch_id))
                         if not cur.fetchone(): continue
+
+                        # Persist the guide preference per project so an intentional
+                        # opt-out remains disabled when this page is reopened.
+                        guide_enabled = team_id in guide_team_ids
+                        execute(cur,"""INSERT INTO evaluation_team_guide_preferences(scheme_id,team_id,guide_enabled,updated_at)
+                            VALUES(%s,%s,%s,CURRENT_TIMESTAMP)
+                            ON CONFLICT(scheme_id,team_id) DO UPDATE SET guide_enabled=EXCLUDED.guide_enabled,updated_at=CURRENT_TIMESTAMP""",
+                            (scheme['id'],team_id,guide_enabled))
+
+                        if guide_enabled:
+                            execute(cur,"SELECT faculty_id FROM team_faculty WHERE team_id=%s",(team_id,))
+                            guide=cur.fetchone()
+                            if guide and guide.get('faculty_id'):
+                                guide_id=int(guide['faculty_id'])
+                                execute(cur,"""DELETE FROM evaluation_team_evaluators
+                                    WHERE scheme_id=%s AND team_id=%s AND faculty_id=%s""",
+                                    (scheme['id'],team_id,guide_id))
+                                execute(cur,"""INSERT INTO evaluation_team_evaluators
+                                    (scheme_id,team_id,faculty_id,phase_id,presentation_id,weight,assignment_source)
+                                    VALUES(%s,%s,%s,%s,%s,%s,'guide')""",
+                                    (scheme['id'],team_id,guide_id,phase_id,presentation_id,weight))
+                        else:
+                            # Remove only auto-guide assignments; manual/panel faculty remain.
+                            execute(cur,"DELETE FROM evaluation_team_evaluators WHERE scheme_id=%s AND team_id=%s AND assignment_source='guide'",
+                                    (scheme['id'],team_id))
+
+                        # Any number of additional faculty can be assigned as a panel.
                         for faculty_id in faculty_ids:
-                            execute(cur,"SELECT id FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id WHERE f.id=%s AND fb.batch_id=%s",(faculty_id,batch_id))
+                            execute(cur,"SELECT f.id FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id WHERE f.id=%s AND fb.batch_id=%s",(faculty_id,batch_id))
                             if not cur.fetchone(): continue
                             execute(cur,"""DELETE FROM evaluation_team_evaluators
-                                WHERE scheme_id=%s AND team_id=%s AND faculty_id=%s
-                                  AND ((phase_id IS NULL AND %s IS NULL) OR phase_id=%s)
-                                  AND ((presentation_id IS NULL AND %s IS NULL) OR presentation_id=%s)""",
-                                (scheme['id'],team_id,faculty_id,phase_id,phase_id,presentation_id,presentation_id))
+                                WHERE scheme_id=%s AND team_id=%s AND faculty_id=%s""",
+                                (scheme['id'],team_id,faculty_id))
+                            source='guide' if guide_enabled and guide and int(guide.get('faculty_id') or -1)==faculty_id else 'panel'
                             execute(cur,"""INSERT INTO evaluation_team_evaluators
-                                (scheme_id,team_id,faculty_id,phase_id,presentation_id,weight)
-                                VALUES(%s,%s,%s,%s,%s,%s)""",
-                                (scheme['id'],team_id,faculty_id,phase_id,presentation_id,weight))
-                    con.commit(); flash('Evaluator assignment(s) saved.')
+                                (scheme_id,team_id,faculty_id,phase_id,presentation_id,weight,assignment_source)
+                                VALUES(%s,%s,%s,%s,%s,%s,%s)""",
+                                (scheme['id'],team_id,faculty_id,phase_id,presentation_id,weight,source))
+                    con.commit(); flash('Evaluator allocation saved. Selected guides and additional panel members are now configured for the selected projects.')
                 elif action == 'remove':
                     assignment_id=int(request.form['assignment_id'])
+                    execute(cur,"SELECT team_id,assignment_source FROM evaluation_team_evaluators WHERE id=%s AND scheme_id=%s",(assignment_id,scheme['id']))
+                    removed=cur.fetchone()
                     execute(cur,"DELETE FROM evaluation_team_evaluators WHERE id=%s AND scheme_id=%s",(assignment_id,scheme['id']))
+                    if removed and removed.get('assignment_source') == 'guide':
+                        execute(cur,"""INSERT INTO evaluation_team_guide_preferences(scheme_id,team_id,guide_enabled,updated_at)
+                            VALUES(%s,%s,FALSE,CURRENT_TIMESTAMP)
+                            ON CONFLICT(scheme_id,team_id) DO UPDATE SET guide_enabled=FALSE,updated_at=CURRENT_TIMESTAMP""",
+                            (scheme['id'],removed['team_id']))
                     con.commit(); flash('Evaluator assignment removed.')
             except Exception as e:
                 con.rollback(); flash(f'Could not update evaluator assignment: {e}')
@@ -1567,13 +1607,21 @@ def admin_evaluation_assignments():
             active_page='evaluation'
         )
 
-    execute(cur,"SELECT id,team_name,leader_department,leader_section FROM teams WHERE batch_id=%s ORDER BY leader_department,leader_section,team_name",(batch_id,)); teams=cur.fetchall()
+    execute(cur,"""SELECT t.id,t.team_name,t.leader_department,t.leader_section,
+        tf.faculty_id AS guide_id,g.name AS guide_name,
+        COALESCE(gp.guide_enabled,TRUE) AS guide_enabled
+        FROM teams t
+        LEFT JOIN team_faculty tf ON tf.team_id=t.id
+        LEFT JOIN faculty g ON g.id=tf.faculty_id
+        LEFT JOIN evaluation_team_guide_preferences gp ON gp.team_id=t.id AND gp.scheme_id=%s
+        WHERE t.batch_id=%s
+        ORDER BY t.leader_department,t.leader_section,t.team_name""",(scheme['id'],batch_id)); teams=cur.fetchall()
     execute(cur,"SELECT f.id,f.name,f.department FROM faculty f JOIN faculty_batches fb ON fb.faculty_id=f.id WHERE fb.batch_id=%s ORDER BY f.name",(batch_id,)); faculty=cur.fetchall()
     execute(cur,"SELECT id,name,sort_order FROM evaluation_phases WHERE scheme_id=%s ORDER BY sort_order,id",(scheme['id'],)); phases=cur.fetchall()
     execute(cur,"""SELECT p.id,p.name,p.max_marks,p.phase_id,ph.name AS phase_name
         FROM evaluation_presentations p JOIN evaluation_phases ph ON ph.id=p.phase_id
         WHERE ph.scheme_id=%s ORDER BY ph.sort_order,p.sort_order,p.id""",(scheme['id'],)); presentations=cur.fetchall()
-    execute(cur,"""SELECT ete.id,ete.team_id,ete.faculty_id,ete.phase_id,ete.presentation_id,ete.weight,
+    execute(cur,"""SELECT ete.id,ete.team_id,ete.faculty_id,ete.phase_id,ete.presentation_id,ete.weight,ete.assignment_source,
         t.team_name,t.leader_department,t.leader_section,f.name AS faculty_name,
         ph.name AS phase_name,pr.name AS presentation_name
         FROM evaluation_team_evaluators ete
